@@ -33,6 +33,7 @@ yarn-error.log*
 # local build / dev-server output
 build.log
 serve*.log
+dev.log
 
 # env files (can opt-in for committing if needed)
 .env*
