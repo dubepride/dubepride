@@ -11,12 +11,13 @@
  *  Token format:  base64url(JSON claims) "." base64url(HMAC-SHA256(claims))
  *
  *  Claims are integrity-protected (HMAC) and time-limited (exp), so a user
- *  cannot forge or extend a session without the server secret. For a single
- *  master-password deployment this is the standard "simple session cookie"
- *  approach — swap in iron-session / NextAuth for multi-user accounts.
+ *  cannot forge or extend a session without the server secret. The claims
+ *  carry the System_Accounts id + display identity; the full permission
+ *  matrix is resolved from the account's Access_Level on every request
+ *  (server side), never trusted from the token.
  *
  *  CONFIG (.env):
- *    ADMIN_PASSWORD   — the HR master password   (default: biobridge-admin)
+ *    ADMIN_PASSWORD   — fallback admin password (default: biobridge-admin)
  *    SESSION_SECRET   — HMAC key for cookies     (default: dev-only value)
  */
 
@@ -55,10 +56,21 @@ export function checkPassword(candidate: string): boolean {
 }
 
 /** Build a fresh signed session token + its expiry (epoch ms). */
-export function createSessionToken(): { token: string; expiresAt: number } {
+export function createSessionToken(account: {
+  accountId: number;
+  name: string;
+  email: string;
+  levelName: string;
+}): { token: string; expiresAt: number } {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const claims = Buffer.from(
-    JSON.stringify({ sub: "hr-admin", role: "admin", exp: expiresAt }),
+    JSON.stringify({
+      sub: String(account.accountId),
+      name: account.name,
+      email: account.email,
+      level: account.levelName,
+      exp: expiresAt,
+    }),
     "utf8"
   ).toString("base64url");
   const sig = crypto.createHmac("sha256", hmacKey()).update(claims).digest("base64url");
@@ -66,26 +78,35 @@ export function createSessionToken(): { token: string; expiresAt: number } {
 }
 
 /**
- * Verify signature + expiry. Returns false for missing/malformed/forged/
- * expired tokens — never throws.
+ * Verify signature + expiry. Returns the parsed claims, or null for
+ * missing/malformed/forged/expired tokens — never throws.
  */
-export function verifySessionToken(token: string | null | undefined): boolean {
-  if (!token) return false;
+export interface SessionClaims {
+  /** System_Accounts.Account_ID as a string (the token's subject). */
+  sub: string;
+  name: string;
+  email: string;
+  level: string;
+  exp: number;
+}
+
+export function verifySessionToken(token: string | null | undefined): SessionClaims | null {
+  if (!token) return null;
   const dot = token.lastIndexOf(".");
-  if (dot <= 0) return false;
+  if (dot <= 0) return null;
 
   const claims = token.slice(0, dot);
   const sig = token.slice(dot + 1);
   const expected = crypto.createHmac("sha256", hmacKey()).update(claims).digest("base64url");
-  if (!digestsEqual(Buffer.from(sig, "utf8"), Buffer.from(expected, "utf8"))) return false;
+  if (!digestsEqual(Buffer.from(sig, "utf8"), Buffer.from(expected, "utf8"))) return null;
 
   try {
-    const parsed = JSON.parse(Buffer.from(claims, "base64url").toString("utf8")) as {
-      exp?: number;
-    };
-    return typeof parsed.exp === "number" && parsed.exp > Date.now();
+    const parsed = JSON.parse(Buffer.from(claims, "base64url").toString("utf8")) as Partial<SessionClaims>;
+    if (typeof parsed.exp !== "number" || parsed.exp <= Date.now()) return null;
+    if (typeof parsed.sub !== "string" || parsed.sub === "") return null;
+    return parsed as SessionClaims;
   } catch {
-    return false;
+    return null;
   }
 }
 

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { useAuth } from "@/components/AuthProvider";
+import type { PermissionKey } from "@/lib/rbac";
 import {
   IconAlert,
   IconBriefcase,
-  IconCalendar,
   IconChart,
   IconClock,
   IconEye,
@@ -25,38 +26,44 @@ import {
 
 interface SidebarItem {
   label: string;
-  /** Absent href = planned module — rendered disabled with a SOON chip. */
-  href?: string;
+  href: string;
   icon: ReactNode;
-  soon?: boolean;
+  /** The Access Level capability that unlocks this link (Phase 14). */
+  perm?: PermissionKey;
 }
 
-/** Required primary labels — exact wording from the redesign spec. */
+/**
+ * Required primary labels — exact wording from the redesign spec. Every
+ * link is gated by `perm`: an account whose Access Level lacks that
+ * capability does not see the item at all (and the server-side proxy
+ * refuses the route with a redirect, so this is never just cosmetic).
+ *
+ * Phase 13: "Timesheets" was removed from the rail — timesheets are now
+ * reached via Employees (per-employee) and Attendance Records, per spec.
+ */
 const PRIMARY: SidebarItem[] = [
-  { label: "Dashboard", href: "/", icon: <IconHome /> },
-  { label: "My Portal", icon: <IconBriefcase />, soon: true },
-  { label: "Employees", href: "/employees", icon: <IconUsers /> },
-  { label: "Attendance Records", href: "/attendance-records", icon: <IconScan /> },
-  { label: "Shifts", href: "/shifts", icon: <IconSchedule /> },
-  { label: "Reports", href: "/reports", icon: <IconChart /> },
+  { label: "Dashboard", href: "/", icon: <IconHome />, perm: "can_view_dashboard" },
+  { label: "My Portal", href: "/my-portal", icon: <IconBriefcase />, perm: "can_view_my_portal" },
+  { label: "Employees", href: "/employees", icon: <IconUsers />, perm: "can_view_employees" },
+  { label: "Attendance Records", href: "/attendance-records", icon: <IconScan />, perm: "can_view_attendance" },
+  { label: "Shifts", href: "/shifts", icon: <IconSchedule />, perm: "can_manage_shifts" },
+  { label: "Reports", href: "/reports", icon: <IconChart />, perm: "can_view_reports" },
   // Phase 7: every rail item now maps to its own route.
-  { label: "Exceptions", href: "/exceptions", icon: <IconAlert /> },
-  { label: "Timesheets", href: "/timesheets", icon: <IconCalendar /> },
-  { label: "Who's In", href: "/whos-in", icon: <IconEye /> },
-  { label: "Clocking Devices", href: "/clocking-devices", icon: <IconClock /> },
+  { label: "Exceptions", href: "/exceptions", icon: <IconAlert />, perm: "can_view_exceptions" },
+  { label: "Who's In", href: "/whos-in", icon: <IconEye />, perm: "can_view_whos_in" },
+  { label: "Clocking Devices", href: "/clocking-devices", icon: <IconClock />, perm: "can_view_devices" },
 ];
 
 /** Keeps existing Phase-1/2 system pages reachable from the new rail. */
 const SYSTEM: SidebarItem[] = [
-  { label: "ERP Sync Logs", href: "/sync", icon: <IconSync /> },
-  { label: "Settings", href: "/settings", icon: <IconSettings /> },
+  { label: "ERP Sync Logs", href: "/sync", icon: <IconSync />, perm: "can_view_sync" },
+  { label: "Settings", href: "/settings", icon: <IconSettings />, perm: "can_view_settings" },
 ];
 
 /** Exact-route items highlight on their page; "/" is the dashboard's exact match. */
 function isActive(item: SidebarItem, pathname: string): boolean {
-  if (!item.href || item.soon) return false;
   if (item.href === "/") return pathname === "/";
-  return pathname.startsWith(item.href);
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -74,21 +81,6 @@ function NavItem({
 }) {
   const base =
     "relative flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors";
-
-  if (item.soon || !item.href) {
-    return (
-      <span
-        title="Coming Soon — planned module, not available yet"
-        className={`${base} cursor-not-allowed border-transparent text-muted/50 select-none`}
-      >
-        {item.icon}
-        <span className="flex-1">{item.label}</span>
-        <span className="rounded border border-white/10 px-1.5 py-0.5 text-[8px] font-bold tracking-[0.16em] uppercase">
-          Soon
-        </span>
-      </span>
-    );
-  }
 
   const active = isActive(item, pathname);
   const skin = active
@@ -121,6 +113,12 @@ function RailContent({
   pathname: string;
   onNavigate: () => void;
 }) {
+  const { status, account, can } = useAuth();
+
+  // Hide every privileged link while the matrix is still resolving so a
+  // restricted account never flashes items it cannot actually use.
+  const ready = status === "ready" && account !== null;
+
   return (
     <>
       {/* Brand ---------------------------------------------------- */}
@@ -150,30 +148,41 @@ function RailContent({
         </div>
       ) : (
         <>
-          <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3 py-4">
-            {PRIMARY.map((item) => (
-              <NavItem
-                key={item.label}
-                item={item}
-                pathname={pathname}
-                onNavigate={onNavigate}
-              />
-            ))}
-
-            <div className="px-3 pt-5 pb-1.5">
-              <span className="text-[9px] font-bold tracking-[0.24em] text-muted/70 uppercase">
-                System
+          {!ready ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+              <span className="text-[10px] font-bold tracking-[0.24em] text-muted uppercase">
+                Access control
               </span>
+              <p className="text-[11px] leading-relaxed text-muted/70">
+                Loading permission profile…
+              </p>
             </div>
-            {SYSTEM.map((item) => (
-              <NavItem
-                key={item.label}
-                item={item}
-                pathname={pathname}
-                onNavigate={onNavigate}
-              />
-            ))}
-          </nav>
+          ) : (
+            <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3 py-4">
+              {PRIMARY.filter((item) => !item.perm || can(item.perm)).map((item) => (
+                <NavItem
+                  key={item.label}
+                  item={item}
+                  pathname={pathname}
+                  onNavigate={onNavigate}
+                />
+              ))}
+
+              <div className="px-3 pt-5 pb-1.5">
+                <span className="text-[9px] font-bold tracking-[0.24em] text-muted/70 uppercase">
+                  System
+                </span>
+              </div>
+              {SYSTEM.filter((item) => !item.perm || can(item.perm)).map((item) => (
+                <NavItem
+                  key={item.label}
+                  item={item}
+                  pathname={pathname}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </nav>
+          )}
 
           {/* Rail footer ------------------------------------------- */}
           <div className="space-y-1 border-t border-white/[0.06] px-5 py-4">
@@ -181,9 +190,15 @@ function RailContent({
               <span className="status-dot status-dot--on" />
               Bridge online
             </p>
-            <p className="text-[10px] tracking-[0.14em] text-muted uppercase">
-              17 branches · Biometric T&amp;A
-            </p>
+            {account ? (
+              <p className="truncate text-[10px] tracking-[0.12em] text-muted uppercase">
+                {account.name} · {account.levelName}
+              </p>
+            ) : (
+              <p className="text-[10px] tracking-[0.14em] text-muted uppercase">
+                17 branches · Biometric T&amp;A
+              </p>
+            )}
           </div>
         </>
       )}
@@ -210,8 +225,9 @@ interface SidebarProps {
  *
  * On the login wall the rail degrades to a brand plate so the sign-in
  * screen keeps its split-layout look without leaking the admin nav
- * pre-authentication. The rail always occupies 16rem at lg+, which is
- * what the `lg:pl-64` content offset in the root layout clears.
+ * pre-authentication. Inside the console the visible links are driven by
+ * the signed-in account's Access Level matrix (Phase 14): a Worker level
+ * yields a rail with a single "My Portal" item.
  */
 export default function Sidebar({ open, onClose, onLogin, activePath }: SidebarProps) {
   const content = (

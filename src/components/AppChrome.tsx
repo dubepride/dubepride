@@ -9,6 +9,7 @@ import Sidebar from "@/components/Sidebar";
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/login": "Secure Area",
+  "/my-portal": "My Portal",
   "/employees": "Employee Directory",
   "/exceptions": "Exceptions",
   "/timesheets": "Timesheets",

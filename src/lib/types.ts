@@ -8,6 +8,8 @@
  *                        the JSON API routes.
  */
 
+import type { PermissionKey, PermissionsMap } from "./rbac";
+
 /* ------------------------------------------------------------------ */
 /* Domain enums                                                        */
 /* ------------------------------------------------------------------ */
@@ -541,6 +543,203 @@ export interface TimesheetReportResponse {
   };
   generatedAt: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase 13/14 — relational settings, access matrix, system accounts   */
+/* ------------------------------------------------------------------ */
+
+/** One row of the Branches table (Phase 13 — the global branch list). */
+export interface BranchRow {
+  Branch_ID: number;
+  Branch_Name: string;
+  Created_At: number; // epoch ms
+}
+
+/** Branch wired for the Settings tab — includes usage counts. */
+export interface BranchDto {
+  id: number;
+  name: string;
+  employeeCount: number;
+  terminalCount: number;
+  createdAt: number;
+}
+
+export interface BranchesResponse {
+  branches: BranchDto[];
+  generatedAt: number;
+}
+
+/** One row of the Access_Levels table — the Matrix lives in Permissions_JSON. */
+export interface AccessLevelRow {
+  Access_Level_ID: number;
+  Level_Name: string;
+  Permissions_JSON: string;
+  Created_At: number;
+}
+
+/** Access level wired for the Settings tab (matrix + account headcount). */
+export interface AccessLevelDto {
+  id: number;
+  name: string;
+  permissions: PermissionsMap;
+  enabled: number;
+  total: number;
+  accountCount: number;
+}
+
+export interface AccessLevelsResponse {
+  levels: AccessLevelDto[];
+  generatedAt: number;
+}
+
+/** One row of the System_Accounts table (Phase 13). */
+export interface SystemAccountRow {
+  Account_ID: number;
+  First_Name: string;
+  Surname: string;
+  Company_Email: string;
+  Password_Hash: string;
+  Access_Level_ID: number | null;
+  Branch_ID: number | null;
+  /** Optional link to Employees — drives the My Portal worker demo. */
+  Employee_ID: number | null;
+  Created_At: number;
+}
+
+/** System account joined with its level, branch and (optional) employee. */
+export interface SystemAccountDto {
+  id: number;
+  firstName: string;
+  surname: string;
+  name: string;
+  email: string;
+  accessLevelId: number | null;
+  levelName: string | null;
+  branchId: number | null;
+  branchName: string | null;
+  employeeId: number | null;
+  employeeName: string | null;
+  createdAt: number;
+}
+
+export interface SystemAccountsResponse {
+  accounts: SystemAccountDto[];
+  /** Catalogue for the "Access Level" dropdown. */
+  levels: { id: number; name: string }[];
+  /** Catalogue for the "Branch" dropdown. */
+  branches: { id: number; name: string }[];
+  generatedAt: number;
+}
+
+/** Identity + permission snapshot returned by GET /api/auth/me. */
+export interface MeAccount {
+  accountId: number;
+  firstName: string;
+  surname: string;
+  name: string;
+  email: string;
+  accessLevelId: number | null;
+  levelName: string;
+  branchId: number | null;
+  branchName: string | null;
+  employeeId: number | null;
+}
+
+export interface MeResponse {
+  ok: boolean;
+  account: MeAccount;
+  permissions: PermissionsMap;
+  /** Page the account should land on after login / on denial redirects. */
+  home: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 14 — My Portal (worker remote clocking hub)                   */
+/* ------------------------------------------------------------------ */
+
+/** One row of the Time_Off_Requests table (worker portal). */
+export interface TimeOffRequestRow {
+  Request_ID: number;
+  Account_ID: number;
+  Employee_ID: number | null;
+  Type: string; // "Annual" | "Sick" | "Unpaid" | "Other"
+  Start_Date: string; // "YYYY-MM-DD"
+  End_Date: string;
+  Reason: string;
+  Status: string; // "Pending"
+  Created_At: number;
+}
+
+/** Orientation payload for /my-portal — who you are + your day status. */
+export interface MyPortalResponse {
+  ok: boolean;
+  account: {
+    accountId: number;
+    name: string;
+    email: string;
+    levelName: string;
+    branchName: string | null;
+  };
+  /** Linked roster identity (null when the account has no employee link). */
+  employee: {
+    id: number;
+    erpUserId: string;
+    fullName: string;
+    department: string;
+    position: string;
+    branch: string | null;
+    enrolled: boolean;
+  } | null;
+  status: {
+    /** Latest punch today is an IN → the remote clock button shows "out". */
+    clockedIn: boolean;
+    lastPunchAt: number | null;
+    lastDirection: "IN" | "OUT" | null;
+  };
+  generatedAt: number;
+}
+
+/** One punch row of the worker's own punch history table. */
+export interface MyPortalPunch {
+  logId: number;
+  timestamp: number;
+  direction: "IN" | "OUT";
+  verifyResult: VerifyResult;
+  syncStatus: ErpSyncStatus;
+  location: string | null;
+  branch: string | null;
+}
+
+export interface MyPortalHistoryResponse {
+  ok: boolean;
+  employeeId: number | null;
+  employeeName: string;
+  rows: MyPortalPunch[];
+  generatedAt: number;
+}
+
+/** POST /api/my-portal/clock — the remote clock result. */
+export interface MyPortalClockResponse {
+  ok: boolean;
+  punch: {
+    employeeName: string;
+    timestamp: number;
+    direction: "IN" | "OUT";
+    terminalName: string | null;
+  } | null;
+  message: string;
+  error?: string;
+}
+
+export interface MyPortalTimeOffResponse {
+  ok: boolean;
+  requests: TimeOffRequestRow[];
+  message: string;
+  error?: string;
+}
+
+/** All permission/account related re-exports for convenience. */
+export type { PermissionKey, PermissionsMap } from "./rbac";
 
 /* ------------------------------------------------------------------ */
 /* Phase 4 — interactive exception drill-down                          */

@@ -44,13 +44,15 @@ export default function Nav({ onLogin, title, onMenu }: NavProps) {
     return () => clearInterval(id);
   }, []);
 
-  // Sign out: clear the HttpOnly session cookie, then fall back to /login.
+  // Sign out: clear the HttpOnly session cookie, notify the AuthContext,
+  // then fall back to /login.
   async function signOut() {
     if (signingOut) return;
     setSigningOut(true);
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {
+      window.dispatchEvent(new Event("biobridge:auth"));
       router.push("/login");
       setSigningOut(false);
     }

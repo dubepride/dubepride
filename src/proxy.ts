@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  proxy.ts — the authentication wall for the entire BIOBRIDGE console
+ *  proxy.ts — the authentication + RBAC wall for BIOBRIDGE
  * ============================================================================
  *
  *  NOTE: In Next.js 16 `middleware.ts` is deprecated and renamed to
@@ -17,20 +17,62 @@
  *                                    terminals cannot hold a session cookie
  *    • static assets               — _next/*, images, favicons (via matcher)
  *
- *  PROTECTED (valid signed session cookie required):
- *    • every page      → 302 redirect to /login
+ *  AUTHENTICATED:
+ *    • every page      → 302 redirect to /login when no valid session
  *    • every admin API → 401 JSON (so polled panels fail fast, not with HTML)
  *
- *  Bonus: an already-signed-in user visiting /login is bounced to the
- *  dashboard (mirrors the "logged in → never see the login screen" flow).
+ *  RBAC (Phase 14):
+ *    Each page route requires the signed-in account's Access_Level to grant
+ *    the page's capability (Dashboard → can_view_dashboard, Settings →
+ *    can_view_settings, My Portal → can_view_my_portal, …). A user who
+ *    types /settings into the URL bar while holding a Worker level is
+ *    redirected to a page they can read (My Portal / Dashboard) instead of
+ *    being shown something they must not see. /api/* routes keep the
+ *    session-only wall here; each handler re-checks its own capability via
+ *    requirePermission() (defence in depth).
+ *
+ *  Bonus: an already-signed-in user visiting /login is bounced to their
+ *  own landing page (dashboard for admins, My Portal for workers).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
+import { accountByToken } from "@/lib/db";
+import type { PermissionKey } from "@/lib/rbac";
+import { SESSION_COOKIE } from "@/lib/session";
 
 /** Endpoints reachable without a session (see policy above). */
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
 const PUBLIC_PREFIXES = ["/api/biometrics/push"];
+
+/**
+ * Page → capability mapping (longest prefixes first; "/" is the catch-all
+ * dashboard). /api/* routes are intentionally absent — their handlers own
+ * the per-capability checks so API consumers get precise 401/403 JSON.
+ */
+const ROUTE_PERMISSION: ReadonlyArray<readonly [string, PermissionKey]> = [
+  ["/my-portal", "can_view_my_portal"],
+  ["/employees", "can_view_employees"],
+  ["/attendance-records", "can_view_attendance"],
+  ["/shifts", "can_manage_shifts"],
+  ["/reports", "can_view_reports"],
+  ["/timesheets", "can_view_attendance"],
+  ["/exceptions", "can_view_exceptions"],
+  ["/whos-in", "can_view_whos_in"],
+  ["/clocking-devices", "can_view_devices"],
+  ["/terminals", "can_view_devices"],
+  ["/sync", "can_view_sync"],
+  ["/settings", "can_view_settings"],
+  ["/", "can_view_dashboard"],
+];
+
+function routePermission(pathname: string): PermissionKey | null {
+  if (pathname.startsWith("/api/")) return null;
+  for (const [prefix, perm] of ROUTE_PERMISSION) {
+    if (prefix === "/") return perm; // catch-all — always reached last
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return perm;
+  }
+  return null;
+}
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;
@@ -40,16 +82,21 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+/** A page the account can actually read — or null (= hard deny, never loops). */
+function fallbackLanding(permissions: Record<string, boolean>): string | null {
+  if (permissions.can_view_my_portal) return "/my-portal";
+  if (permissions.can_view_dashboard) return "/";
+  return null;
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
-  const authenticated = verifySessionToken(
-    request.cookies.get(SESSION_COOKIE)?.value
-  );
+  const account = accountByToken(request.cookies.get(SESSION_COOKIE)?.value);
 
-  // ── Already signed in? /login → dashboard ─────────────────────────
+  // ── Already signed in? /login → their landing page ──────────────
   if (pathname === "/login") {
-    if (authenticated) {
-      return NextResponse.redirect(new URL("/", request.url), 302);
+    if (account) {
+      return NextResponse.redirect(new URL(account.home, request.url), 302);
     }
     return NextResponse.next();
   }
@@ -58,16 +105,31 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  // ── Admin APIs answer 401 JSON (never an HTML redirect) ───────────
-  if (!authenticated) {
+  // ── Unauthenticated: admin APIs answer 401 JSON, pages 302 to /login ──
+  if (!account) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json(
         { ok: false, error: "Unauthorized — sign in at /login." },
         { status: 401, headers: { "Cache-Control": "no-store" } }
       );
     }
-    // ── Pages: standard 302 Found back to the login screen ──────────
     return NextResponse.redirect(new URL("/login", request.url), 302);
+  }
+
+  // ── RBAC: server-side page protection (Phase 14 Objective 5) ──────
+  const required = routePermission(pathname);
+  if (required && account.permissions[required] !== true) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { ok: false, error: "Insufficient permissions for this action." },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    const landing = fallbackLanding(account.permissions);
+    if (landing) {
+      return NextResponse.redirect(new URL(landing, request.url), 302);
+    }
+    return new NextResponse("Insufficient permissions for this page.", { status: 403 });
   }
 
   return NextResponse.next();

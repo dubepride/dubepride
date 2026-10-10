@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Suspense } from "react";
 import AppChrome from "@/components/AppChrome";
+import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -50,18 +51,20 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-screen flex-col">
-        <Suspense fallback={<ChromeFallback />}>
-          <AppChrome />
-        </Suspense>
-        <div className="flex flex-1 flex-col lg:pl-64">
-          <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-7 sm:px-6 lg:px-8">
-            {children}
-          </main>
-          <footer className="border-t border-white/5 px-4 py-5 text-center text-[11px] tracking-[0.14em] text-muted uppercase">
-            BIOBRIDGE · Enterprise Biometric Time &amp; Attendance Bridge · push
-            endpoint <span className="font-mono text-neon">/api/biometrics/push</span>
-          </footer>
-        </div>
+        <AuthProvider>
+          <Suspense fallback={<ChromeFallback />}>
+            <AppChrome />
+          </Suspense>
+          <div className="flex flex-1 flex-col lg:pl-64">
+            <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-7 sm:px-6 lg:px-8">
+              {children}
+            </main>
+            <footer className="border-t border-white/5 px-4 py-5 text-center text-[11px] tracking-[0.14em] text-muted uppercase">
+              BIOBRIDGE · Enterprise Biometric Time &amp; Attendance Bridge · push
+              endpoint <span className="font-mono text-neon">/api/biometrics/push</span>
+            </footer>
+          </div>
+        </AuthProvider>
       </body>
     </html>
   );

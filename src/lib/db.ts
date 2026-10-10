@@ -33,13 +33,26 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { EXCEPTION_LABELS, EXCEPTION_RULES, EXCEPTION_TYPES } from "@/lib/exception-meta";
 import { dateKeyOf, formatPunchTime, startOfTodayMs } from "@/lib/format";
+import {
+  allPermissions,
+  countEnabled,
+  parsePermissions,
+  PERMISSION_KEYS,
+  serializePermissions,
+} from "@/lib/rbac";
+import { verifySessionToken } from "@/lib/session";
 import type {
+  AccessLevelDto,
+  AccessLevelRow,
   AttendanceRecord,
   AttendanceSummary,
   BacklogEntry,
+  BranchDto,
+  BranchRow,
   DashboardMetrics,
   EmployeePunchRow,
   EmployeeRow,
@@ -51,14 +64,20 @@ import type {
   ExceptionType,
   FeedEntry,
   FeedRow,
+  MyPortalPunch,
+  PermissionKey,
+  PermissionsMap,
   PunchDirection,
   ShiftRow,
   SyncBatchDto,
   SyncBatchRow,
   SyncStats,
+  SystemAccountDto,
+  SystemAccountRow,
   TerminalJoinedRow,
   TerminalRow,
   TerminalStatus,
+  TimeOffRequestRow,
   VerifyResult,
 } from "@/lib/types";
 
@@ -129,8 +148,11 @@ export function getDb(): DatabaseSync {
   seedShifts(db);
   seedRoster(db);
   seedTerminals(db);
+  seedBranches(db);
+  seedAccessLevels(db);
   ensureBranchCoverage(db);
   backfillEmployeeMeta(db);
+  seedSystemAccounts(db);
   seedAttendanceHistory(db);
 
   g.__taBridgeDb = db;
@@ -201,9 +223,47 @@ function migrate(db: DatabaseSync): void {
       Created_At       INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS Branches (
+      Branch_ID   INTEGER PRIMARY KEY AUTOINCREMENT,
+      Branch_Name TEXT    NOT NULL UNIQUE,
+      Created_At  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS Access_Levels (
+      Access_Level_ID  INTEGER PRIMARY KEY AUTOINCREMENT,
+      Level_Name       TEXT    NOT NULL UNIQUE,
+      Permissions_JSON TEXT    NOT NULL DEFAULT '{}',
+      Created_At       INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS System_Accounts (
+      Account_ID      INTEGER PRIMARY KEY AUTOINCREMENT,
+      First_Name      TEXT    NOT NULL,
+      Surname         TEXT    NOT NULL,
+      Company_Email   TEXT    NOT NULL UNIQUE,
+      Password_Hash   TEXT    NOT NULL,
+      Access_Level_ID INTEGER,
+      Branch_ID       INTEGER,
+      Employee_ID     INTEGER,
+      Created_At      INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS Time_Off_Requests (
+      Request_ID  INTEGER PRIMARY KEY AUTOINCREMENT,
+      Account_ID  INTEGER NOT NULL,
+      Employee_ID INTEGER,
+      Type        TEXT    NOT NULL,
+      Start_Date  TEXT    NOT NULL,
+      End_Date    TEXT    NOT NULL,
+      Reason      TEXT,
+      Status      TEXT    NOT NULL DEFAULT 'Pending',
+      Created_At  INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_logs_emp  ON Attendance_Logs (Employee_ID, Timestamp);
     CREATE INDEX IF NOT EXISTS idx_logs_sync ON Attendance_Logs (ERP_Sync_Status, Log_ID);
     CREATE INDEX IF NOT EXISTS idx_logs_ts   ON Attendance_Logs (Timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_tor_emp   ON Time_Off_Requests (Employee_ID);
   `);
 
   // Columns introduced by later phases — upgrade older data files in place.
@@ -560,6 +620,608 @@ function seedAttendanceHistory(db: DatabaseSync): void {
       }
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 13/14 — relational settings & access control                  */
+/* ------------------------------------------------------------------ */
+
+/** The 17 fixed branch sites — seeds the global Branches list. */
+const SEED_BRANCH_NAMES = Array.from({ length: 17 }, (_, i) => `Branch ${i + 1}`);
+
+/** Deterministic password digest for demo accounts (sha256, static salt). */
+export function hashPassword(password: string): string {
+  return crypto.createHash("sha256").update(`${password}::biobridge-salt`).digest("hex");
+}
+
+/** Constant behaviour comparison for the digest above. */
+export function verifyPassword(password: string, hash: string): boolean {
+  return hashPassword(password) === hash;
+}
+
+function seedBranches(db: DatabaseSync): void {
+  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches")?.c ?? 0;
+  if (count > 0) return;
+  for (const name of SEED_BRANCH_NAMES) {
+    exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
+  }
+}
+
+/** Start every level from "nothing allowed" and switch on its key set. */
+function levelWith(...keys: PermissionKey[]): PermissionsMap {
+  const map = allPermissions(false);
+  for (const key of keys) map[key] = true;
+  return map;
+}
+
+interface SeedAccessLevel {
+  name: string;
+  perms: PermissionsMap;
+}
+
+/**
+ * Baseline roles for the Access Level Matrix. The IT Administrator owns
+ * every capability; the Worker only sees My Portal — the exact split the
+ * sidebar + settings rendering use to demonstrate granular RBAC.
+ */
+const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
+  { name: "IT Administrator", perms: allPermissions(true) },
+  {
+    name: "HR Manager",
+    perms: levelWith(
+      "can_view_dashboard",
+      "can_view_employees",
+      "can_add_employee",
+      "can_edit_employee",
+      "can_delete_employee",
+      "can_manage_fingerprints",
+      "can_view_attendance",
+      "can_manage_shifts",
+      "can_view_reports",
+      "can_export_reports",
+      "can_view_exceptions",
+      "can_view_whos_in",
+      "can_view_devices",
+      "can_view_sync",
+      "can_view_settings",
+      "can_edit_settings",
+      "can_manage_branches",
+      "can_add_accounts"
+      // deliberately NO can_manage_access_levels / can_config_devices —
+      // the Settings tab bar hides Access Levels + Biometric Device for HR
+    ),
+  },
+  {
+    name: "Sales Manager",
+    perms: levelWith(
+      "can_view_dashboard",
+      "can_view_employees",
+      "can_view_reports",
+      "can_export_reports",
+      "can_view_exceptions",
+      "can_view_whos_in",
+      "can_view_devices"
+      // no attendance / shifts / settings / accounts
+    ),
+  },
+  {
+    name: "Worker",
+    perms: levelWith(
+      "can_view_my_portal",
+      "can_remote_clock",
+      "can_view_my_history",
+      "can_request_time_off"
+    ),
+  },
+];
+
+function seedAccessLevels(db: DatabaseSync): void {
+  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Access_Levels")?.c ?? 0;
+  if (count > 0) return;
+  for (const lvl of SEED_ACCESS_LEVELS) {
+    exec(
+      db,
+      "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
+      lvl.name,
+      serializePermissions(lvl.perms),
+      SEED_CREATED_AT
+    );
+  }
+}
+
+interface SeedAccount {
+  first: string;
+  surname: string;
+  email: string;
+  password: string;
+  level: string;
+  branch: string;
+  /** Optional Employees.ERP_User_ID linking the account to a roster row. */
+  employeeErp: string | null;
+}
+
+/**
+ * The demo directory. `admin@biobridge.example / biobridge-admin` keeps the
+ * app's long-standing default login working (empty email → this account),
+ * while the worker account demonstrates the "My Portal only" view.
+ */
+const SEED_ACCOUNTS: SeedAccount[] = [
+  {
+    first: "Bridge",
+    surname: "Admin",
+    email: "admin@biobridge.example",
+    password: "biobridge-admin",
+    level: "IT Administrator",
+    branch: "Branch 1",
+    employeeErp: "ERP-1001", // Amara — the admin's My Portal demo profile
+  },
+  {
+    first: "Grace",
+    surname: "Mwangi",
+    email: "hr@biobridge.example",
+    password: "hr-manager-2026",
+    level: "HR Manager",
+    branch: "Branch 4",
+    employeeErp: null,
+  },
+  {
+    first: "Daniel",
+    surname: "Otieno",
+    email: "sales@biobridge.example",
+    password: "sales-manager-2026",
+    level: "Sales Manager",
+    branch: "Branch 4",
+    employeeErp: null,
+  },
+  {
+    first: "Jayden",
+    surname: "Osei",
+    email: "worker@biobridge.example",
+    password: "worker-pass-2026",
+    level: "Worker",
+    branch: "Branch 3",
+    employeeErp: "ERP-1014", // Oliver — the worker portal demo profile
+  },
+];
+
+function seedSystemAccounts(db: DatabaseSync): void {
+  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts")?.c ?? 0;
+  if (count > 0) return;
+
+  const levelId = (name: string): number | null =>
+    queryOne<{ id: number }>(db, "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?", name)?.id ?? null;
+  const branchId = (name: string): number | null =>
+    queryOne<{ id: number }>(db, "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name = ?", name)?.id ?? null;
+  const employeeId = (erp: string | null): number | null =>
+    erp ? (queryOne<{ id: number }>(db, "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = ?", erp)?.id ?? null) : null;
+
+  for (const a of SEED_ACCOUNTS) {
+    exec(
+      db,
+      `INSERT INTO System_Accounts
+         (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      a.first,
+      a.surname,
+      a.email,
+      hashPassword(a.password),
+      levelId(a.level),
+      branchId(a.branch),
+      employeeId(a.employeeErp),
+      SEED_CREATED_AT
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Branches (Phase 13 — Settings tab 1)                                */
+/* ------------------------------------------------------------------ */
+
+/** Branch list with live headcounts (employees + terminals) per site. */
+export function listBranches(): BranchDto[] {
+  const db = getDb();
+  const rows = queryAll<BranchRow>(db, "SELECT * FROM Branches ORDER BY Branch_ID");
+  const employees = queryAll<{ Branch_Name: string; c: number }>(
+    db,
+    "SELECT Branch_Name, COUNT(*) AS c FROM Employees WHERE Branch_Name <> '' GROUP BY Branch_Name"
+  );
+  const terminals = queryAll<{ Branch_Name: string; c: number }>(
+    db,
+    "SELECT Branch_Name, COUNT(*) AS c FROM Terminals WHERE Branch_Name <> '' GROUP BY Branch_Name"
+  );
+  const empMap = new Map(employees.map((r) => [r.Branch_Name, r.c]));
+  const termMap = new Map(terminals.map((r) => [r.Branch_Name, r.c]));
+  return rows.map((r) => ({
+    id: r.Branch_ID,
+    name: r.Branch_Name,
+    employeeCount: empMap.get(r.Branch_Name) ?? 0,
+    terminalCount: termMap.get(r.Branch_Name) ?? 0,
+    createdAt: r.Created_At,
+  }));
+}
+
+/** The flat site names ("Branch 1" …) — branch dropdowns merge this with "Unassigned". */
+export function listBranchNames(): string[] {
+  return queryAll<BranchRow>(getDb(), "SELECT * FROM Branches ORDER BY Branch_ID").map((r) => r.Branch_Name);
+}
+
+export function createBranch(name: string): number {
+  const db = getDb();
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) throw new Error("Branch name is required.");
+  exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", trimmed, Date.now());
+  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+}
+
+/** Rename a site and keep the denormalised Employees/Terminals in sync. */
+export function renameBranch(branchId: number, name: string): void {
+  const db = getDb();
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) throw new Error("Branch name is required.");
+  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+  if (!current) throw new Error("That branch no longer exists.");
+  exec(db, "UPDATE Employees SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
+  exec(db, "UPDATE Terminals SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
+  exec(db, "UPDATE Branches SET Branch_Name = ? WHERE Branch_ID = ?", trimmed, branchId);
+}
+
+/** Remove a site; records that referenced it fall back to "Unassigned" (""). */
+export function deleteBranch(branchId: number): boolean {
+  const db = getDb();
+  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+  if (!current) return false;
+  exec(db, "UPDATE Employees SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
+  exec(db, "UPDATE Terminals SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
+  exec(db, "DELETE FROM Branches WHERE Branch_ID = ?", branchId);
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Access Levels (Phase 13 — Settings tab 2 / the Matrix)              */
+/* ------------------------------------------------------------------ */
+
+/** Every level with its parsed matrix + how many accounts hold it. */
+export function listAccessLevels(): AccessLevelDto[] {
+  const db = getDb();
+  const rows = queryAll<AccessLevelRow>(db, "SELECT * FROM Access_Levels ORDER BY Access_Level_ID");
+  const counts = queryAll<{ Access_Level_ID: number; c: number }>(
+    db,
+    "SELECT Access_Level_ID, COUNT(*) AS c FROM System_Accounts GROUP BY Access_Level_ID"
+  );
+  const countMap = new Map(counts.map((r) => [r.Access_Level_ID, r.c]));
+  return rows.map((r) => {
+    const permissions = parsePermissions(JSON.parse(r.Permissions_JSON || "{}"));
+    return {
+      id: r.Access_Level_ID,
+      name: r.Level_Name,
+      permissions,
+      enabled: countEnabled(permissions),
+      total: PERMISSION_KEYS.length,
+      accountCount: countMap.get(r.Access_Level_ID) ?? 0,
+      createdAt: r.Created_At,
+    };
+  });
+}
+
+/** New level starts with every capability off — the IT admin ticks the matrix. */
+export function createAccessLevel(name: string, permissions?: PermissionsMap): number {
+  const db = getDb();
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) throw new Error("Access level name is required.");
+  const perms = parsePermissions(permissions);
+  exec(
+    db,
+    "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
+    trimmed,
+    serializePermissions(perms),
+    Date.now()
+  );
+  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+}
+
+export interface AccessLevelPatch {
+  name?: string;
+  permissions?: PermissionsMap;
+}
+
+export function updateAccessLevel(levelId: number, patch: AccessLevelPatch): void {
+  const db = getDb();
+  const current = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+  if (!current) throw new Error("That access level no longer exists.");
+  const name = patch.name !== undefined ? patch.name.trim() : current.Level_Name;
+  if (!name) throw new Error("Access level name is required.");
+  const json =
+    patch.permissions !== undefined
+      ? serializePermissions(parsePermissions(patch.permissions))
+      : current.Permissions_JSON;
+  exec(db, "UPDATE Access_Levels SET Level_Name = ?, Permissions_JSON = ? WHERE Access_Level_ID = ?", name, json, levelId);
+}
+
+/** Levels still attached to accounts cannot be removed (avoid orphans). */
+export function deleteAccessLevel(levelId: number): { ok: boolean; reason?: string } {
+  const db = getDb();
+  const current = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+  if (!current) return { ok: false, reason: "That access level no longer exists." };
+  const used = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts WHERE Access_Level_ID = ?", levelId)?.c ?? 0;
+  if (used > 0) {
+    return {
+      ok: false,
+      reason: `${used} system account${used === 1 ? "" : "s"} still use this level — reassign them first.`,
+    };
+  }
+  exec(db, "DELETE FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* System Accounts (Phase 13 — Settings tab 3)                         */
+/* ------------------------------------------------------------------ */
+
+/** Account rows joined with level / branch / linked employee names. */
+export interface SystemAccountJoinedRow extends SystemAccountRow {
+  Level_Name: string | null;
+  Branch_Name: string | null;
+  Employee_Name: string | null;
+}
+
+export function listSystemAccounts(): SystemAccountDto[] {
+  const db = getDb();
+  const rows = queryAll<SystemAccountJoinedRow>(
+    db,
+    `SELECT a.*, l.Level_Name, b.Branch_Name, e.Full_Name AS Employee_Name
+       FROM System_Accounts a
+       LEFT JOIN Access_Levels l ON l.Access_Level_ID = a.Access_Level_ID
+       LEFT JOIN Branches b     ON b.Branch_ID     = a.Branch_ID
+       LEFT JOIN Employees e    ON e.Employee_ID   = a.Employee_ID
+      ORDER BY a.Account_ID`
+  );
+  return rows.map((r) => ({
+    id: r.Account_ID,
+    firstName: r.First_Name,
+    surname: r.Surname,
+    name: `${r.First_Name} ${r.Surname}`.trim(),
+    email: r.Company_Email,
+    accessLevelId: r.Access_Level_ID,
+    levelName: r.Level_Name,
+    branchId: r.Branch_ID,
+    branchName: r.Branch_Name,
+    employeeId: r.Employee_ID,
+    employeeName: r.Employee_Name,
+    createdAt: r.Created_At,
+  }));
+}
+
+export interface SystemAccountInput {
+  firstName: string;
+  surname: string;
+  email: string;
+  password: string;
+  accessLevelId: number | null;
+  branchId: number | null;
+  employeeId: number | null;
+}
+
+export function createSystemAccount(input: SystemAccountInput): number {
+  const db = getDb();
+  const first = (input.firstName ?? "").trim();
+  const surname = (input.surname ?? "").trim();
+  const email = (input.email ?? "").trim().toLowerCase();
+  const password = input.password ?? "";
+  if (!first || !surname || !email || !password) {
+    throw new Error("First name, surname, email and password are required.");
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Enter a valid company email address.");
+  }
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.");
+  }
+  exec(
+    db,
+    `INSERT INTO System_Accounts
+       (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    first,
+    surname,
+    email,
+    hashPassword(password),
+    input.accessLevelId,
+    input.branchId,
+    input.employeeId,
+    Date.now()
+  );
+  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+}
+
+/** Remove an account (guarded: the built-in bridge administrator stays). */
+export function deleteSystemAccount(accountId: number): { ok: boolean; reason?: string } {
+  const db = getDb();
+  const row = queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
+  if (!row) return { ok: false, reason: "That account no longer exists." };
+  if (row.Company_Email.toLowerCase() === "admin@biobridge.example") {
+    return { ok: false, reason: "The built-in bridge administrator cannot be removed." };
+  }
+  exec(db, "DELETE FROM Time_Off_Requests WHERE Account_ID = ?", accountId);
+  exec(db, "DELETE FROM System_Accounts WHERE Account_ID = ?", accountId);
+  return { ok: true };
+}
+
+export function systemAccountById(accountId: number): SystemAccountRow | null {
+  return queryOne<SystemAccountRow>(getDb(), "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId) ?? null;
+}
+
+/** Case-insensitive email lookup for the login handler. */
+export function findAccountByEmail(email: string): SystemAccountRow | null {
+  const normalized = (email ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    queryOne<SystemAccountRow>(
+      getDb(),
+      "SELECT * FROM System_Accounts WHERE Company_Email COLLATE NOCASE = ?",
+      normalized
+    ) ?? null
+  );
+}
+
+/**
+ * The server-side view of a signed-in account: identity + the live
+ * permission matrix resolved from their Access_Level (never from the
+ * token). `home` is the page they should land on after a fresh login.
+ */
+export interface ResolvedAccount {
+  accountId: number;
+  firstName: string;
+  surname: string;
+  name: string;
+  email: string;
+  accessLevelId: number | null;
+  levelName: string;
+  permissions: PermissionsMap;
+  branchId: number | null;
+  branchName: string | null;
+  employeeId: number | null;
+  home: string;
+}
+
+export function resolveAccount(account: SystemAccountRow): ResolvedAccount {
+  const db = getDb();
+  const level =
+    account.Access_Level_ID != null
+      ? queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", account.Access_Level_ID)
+      : undefined;
+  const branch =
+    account.Branch_ID != null
+      ? queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", account.Branch_ID)
+      : undefined;
+  const permissions = parsePermissions(level?.Permissions_JSON);
+  return {
+    accountId: account.Account_ID,
+    firstName: account.First_Name,
+    surname: account.Surname,
+    name: `${account.First_Name} ${account.Surname}`.trim(),
+    email: account.Company_Email,
+    accessLevelId: level?.Access_Level_ID ?? null,
+    levelName: level?.Level_Name ?? "No access level",
+    permissions,
+    branchId: branch?.Branch_ID ?? null,
+    branchName: branch?.Branch_Name ?? null,
+    employeeId: account.Employee_ID ?? null,
+    home: permissions.can_view_dashboard ? "/" : "/my-portal",
+  };
+}
+
+/**
+ * Resolve a session cookie to a full account — used by proxy.ts for page
+ * permission gating and by every API handler for authorization. Returns
+ * null when the token is missing/forged/expired OR the account was deleted.
+ */
+export function accountByToken(token: string | null | undefined): ResolvedAccount | null {
+  const claims = verifySessionToken(token);
+  if (!claims) return null;
+  const id = Number(claims.sub);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const account = systemAccountById(id);
+  if (!account) return null;
+  return resolveAccount(account);
+}
+
+/* ------------------------------------------------------------------ */
+/* Time-off requests (Phase 14 — My Portal widget)                     */
+/* ------------------------------------------------------------------ */
+
+export function listTimeOffRequests(employeeId: number | null): TimeOffRequestRow[] {
+  if (employeeId === null) return [];
+  return queryAll<TimeOffRequestRow>(
+    getDb(),
+    "SELECT * FROM Time_Off_Requests WHERE Employee_ID = ? ORDER BY Created_At DESC",
+    employeeId
+  );
+}
+
+export interface TimeOffInput {
+  accountId: number;
+  employeeId: number | null;
+  type: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+}
+
+export function createTimeOffRequest(input: TimeOffInput): TimeOffRequestRow {
+  const db = getDb();
+  const type = (input.type ?? "").trim();
+  const start = (input.startDate ?? "").trim();
+  const end = (input.endDate ?? "").trim();
+  const reason = (input.reason ?? "").trim();
+  if (!["Annual", "Sick", "Unpaid", "Other"].includes(type)) {
+    throw new Error("Choose a valid request type.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    throw new Error("Request dates must use YYYY-MM-DD.");
+  }
+  if (end < start) throw new Error("The end date cannot be before the start date.");
+  exec(
+    db,
+    `INSERT INTO Time_Off_Requests
+       (Account_ID, Employee_ID, Type, Start_Date, End_Date, Reason, Status, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+    input.accountId,
+    input.employeeId,
+    type,
+    start,
+    end,
+    reason,
+    Date.now()
+  );
+  const id = Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+  const row = queryOne<TimeOffRequestRow>(db, "SELECT * FROM Time_Off_Requests WHERE Request_ID = ?", id);
+  if (!row) throw new Error("Could not store the request.");
+  return row;
+}
+
+/* ------------------------------------------------------------------ */
+/* My Portal data (Phase 14 — worker clocking hub)                     */
+/* ------------------------------------------------------------------ */
+
+/** Latest punch today for an employee → the "clocked in?" badge. */
+export function employeeDayStatus(employeeId: number): {
+  clockedIn: boolean;
+  lastPunchAt: number | null;
+  lastDirection: PunchDirection | null;
+} {
+  const row = queryOne<{ ts: number; dir: PunchDirection }>(
+    getDb(),
+    `SELECT l.Timestamp AS ts, l.Direction AS dir
+       FROM Attendance_Logs l
+      WHERE l.Employee_ID = ? AND l.Timestamp >= ?
+      ORDER BY l.Timestamp DESC, l.Log_ID DESC
+      LIMIT 1`,
+    employeeId,
+    startOfTodayMs()
+  );
+  if (!row) return { clockedIn: false, lastPunchAt: null, lastDirection: null };
+  return { clockedIn: row.dir === "IN", lastPunchAt: row.ts, lastDirection: row.dir };
+}
+
+/** The worker's own punch history feed (newest first). */
+export function getEmployeeRecentPunches(employeeId: number, limit: number): MyPortalPunch[] {
+  return queryAll<MyPortalPunch>(
+    getDb(),
+    `SELECT l.Log_ID                              AS logId,
+            l.Timestamp                           AS timestamp,
+            l.Direction                           AS direction,
+            l.Verify_Result                       AS verifyResult,
+            l.ERP_Sync_Status                     AS syncStatus,
+            t.Location_Name                       AS location,
+            t.Branch_Name                         AS branch
+       FROM Attendance_Logs l
+       LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
+      WHERE l.Employee_ID = ?
+      ORDER BY l.Timestamp DESC, l.Log_ID DESC
+      LIMIT ?`,
+    employeeId,
+    Math.max(1, Math.min(50, limit))
+  );
 }
 
 /* ------------------------------------------------------------------ */

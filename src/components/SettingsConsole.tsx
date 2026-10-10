@@ -9,24 +9,14 @@ import type {
   TerminalsResponse,
 } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
+import { useAuth } from "@/components/AuthProvider";
+import type { PermissionKey } from "@/lib/rbac";
+import {
+  AccessLevelsTab,
+  BranchesTab,
+  SystemAccountsTab,
+} from "./AccessControlPanel";
 import { IconCheck, IconServer } from "./icons";
-
-/**
- * ============================================================================
- *  Settings Console (Phase 11) — system configuration & device integration
- * ============================================================================
- *
- *  Five tabs (General · Biometric Device · Working Hours · Notifications ·
- *  Backup) rendered as a segmented control; the active tab is a local
- *  useState so switching never touches the URL. Every tab is a glass panel
- *  with a Save button that persists the whole settings object to
- *  window.localStorage under "biobridge.settings" and flashes a
- *  "Settings saved" confirmation chip.
- *
- *  Hydration happens inside a useEffect via queueMicrotask so the initial
- *  render always matches the server (static defaults), keeping the
- *  react-hooks/set-state-in-effect rule happy.
- */
 
 /* ------------------------------------------------------------------ */
 /* Shared form styling                                                 */
@@ -100,8 +90,28 @@ const DEFAULTS: SettingsState = {
   retentionDays: "30",
 };
 
-const TABS = ["General", "Biometric Device", "Working Hours", "Notifications", "Backup"] as const;
-type TabName = (typeof TABS)[number];
+/**
+ * All eight tabs in their presentation order. Each carries the capability
+ * that unlocks it (Phase 14). An account lacking the capability never sees
+ * the tab, and the server-side proxy refuses the route entirely.
+ */
+interface TabDef {
+  id: string;
+  label: string;
+  perm: PermissionKey;
+}
+
+/** Order mirrors the spec's requested sequence: Branches / Access Levels / System Accounts / Biometric Device first. */
+const TABS: TabDef[] = [
+  { id: "general", label: "General", perm: "can_edit_settings" },
+  { id: "branches", label: "Branches", perm: "can_manage_branches" },
+  { id: "access-levels", label: "Access Levels", perm: "can_manage_access_levels" },
+  { id: "accounts", label: "System Accounts", perm: "can_add_accounts" },
+  { id: "device", label: "Biometric Device", perm: "can_config_devices" },
+  { id: "working-hours", label: "Working Hours", perm: "can_edit_settings" },
+  { id: "notifications", label: "Notifications", perm: "can_edit_settings" },
+  { id: "backup", label: "Backup", perm: "can_edit_settings" },
+];
 
 const TIME_ZONES = ["Africa/Nairobi", "Europe/London", "America/New_York", "Asia/Dubai", "UTC"];
 const DATE_FORMATS = ["DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
@@ -265,7 +275,8 @@ function Panel({
 /* ------------------------------------------------------------------ */
 
 export default function SettingsConsole() {
-  const [tab, setTab] = useState<TabName>("General");
+  const { can, permissions } = useAuth();
+  const [tab, setTab] = useState<string>("general");
   const [settings, setSettings] = useState<SettingsState>(DEFAULTS);
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<number | null>(null);
@@ -312,6 +323,307 @@ export default function SettingsConsole() {
     savedTimer.current = window.setTimeout(() => setSaved(false), 3500);
   };
 
+  // Filter tabs by the signed-in account's permissions. When the active tab
+  // is not in the permitted set, fall back to the first permitted tab.
+  const visibleTabs = useMemo(() => TABS.filter((t) => can(t.perm)), [can]);
+  if (visibleTabs.length > 0 && !visibleTabs.some((t) => t.id === tab)) {
+    // Render-phase adjustment — safe because `setTab` runs before paint.
+    setTab(visibleTabs[0].id);
+  }
+
+  // Build the tab content based on permissions
+  const renderTab = () => {
+    if (permissions === null) {
+      return (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted">
+          <span className="spinner" /> Loading permission profile…
+        </div>
+      );
+    }
+    if (visibleTabs.length === 0) {
+      return (
+        <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-sm text-muted">
+          No settings sections are permitted for this access level.
+        </p>
+      );
+    }
+
+    switch (tab) {
+      case "general":
+        return (
+          <Panel
+            title="General"
+            subtitle="Identity of this bridge — how it names itself and formats time."
+            saved={saved}
+            onSave={save}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="System Name" htmlFor="set-system-name">
+                <input
+                  id="set-system-name"
+                  className={INPUT}
+                  value={settings.systemName}
+                  onChange={(e) => update("systemName", e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Organisation" htmlFor="set-org">
+                <input
+                  id="set-org"
+                  className={INPUT}
+                  value={settings.organisation}
+                  onChange={(e) => update("organisation", e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Time Zone" htmlFor="set-tz">
+                <select
+                  id="set-tz"
+                  className={INPUT}
+                  value={settings.timeZone}
+                  onChange={(e) => update("timeZone", e.target.value)}
+                >
+                  {TIME_ZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Date Format" htmlFor="set-date-format">
+                <select
+                  id="set-date-format"
+                  className={INPUT}
+                  value={settings.dateFormat}
+                  onChange={(e) => update("dateFormat", e.target.value)}
+                >
+                  {DATE_FORMATS.map((fmt) => (
+                    <option key={fmt} value={fmt}>
+                      {fmt}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Language" htmlFor="set-lang">
+                <select
+                  id="set-lang"
+                  className={INPUT}
+                  value={settings.language}
+                  onChange={(e) => update("language", e.target.value)}
+                >
+                  {LANGUAGES.map((lng) => (
+                    <option key={lng} value={lng}>
+                      {lng}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          </Panel>
+        );
+
+      case "branches":
+        return <BranchesTab />;
+
+      case "access-levels":
+        return <AccessLevelsTab />;
+
+      case "accounts":
+        return <SystemAccountsTab />;
+
+      case "device":
+        return (
+          <Panel
+            title="Biometric Device"
+            subtitle="Default terminal for the simulator & test widget — the live bridge polls every terminal independently."
+            saved={saved}
+            onSave={save}
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-muted">
+                The bridge discovers all 17 branches&apos; terminals automatically via the
+                ADMS push channel (see <code className="font-mono text-neon">/api/biometrics/push</code>). The
+                selector below only sets which terminal the dashboard&apos;s &apos;Test Clock In&apos;
+                widget pretends to be when you press it.
+              </p>
+              <Field label="Default Device" htmlFor="set-default-device">
+                <select
+                  id="set-default-device"
+                  className={INPUT}
+                  value={settings.defaultDeviceId ?? ""}
+                  onChange={(e) => update("defaultDeviceId", e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Use the first online terminal</option>
+                </select>
+              </Field>
+            </div>
+          </Panel>
+        );
+
+      case "working-hours":
+        return (
+          <Panel
+            title="Working Hours"
+            subtitle="Shift window, week pattern and grace periods — these drive the exception engine and the daily digest."
+            saved={saved}
+            onSave={save}
+          >
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Day Starts" htmlFor="set-day-start">
+                <input
+                  id="set-day-start"
+                  type="time"
+                  className={INPUT}
+                  value={settings.dayStart}
+                  onChange={(e) => update("dayStart", e.target.value)}
+                />
+              </Field>
+              <Field label="Day Ends" htmlFor="set-day-end">
+                <input
+                  id="set-day-end"
+                  type="time"
+                  className={INPUT}
+                  value={settings.dayEnd}
+                  onChange={(e) => update("dayEnd", e.target.value)}
+                />
+              </Field>
+              <Field label="Break (minutes)" htmlFor="set-break">
+                <input
+                  id="set-break"
+                  type="number"
+                  min="0"
+                  className={INPUT}
+                  value={settings.breakMinutes}
+                  onChange={(e) => update("breakMinutes", e.target.value)}
+                />
+              </Field>
+              <Field label="Grace (minutes)" htmlFor="set-grace">
+                <input
+                  id="set-grace"
+                  type="number"
+                  min="0"
+                  className={INPUT}
+                  value={settings.graceMinutes}
+                  onChange={(e) => update("graceMinutes", e.target.value)}
+                />
+              </Field>
+              <Field label="Working Days" htmlFor="set-days">
+                <div className="flex flex-wrap gap-1.5">
+                  {DAYS.map((d) => (
+                    <label key={d} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-1.5 text-[11px] font-bold tracking-[0.14em] text-ink/90 cursor-pointer transition hover:border-white/20">
+                      <input
+                        type="checkbox"
+                        checked={settings.workingDays.includes(d)}
+                        onChange={(e) =>
+                          update(
+                            "workingDays",
+                            e.target.checked
+                              ? [...settings.workingDays, d]
+                              : settings.workingDays.filter((wd) => wd !== d)
+                          )
+                        }
+                        className="h-4 w-4 accent-[#00E676]"
+                      />
+                      {d}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+          </Panel>
+        );
+
+      case "notifications":
+        return (
+          <Panel
+            title="Notifications"
+            subtitle="Alert rules + recipients — these are consumed by the exception engine and the ERP sync monitor."
+            saved={saved}
+            onSave={save}
+          >
+            <div className="space-y-5">
+              {NOTIFICATION_ROWS.map((row) => (
+                <div key={row.key} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <Toggle
+                      on={settings[row.key]}
+                      label={row.label}
+                      onChange={(next) => update(row.key, next)}
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-ink">{row.label}</p>
+                      <p className="text-[11px] text-muted">{row.desc}</p>
+                    </div>
+                  </div>
+                  {row.time && (
+                    <label className="flex items-center gap-2 text-[11px] text-muted">
+                      Cut-off
+                      <input
+                        type="time"
+                        className={INPUT}
+                        value={settings.absentAt}
+                        onChange={(e) => update("absentAt", e.target.value)}
+                        style={{ width: "100px" }}
+                      />
+                    </label>
+                  )}
+                </div>
+              ))}
+              <Field label="Recipients" htmlFor="set-recipients">
+                <input
+                  id="set-recipients"
+                  className={INPUT}
+                  value={settings.recipients}
+                  onChange={(e) => update("recipients", e.target.value)}
+                  placeholder="hr@biobridge.example, it@biobridge.example"
+                />
+              </Field>
+            </div>
+          </Panel>
+        );
+
+      case "backup":
+        return (
+          <Panel
+            title="Backup"
+            subtitle="SQLite file rotation — the bridge keeps a dated copy of data/ta-bridge.db on the server."
+            saved={saved}
+            onSave={save}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Schedule" htmlFor="set-backup-schedule">
+                <select
+                  id="set-backup-schedule"
+                  className={INPUT}
+                  value={settings.backupSchedule}
+                  onChange={(e) => update("backupSchedule", e.target.value)}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </Field>
+              <Field label="Retention (days)" htmlFor="set-retention">
+                <select
+                  id="set-retention"
+                  className={INPUT}
+                  value={settings.retentionDays}
+                  onChange={(e) => update("retentionDays", e.target.value)}
+                >
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+              </Field>
+            </div>
+          </Panel>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header ------------------------------------------------------ */}
@@ -319,10 +631,10 @@ export default function SettingsConsole() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-ink">Settings</h1>
           <p className="mt-1 text-sm text-muted">
-            System configuration · device integration · notifications
+            System configuration · device integration · notifications · access control
           </p>
         </div>
-        <span className="chip chip--muted">Phase 11</span>
+        <span className="chip chip--muted">Phase 13/14</span>
       </div>
 
       {/* Segmented tab control --------------------------------------- */}
@@ -330,592 +642,28 @@ export default function SettingsConsole() {
         aria-label="Settings sections"
         className="scroll-thin -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1"
       >
-        {TABS.map((t) => {
-          const active = t === tab;
+        {visibleTabs.map((t) => {
+          const active = t.id === tab;
           return (
             <button
-              key={t}
+              key={t.id}
               type="button"
               aria-current={active ? "page" : undefined}
-              onClick={() => setTab(t)}
+              onClick={() => setTab(t.id)}
               className={`flex-none rounded-xl border px-4 py-2.5 text-xs font-bold tracking-wide transition-colors ${
                 active
                   ? "border-neon/50 bg-neon/10 text-neon shadow-[0_0_18px_rgba(0,230,118,0.18)]"
                   : "border-white/10 bg-white/[0.03] text-muted hover:border-white/25 hover:text-ink"
               }`}
             >
-              {t}
+              {t.label}
             </button>
           );
         })}
       </nav>
 
-      {/* Active tab -------------------------------------------------- */}
-      {tab === "General" ? (
-        <Panel
-          title="General"
-          subtitle="Identity of this bridge — how it names itself and formats time."
-          saved={saved}
-          onSave={save}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="System Name" htmlFor="set-system-name">
-              <input
-                id="set-system-name"
-                className={INPUT}
-                value={settings.systemName}
-                onChange={(e) => update("systemName", e.target.value)}
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="Organisation" htmlFor="set-org">
-              <input
-                id="set-org"
-                className={INPUT}
-                value={settings.organisation}
-                onChange={(e) => update("organisation", e.target.value)}
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="Time Zone" htmlFor="set-tz">
-              <select
-                id="set-tz"
-                className={INPUT}
-                value={settings.timeZone}
-                onChange={(e) => update("timeZone", e.target.value)}
-              >
-                {TIME_ZONES.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Date Format" htmlFor="set-date-format">
-              <select
-                id="set-date-format"
-                className={INPUT}
-                value={settings.dateFormat}
-                onChange={(e) => update("dateFormat", e.target.value)}
-              >
-                {DATE_FORMATS.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Language" htmlFor="set-language">
-              <select
-                id="set-language"
-                className={INPUT}
-                value={settings.language}
-                onChange={(e) => update("language", e.target.value)}
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        </Panel>
-      ) : null}
-
-      {tab === "Biometric Device" ? (
-        <BiometricTab settings={settings} update={update} saved={saved} onSave={save} />
-      ) : null}
-
-      {tab === "Working Hours" ? (
-        <Panel
-          title="Working Hours"
-          subtitle="The shift window the bridge uses to classify present / late / absent."
-          saved={saved}
-          onSave={save}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Day Start" htmlFor="set-day-start">
-              <input
-                id="set-day-start"
-                type="time"
-                className={INPUT}
-                value={settings.dayStart}
-                onChange={(e) => update("dayStart", e.target.value)}
-              />
-            </Field>
-            <Field label="Day End" htmlFor="set-day-end">
-              <input
-                id="set-day-end"
-                type="time"
-                className={INPUT}
-                value={settings.dayEnd}
-                onChange={(e) => update("dayEnd", e.target.value)}
-              />
-            </Field>
-          </div>
-
-          <div>
-            <span className={LABEL}>Working Days</span>
-            <div className="flex flex-wrap gap-2">
-              {DAYS.map((d) => {
-                const on = settings.workingDays.includes(d);
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() =>
-                      update(
-                        "workingDays",
-                        on
-                          ? settings.workingDays.filter((x) => x !== d)
-                          : [...settings.workingDays, d]
-                      )
-                    }
-                    className={`rounded-xl border px-3.5 py-2 text-xs font-bold transition-colors ${
-                      on
-                        ? "border-neon/50 bg-neon/10 text-neon"
-                        : "border-white/10 bg-white/[0.04] text-muted hover:border-white/25 hover:text-ink"
-                    }`}
-                  >
-                    {d}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Break Duration" htmlFor="set-break">
-              <select
-                id="set-break"
-                className={INPUT}
-                value={settings.breakMinutes}
-                onChange={(e) => update("breakMinutes", e.target.value)}
-              >
-                <option value="0">No break</option>
-                <option value="30">30 minutes</option>
-                <option value="45">45 minutes</option>
-                <option value="60">60 minutes</option>
-              </select>
-            </Field>
-            <Field
-              label="Lateness Grace Period"
-              htmlFor="set-grace"
-              hint="Minutes past Day Start before a punch counts as late."
-            >
-              <select
-                id="set-grace"
-                className={INPUT}
-                value={settings.graceMinutes}
-                onChange={(e) => update("graceMinutes", e.target.value)}
-              >
-                <option value="5">5 minutes</option>
-                <option value="10">10 minutes</option>
-                <option value="15">15 minutes</option>
-              </select>
-            </Field>
-          </div>
-
-          <div className="glass-inset px-4 py-3 text-xs text-muted">
-            Shift window{" "}
-            <span className="font-mono font-semibold text-neon">{settings.dayStart}</span> →{" "}
-            <span className="font-mono font-semibold text-neon">{settings.dayEnd}</span> ·{" "}
-            <span className="font-semibold text-ink">{settings.workingDays.length}</span> working
-            day{settings.workingDays.length === 1 ? "" : "s"}
-          </div>
-        </Panel>
-      ) : null}
-
-      {tab === "Notifications" ? (
-        <Panel
-          title="Notifications"
-          subtitle="Which events raise an alert, and who receives them."
-          saved={saved}
-          onSave={save}
-        >
-          <div className="divide-y divide-white/[0.05]">
-            {NOTIFICATION_ROWS.map((row) => {
-              const on = settings[row.key];
-              return (
-                <div
-                  key={row.key}
-                  className="flex items-start justify-between gap-4 py-3.5 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-ink">{row.label}</p>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{row.desc}</p>
-                    {row.time && on ? (
-                      <input
-                        type="time"
-                        aria-label="Absent alert cut-off time"
-                        className={`${INPUT} mt-2 w-32`}
-                        value={settings.absentAt}
-                        onChange={(e) => update("absentAt", e.target.value)}
-                      />
-                    ) : null}
-                  </div>
-                  <Toggle
-                    on={on}
-                    label={row.label}
-                    onChange={(next) => update(row.key, next)}
-                  />
-                </div>
-              );
-            })}
-          </div>
-
-          <Field
-            label="Alert Recipients"
-            htmlFor="set-recipients"
-            hint="Comma-separated list of email addresses."
-          >
-            <input
-              id="set-recipients"
-              type="email"
-              className={INPUT}
-              value={settings.recipients}
-              onChange={(e) => update("recipients", e.target.value)}
-              autoComplete="off"
-            />
-          </Field>
-        </Panel>
-      ) : null}
-
-      {tab === "Backup" ? (
-        <BackupTab settings={settings} update={update} saved={saved} onSave={save} />
-      ) : null}
+      {/* Active tab content ------------------------------------------ */}
+      {renderTab()}
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Tab 2 — Biometric Device                                            */
-/* ------------------------------------------------------------------ */
-
-function BiometricTab({
-  settings,
-  update,
-  saved,
-  onSave,
-}: {
-  settings: SettingsState;
-  update: <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => void;
-  saved: boolean;
-  onSave: () => void;
-}) {
-  const { data, loading, error } = usePoll<TerminalsResponse>("/api/terminals", 5000);
-  const terminals = useMemo(() => data?.terminals ?? [], [data]);
-
-  // Follow the saved default, falling back to the first registered device.
-  const selected = useMemo(
-    () => terminals.find((t) => t.id === settings.defaultDeviceId) ?? terminals[0] ?? null,
-    [terminals, settings.defaultDeviceId]
-  );
-
-  const [testing, setTesting] = useState(false);
-  const [testPunch, setTestPunch] = useState<TestPunch | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
-
-  async function testDevice() {
-    if (!selected) return;
-    setTesting(true);
-    setTestPunch(null);
-    setTestError(null);
-    try {
-      const res = await fetch("/api/attendance/punch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ terminalId: selected.id }),
-      });
-      const json = (await res.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; punch?: TestPunch }
-        | null;
-      if (!res.ok || !json?.ok || !json.punch) {
-        throw new Error(json?.error || `HTTP ${res.status}`);
-      }
-      setTestPunch(json.punch);
-    } catch (err) {
-      setTestError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  const isOnline = selected?.status === "Online";
-
-  return (
-    <Panel
-      title="Biometric Device"
-      subtitle="Inspect a fingerprint terminal and push a simulated scan through its channel."
-      saved={saved}
-      onSave={onSave}
-    >
-      {/* Device selector ------------------------------------------- */}
-      <Field
-        label="Device"
-        htmlFor="set-device"
-        hint="Selecting a device here also persists it as the bridge default."
-      >
-        <select
-          id="set-device"
-          className={INPUT}
-          value={selected?.id ?? ""}
-          disabled={terminals.length === 0}
-          onChange={(e) => update("defaultDeviceId", Number(e.target.value))}
-        >
-          {terminals.length === 0 ? (
-            <option value="">No clocking devices registered</option>
-          ) : null}
-          {terminals.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.location} · {t.branch}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      {loading && !data ? (
-        <div className="glass-inset flex items-center gap-3 px-4 py-6 text-xs text-muted">
-          <span className="spinner" aria-hidden="true" />
-          Contacting the terminal registry…
-        </div>
-      ) : null}
-
-      {error && !data ? (
-        <p className="rise rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
-          Device registry unavailable — {error}. Retrying…
-        </p>
-      ) : null}
-
-      {data && terminals.length === 0 ? (
-        <div className="glass-inset px-4 py-6 text-center text-xs text-muted">
-          No clocking devices are registered yet — add one from the{" "}
-          <span className="text-neon">Clocking Devices</span> page.
-        </div>
-      ) : null}
-
-      {selected ? (
-        <>
-          {/* Diagnostic card --------------------------------------- */}
-          <div
-            className={`glass-inset p-4 ring-1 ${isOnline ? "ring-neon/40" : "ring-danger/40"}`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] pb-3">
-              <div className="flex items-center gap-2.5">
-                <IconServer
-                  className={`h-4 w-4 ${isOnline ? "text-neon" : "text-danger"}`}
-                />
-                <span className="text-[10px] font-bold tracking-[0.22em] text-muted uppercase">
-                  Diagnostics
-                </span>
-              </div>
-              <span className={`chip ${isOnline ? "chip--neon" : "chip--danger"}`}>
-                <span
-                  className={`status-dot ${isOnline ? "status-dot--on" : "status-dot--off"}`}
-                />
-                {isOnline ? "Device Connected" : "Device Disconnected"}
-              </span>
-            </div>
-
-            <div className="mt-1">
-              <DefRow label="Device Name" value={selected.location} />
-              <DefRow label="IP Address" value={selected.ip || "—"} mono />
-              <DefRow label="Serial Number" value={selected.mac} mono />
-              <DefRow label="Branch" value={selected.branch || "Unassigned"} />
-              <DefRow
-                label="Last Ping"
-                value={isOnline ? formatRelative(selected.lastPing) : "—"}
-                mono
-              />
-              <DefRow label="Scans Today" value={String(selected.scansToday)} mono />
-            </div>
-          </div>
-
-          {/* Test device ------------------------------------------- */}
-          {testPunch ? (
-            <div className="rounded-xl border border-neon/40 bg-neon/10 px-4 py-3">
-              <p className="flex items-center gap-2 text-xs font-bold text-neon">
-                <IconCheck className="h-4 w-4" />
-                Device responded — simulated scan accepted at{" "}
-                <span className="font-mono">
-                  {formatClockTime(new Date(testPunch.timestamp))}
-                </span>{" "}
-                for <span className="text-ink">{testPunch.employeeName}</span> (
-                {testPunch.direction})
-              </p>
-            </div>
-          ) : null}
-
-          {testError ? (
-            <p className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-danger">
-              Test failed — {testError}
-            </p>
-          ) : null}
-
-          <div>
-            <button
-              type="button"
-              className="btn btn--neon"
-              onClick={testDevice}
-              disabled={testing || !selected}
-            >
-              {testing ? <span className="spinner" aria-hidden="true" /> : null}
-              {testing ? "Testing…" : "Test Device"}
-            </button>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted/80">
-              Sends a simulated scan through this terminal&apos;s channel and reports whether the
-              bridge accepted it.
-            </p>
-          </div>
-        </>
-      ) : null}
-    </Panel>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Tab 5 — Backup                                                      */
-/* ------------------------------------------------------------------ */
-
-function BackupTab({
-  settings,
-  update,
-  saved,
-  onSave,
-}: {
-  settings: SettingsState;
-  update: <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => void;
-  saved: boolean;
-  onSave: () => void;
-}) {
-  const [backingUp, setBackingUp] = useState(false);
-  const [backupMsg, setBackupMsg] = useState<string | null>(null);
-  const [backupErr, setBackupErr] = useState<string | null>(null);
-
-  /**
-   * Real export: pull the roster + the most recent attendance records
-   * (tolerating either endpoint failing), bundle them with the current
-   * settings, and hand the admin a JSON file via a temporary download link.
-   */
-  async function backUpNow() {
-    setBackingUp(true);
-    setBackupMsg(null);
-    setBackupErr(null);
-    let roster: EmployeeDirectoryResponse["employees"] = [];
-    let records: AttendanceRecordsResponse["rows"] = [];
-
-    try {
-      try {
-        const res = await fetch("/api/employees", { cache: "no-store" });
-        const json = (await res.json()) as EmployeeDirectoryResponse & { error?: string };
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-        roster = json.employees;
-      } catch {
-        roster = []; // tolerate — the backup still exports what it can
-      }
-
-      try {
-        const res = await fetch("/api/attendance-records?pageSize=100", { cache: "no-store" });
-        const json = (await res.json()) as AttendanceRecordsResponse & { error?: string };
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-        records = json.rows;
-      } catch {
-        records = []; // tolerate — the backup still exports what it can
-      }
-
-      const payload = { settings, roster, records, exportedAt: Date.now() };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "biobridge-backup.json";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-
-      setBackupMsg(`Backup exported — ${records.length} records`);
-    } catch (err) {
-      setBackupErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBackingUp(false);
-    }
-  }
-
-  return (
-    <Panel
-      title="Backup"
-      subtitle="Snapshot cadence, retention window and ad-hoc JSON exports."
-      saved={saved}
-      onSave={onSave}
-    >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Automatic Backup" htmlFor="set-backup-schedule">
-          <select
-            id="set-backup-schedule"
-            className={INPUT}
-            value={settings.backupSchedule}
-            onChange={(e) => update("backupSchedule", e.target.value)}
-          >
-            <option value="daily">Daily · 02:00</option>
-            <option value="weekly">Weekly · Sunday 02:00</option>
-            <option value="monthly">Monthly · 1st 02:00</option>
-          </select>
-        </Field>
-        <Field label="Retention" htmlFor="set-retention">
-          <select
-            id="set-retention"
-            className={INPUT}
-            value={settings.retentionDays}
-            onChange={(e) => update("retentionDays", e.target.value)}
-          >
-            <option value="7">7 days</option>
-            <option value="30">30 days</option>
-            <option value="90">90 days</option>
-          </select>
-        </Field>
-      </div>
-
-      <div className="glass-inset flex items-center gap-3 px-4 py-3">
-        <span className="status-dot status-dot--on" aria-hidden="true" />
-        <p className="text-xs text-muted">
-          Last backup: <span className="font-semibold text-ink">Today, 02:00</span> (automatic)
-        </p>
-      </div>
-
-      {backupMsg ? (
-        <p className="flex items-center gap-2 rounded-xl border border-neon/40 bg-neon/10 px-4 py-3 text-xs font-bold text-neon">
-          <IconCheck className="h-4 w-4" />
-          {backupMsg}
-        </p>
-      ) : null}
-
-      {backupErr ? (
-        <p className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-danger">
-          Backup failed — {backupErr}
-        </p>
-      ) : null}
-
-      <div>
-        <button
-          type="button"
-          className="btn btn--neon"
-          onClick={backUpNow}
-          disabled={backingUp}
-        >
-          {backingUp ? <span className="spinner" aria-hidden="true" /> : null}
-          {backingUp ? "Exporting…" : "Back Up Now"}
-        </button>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted/80">
-          Downloads a JSON snapshot of the current settings, the employee roster and the latest
-          100 attendance records as{" "}
-          <span className="font-mono text-muted">biobridge-backup.json</span>.
-        </p>
-      </div>
-    </Panel>
   );
 }

@@ -1,30 +1,37 @@
 /**
  * ============================================================================
- *  POST /api/auth/login — HR master-password sign-in (Objective 1)
+ *  POST /api/auth/login — System Account sign-in (Phase 13/14)
  * ============================================================================
  *
- *  Body: { "password": "…" }
+ *  Body: { "email": "admin@biobridge.example", "password": "…" }
  *
- *  200 → sets the signed HttpOnly session cookie, client redirects to
- *        /?welcome=1 (the dashboard shows the "Welcome back, Admin" toast)
- *  401 → wrong password
+ *  The `email` field is optional — an empty email falls back to the built-in
+ *  Bridge administrator (admin@biobridge.example), so the long-standing
+ *  "type just the password" demo flow keeps working with `biobridge-admin`.
+ *
+ *  200 → sets the signed HttpOnly session cookie and returns the account's
+ *        landing page (`home`) — the client redirects there.
+ *  401 → unknown account or wrong password
  *  429 → brute-force throttle (8 failures / 10 min in this process)
  *
- *  CONNECTING REAL HR DIRECTORY: replace checkPassword() in
- *  src/lib/session.ts with your IdP / LDAP verification and issue the same
- *  signed cookie from createSessionToken().
+ *  The session token only carries an id + display identity; the permission
+ *  matrix is resolved from the account's Access_Level on every request so a
+ *  matrix edit by the IT admin takes effect immediately (no re-login).
  */
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import {
-  SESSION_COOKIE,
-  checkPassword,
   createSessionToken,
   loginThrottled,
   registerLoginFailure,
   resetLoginThrottle,
+  SESSION_COOKIE,
 } from "@/lib/session";
+import { findAccountByEmail, resolveAccount, verifyPassword } from "@/lib/db";
+
+/** The demo master account that keeps the legacy single-password flow alive. */
+export const DEFAULT_ADMIN_EMAIL = "admin@biobridge.example";
 
 export async function POST(request: NextRequest): Promise<Response> {
   if (loginThrottled()) {
@@ -35,27 +42,47 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // Parse the JSON body defensively (malformed input → 401, not a crash).
+  let email = "";
   let password = "";
   try {
-    const body = (await request.json()) as { password?: unknown };
+    const body = (await request.json()) as { email?: unknown; password?: unknown };
+    email = typeof body?.email === "string" ? body.email : "";
     password = typeof body?.password === "string" ? body.password : "";
   } catch {
+    email = "";
     password = "";
   }
 
-  if (password === "" || !checkPassword(password)) {
+  const account = findAccountByEmail((email && email.trim()) || DEFAULT_ADMIN_EMAIL);
+  if (!account || !verifyPassword(password, account.Password_Hash)) {
     registerLoginFailure();
     return Response.json(
-      { ok: false, error: "Incorrect master password." },
+      { ok: false, error: "Invalid email or password." },
       { status: 401, headers: { "Cache-Control": "no-store" } }
     );
   }
 
+  // Valid credentials — clear the lockout window and issue the cookie.
   resetLoginThrottle();
-  const { token, expiresAt } = createSessionToken();
+  const resolved = resolveAccount(account);
+  const { token, expiresAt } = createSessionToken({
+    accountId: resolved.accountId,
+    name: resolved.name,
+    email: resolved.email,
+    levelName: resolved.levelName,
+  });
 
   const response = NextResponse.json(
-    { ok: true, message: "Welcome back, Admin" },
+    {
+      ok: true,
+      message: `Welcome back, ${resolved.firstName}`,
+      home: `${resolved.home}?welcome=1`,
+      account: {
+        name: resolved.name,
+        email: resolved.email,
+        levelName: resolved.levelName,
+      },
+    },
     { headers: { "Cache-Control": "no-store" } }
   );
   response.cookies.set(SESSION_COOKIE, token, {

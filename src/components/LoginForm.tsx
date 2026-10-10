@@ -4,18 +4,21 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 /**
- * HR administrator sign-in (Objective 1).
+ * System Account sign-in (Phase 13/14).
  *
- * POSTs to /api/auth/login; on success the server sets an HttpOnly signed
- * session cookie and we route to /?welcome=1 — the dashboard reads that
- * query flag and renders the "Welcome back, Admin" toast.
+ * POSTs to /api/auth/login with an optional Company Email + password. On
+ * success the server sets an HttpOnly signed session cookie and returns the
+ * account's `home` page — the dashboard for admin roles, My Portal for a
+ * Worker — and we signal the AuthContext (via the `biobridge:auth` event)
+ * so the sidebar renders the exactly-permitted links, then navigate there.
  *
- * Copy note: this is a production-facing enterprise login — no developer
- * hints or demo credentials belong here. The default password and
- * ADMIN_PASSWORD override are documented in README.md instead.
+ * The email field is optional: leaving it blank signs into the built-in
+ * Bridge administrator, so the app's long-standing single-password demo
+ * flow (type `biobridge-admin`) keeps working unchanged.
  */
 export default function LoginForm() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -30,9 +33,13 @@ export default function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ email: email.trim() || undefined, password }),
       });
-      const data = (await res.json()) as { ok: boolean; error?: string };
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        home?: string;
+      };
       if (!res.ok || !data.ok) {
         setError(data.error ?? "Sign-in failed.");
         setBusy(false);
@@ -40,7 +47,10 @@ export default function LoginForm() {
       }
       // Client navigation — the Set-Cookie above is already stored, and the
       // proxy validates it on the RSC request that router.push() issues.
-      router.push("/?welcome=1");
+      // Tell the AuthContext to re-read /api/auth/me with the new cookie so
+      // the sidebar is permission-correct the instant the page mounts.
+      window.dispatchEvent(new Event("biobridge:auth"));
+      router.push(data.home ?? "/?welcome=1");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bridge unreachable.");
       setBusy(false);
@@ -82,8 +92,22 @@ export default function LoginForm() {
           </p>
         </div>
 
-        {/* Password form ---------------------------------------------- */}
+        {/* Credential form --------------------------------------------- */}
         <form onSubmit={submit} className="mt-7 space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
+              Work Email <span className="text-muted/50">(optional)</span>
+            </span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              placeholder="admin@biobridge.example"
+              className="glass-inset w-full rounded-xl px-4 py-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
+            />
+          </label>
+
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
               Administrator Password
@@ -129,7 +153,7 @@ export default function LoginForm() {
                 Verifying…
               </>
             ) : (
-              "Sign In to Dashboard"
+              "Sign In"
             )}
           </button>
         </form>

@@ -20,9 +20,10 @@ export function startOfTodayMs(now: number = Date.now()): number {
 }
 
 /** 24-hour wall clock: "14:03:07". Used by the master clock. */
-export function formatClockTime(date: Date): string {
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(
-    date.getSeconds()
+export function formatClockTime(input: Date | number): string {
+  const d = input instanceof Date ? input : new Date(input);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(
+    d.getSeconds()
   )}`;
 }
 
@@ -51,6 +52,23 @@ export function formatDateTime(ms: number): string {
   const day = pad2(d.getDate());
   const month = d.toLocaleString("en-GB", { month: "short" });
   return `${day} ${month}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** Date only: "07 Oct". */
+export function formatDate(ms: number): string {
+  const d = new Date(ms);
+  const day = pad2(d.getDate());
+  const month = d.toLocaleString("en-GB", { month: "short" });
+  return `${day} ${month}`;
+}
+
+/** "YYYY-MM-DD" string → "07 Oct". */
+export function formatDateString(ymd: string): string {
+  const d = new Date(ymd + "T00:00:00");
+  if (isNaN(d.getTime())) return ymd;
+  const day = pad2(d.getDate());
+  const month = d.toLocaleString("en-GB", { month: "short" });
+  return `${day} ${month}`;
 }
 
 /** ERP-facing punch time in device/server local time: "2026-10-07 08:02:07". */
