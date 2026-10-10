@@ -1,0 +1,98 @@
+// =============================================================================
+// PATCH 1: Updated Inputs Section
+// =============================================================================
+input group "Hawkes Process Parameters"
+input double InpAlpha         = 1.5;    // Decay factor (alpha)
+input double InpThresholdExcitation = 0.00005; // Hawkes excitation threshold
+input double InpThresholdMass = 0.8;    // Minimum virtual mass to consider
+
+input group "Risk & Execution"
+input double InpRiskPerTrade      = 0.01; // 1% equity per trade
+input int    InpMaxSpreadPoints   = 15;   // Maximum allowed spread (points) to trigger trade
+input int    InpMagicNumber       = 0x4841574B; // "HAWK"
+input int    InpMaxSlippagePoints = 3;    // Max slippage in points
+
+
+// =============================================================================
+// PATCH 2: Updated CalculateKineticEnergy Function (Directional Kinetic Energy)
+// =============================================================================
+double CalculateKineticEnergy(const TickBuffer &current, const TickBuffer &previous, int trade_direction)
+{
+   // --- 1. Time Delta (Microsecond Precision) ---
+   ulong elapsed_us = current.timestamp - previous.timestamp;
+   if(elapsed_us == 0) return 0.0;
+   
+   double elapsed_seconds = (double)elapsed_us / 1e6;
+
+   // --- 2. Mid-Price Velocity (Raw Physics) ---
+   double velocity = (current.mid - previous.mid) / elapsed_seconds;
+
+   // --- 3. DIRECTIONAL VELOCITY (The v^2 Flaw Patch) ---
+   double directional_v;
+   if(trade_direction == 1)        // BUY position
+      directional_v = velocity;
+   else if(trade_direction == -1)  // SELL position
+      directional_v = -velocity;
+   else
+      return 0.0; // Flat / no position
+
+   // --- 4. REVERSAL GUARD: Momentum stalled or reversed against us ---
+   if(directional_v <= 0.0)
+      return 0.0; // Triggers immediate exit via OnTick logic
+
+   // --- 5. Virtual Mass (Volume-Weighted) ---
+   double mass_virtual = (current.volume + previous.volume) * 0.5;
+
+   // --- 6. Kinetic Energy (Directional: only positive when momentum favors us) ---
+   double kinetic_energy = 0.5 * mass_virtual * directional_v * directional_v;
+
+   return kinetic_energy;
+}
+
+
+// =============================================================================
+// PATCH 3: Updated STATE_IDLE Block inside OnTick()
+// =============================================================================
+// Replace your existing STATE_IDLE case block with this:
+
+case STATE_IDLE:
+{
+   // --- SPREAD GUARDRAIL (NY Open Protection) ---
+   int current_spread = (int)MathRound((tick.ask - tick.bid) / _Point);
+   if(current_spread > InpMaxSpreadPoints)
+   {
+      // Spread too wide - do not trigger, remain IDLE
+      break; 
+   }
+
+   // --- Hawkes Imbalance Calculation ---
+   double imbalance = CalculateHawkesImbalance(g_tick_ring, g_head);
+
+   // --- Virtual Mass Calculation ---
+   double mass = CalculateVirtualMass(g_tick_ring, g_head);
+
+   // --- Entry Logic ---
+   if(imbalance > InpThresholdExcitation && mass > InpThresholdMass)
+   {
+      // Determine Direction
+      int direction = (imbalance > 0) ? 1 : -1; // 1 = Buy, -1 = Sell
+      
+      // Pre-trade checks (Margin, Spread already checked above)
+      if(CheckMarginAndFreeze(direction, tick))
+      {
+         // Execute Asynchronous Order
+         if(AsyncOrderSend(direction, tick))
+         {
+            g_bot_state      = STATE_ACTIVE;
+            g_trade_direction = direction;
+            g_entry_price    = (direction == 1) ? tick.ask : tick.bid;
+            g_entry_time     = tick.timestamp;
+            g_peak_energy    = 0.0;
+            
+            PrintFormat("[HAWKS] Entry: %s | Imb: %.6f | Mass: %.2f | Spread: %d pts", 
+               (direction==1?"BUY":"SELL"), imbalance, mass, current_spread);
+         }
+      }
+   }
+   break;
+}

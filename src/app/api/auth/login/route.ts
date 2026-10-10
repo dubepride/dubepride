@@ -53,7 +53,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     password = "";
   }
 
-  const account = findAccountByEmail((email && email.trim()) || DEFAULT_ADMIN_EMAIL);
+  const normalizedEmail = (email && email.trim()) || DEFAULT_ADMIN_EMAIL;
+  const account = findAccountByEmail(normalizedEmail);
   if (!account || !verifyPassword(password, account.Password_Hash)) {
     registerLoginFailure();
     return Response.json(
