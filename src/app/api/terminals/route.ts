@@ -49,8 +49,11 @@ export async function POST(req: Request): Promise<Response> {
       status: body.status === "Online" ? "Online" : "Offline",
     });
     return Response.json({ ok: true, id }, { headers: { "Cache-Control": "no-store" } });
-  } catch (e: any) {
-    return Response.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
+  } catch (e: unknown) {
+    return Response.json(
+      { ok: false, error: e instanceof Error ? e.message : "Bad request" },
+      { status: 400 }
+    );
   }
 }
 
@@ -72,8 +75,11 @@ export async function PUT(req: Request): Promise<Response> {
       status: body.status === "Online" ? "Online" : body.status === "Offline" ? "Offline" : undefined,
     });
     return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
-  } catch (e: any) {
-    return Response.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
+  } catch (e: unknown) {
+    return Response.json(
+      { ok: false, error: e instanceof Error ? e.message : "Bad request" },
+      { status: 400 }
+    );
   }
 }
 
@@ -88,7 +94,10 @@ export async function DELETE(req: Request): Promise<Response> {
     }
     deleteTerminal(id);
     return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
-  } catch (e: any) {
-    return Response.json({ ok: false, error: e?.message || "Bad request" }, { status: 400 });
+  } catch (e: unknown) {
+    return Response.json(
+      { ok: false, error: e instanceof Error ? e.message : "Bad request" },
+      { status: 400 }
+    );
   }
 }

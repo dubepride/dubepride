@@ -11,6 +11,9 @@ import {
   IconEye,
   IconFingerprint,
   IconHome,
+  IconScan,
+  IconSchedule,
+  IconSettings,
   IconSync,
   IconUsers,
   IconX,
@@ -33,7 +36,9 @@ const PRIMARY: SidebarItem[] = [
   { label: "Dashboard", href: "/", icon: <IconHome /> },
   { label: "My Portal", icon: <IconBriefcase />, soon: true },
   { label: "Employees", href: "/employees", icon: <IconUsers /> },
-  { label: "Reports", icon: <IconChart />, soon: true },
+  { label: "Attendance Records", href: "/attendance-records", icon: <IconScan /> },
+  { label: "Shifts", href: "/shifts", icon: <IconSchedule /> },
+  { label: "Reports", href: "/reports", icon: <IconChart /> },
   // Phase 7: every rail item now maps to its own route.
   { label: "Exceptions", href: "/exceptions", icon: <IconAlert /> },
   { label: "Timesheets", href: "/timesheets", icon: <IconCalendar /> },
@@ -42,7 +47,10 @@ const PRIMARY: SidebarItem[] = [
 ];
 
 /** Keeps existing Phase-1/2 system pages reachable from the new rail. */
-const SYSTEM: SidebarItem[] = [{ label: "ERP Sync Logs", href: "/sync", icon: <IconSync /> }];
+const SYSTEM: SidebarItem[] = [
+  { label: "ERP Sync Logs", href: "/sync", icon: <IconSync /> },
+  { label: "Settings", href: "/settings", icon: <IconSettings /> },
+];
 
 /** Exact-route items highlight on their page; "/" is the dashboard's exact match. */
 function isActive(item: SidebarItem, pathname: string): boolean {

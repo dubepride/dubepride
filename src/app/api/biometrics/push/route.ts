@@ -36,10 +36,17 @@
  */
 
 import type { NextRequest } from "next/server";
-import { findTerminal, getDb, insertPunch, resolveEmployee } from "@/lib/db";
+import {
+  findTerminal,
+  getDb,
+  insertPunch,
+  resolveEmployee,
+  touchTerminal,
+} from "@/lib/db";
+import type { SQLInputValue } from "@/lib/db";
 import { DatabaseSync } from "node:sqlite";
 
-function exec(db: DatabaseSync, sql: string, ...params: any[]) {
+function exec(db: DatabaseSync, sql: string, ...params: SQLInputValue[]) {
   db.prepare(sql).run(...params);
 }
 import type { PunchDirection, VerifyResult } from "@/lib/types";
