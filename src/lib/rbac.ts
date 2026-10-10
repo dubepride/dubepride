@@ -170,13 +170,24 @@ export function allPermissions(enabled: boolean): PermissionsMap {
 
 /**
  * Normalise an arbitrary stored value into a full PermissionsMap.
- * Unknown keys are dropped, known keys default to false — a malformed or
- * partial JSON column still yields a predictable, total matrix.
+ * Accepts either a parsed object OR a raw JSON string (as read straight
+ * from the Permissions_JSON TEXT column). Unknown keys are dropped, known
+ * keys default to false — a malformed or partial JSON column still yields
+ * a predictable, total matrix.
  */
 export function parsePermissions(raw: unknown): PermissionsMap {
   const map = allPermissions(false);
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
+  let obj: Record<string, unknown> | null = null;
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      obj = null;
+    }
+  } else if (raw && typeof raw === "object") {
+    obj = raw as Record<string, unknown>;
+  }
+  if (obj) {
     for (const key of PERMISSION_KEYS) {
       if (obj[key] === true) map[key] = true;
     }

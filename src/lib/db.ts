@@ -903,6 +903,29 @@ export function listAccessLevels(): AccessLevelDto[] {
   });
 }
 
+/** A single level with its parsed matrix + account count — the matrix GET. */
+export function accessLevelById(levelId: number): AccessLevelDto | null {
+  const db = getDb();
+  const row = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+  if (!row) return null;
+  const permissions = parsePermissions(row.Permissions_JSON);
+  const accountCount =
+    queryOne<{ c: number }>(
+      db,
+      "SELECT COUNT(*) AS c FROM System_Accounts WHERE Access_Level_ID = ?",
+      levelId
+    )?.c ?? 0;
+  return {
+    id: row.Access_Level_ID,
+    name: row.Level_Name,
+    permissions,
+    enabled: countEnabled(permissions),
+    total: PERMISSION_KEYS.length,
+    accountCount,
+    createdAt: row.Created_At,
+  };
+}
+
 /** New level starts with every capability off — the IT admin ticks the matrix. */
 export function createAccessLevel(name: string, permissions?: PermissionsMap): number {
   const db = getDb();

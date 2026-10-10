@@ -3,6 +3,9 @@
  *  /api/settings/access-levels/[id] — rename / edit the matrix / delete
  * ============================================================================
  *
+ *  GET    → { level } — a single level with its parsed matrix, so the
+ *           accordion can render its checkboxes when expanded.
+ *
  *  PATCH  → { name?, permissions? } — either field optional. `permissions`
  *           is the FULL matrix (every key → boolean); unknown keys are
  *           dropped and missing known keys default to false, so a partial
@@ -11,12 +14,12 @@
  *  DELETE → remove the level. Levels still assigned to System Accounts are
  *           refused (409) so no account silently loses its role.
  *
- *  Both handlers require can_manage_access_levels.
+ *  All handlers require can_manage_access_levels.
  */
 
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth";
-import { deleteAccessLevel, updateAccessLevel } from "@/lib/db";
+import { accessLevelById, deleteAccessLevel, updateAccessLevel } from "@/lib/db";
 import { parsePermissions, type PermissionsMap } from "@/lib/rbac";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -27,6 +30,21 @@ function respond(message: string, status = 400): Response {
 
 async function levelIdOf(ctx: { params: Promise<{ id: string }> }): Promise<number> {
   return ctx.params.then(({ id }) => Number(id));
+}
+
+export async function GET(
+  _request: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+): Promise<Response> {
+  const guard = await requirePermission("can_manage_access_levels");
+  if (guard) return guard;
+
+  const levelId = await levelIdOf(ctx);
+  if (!Number.isInteger(levelId) || levelId <= 0) return respond("A numeric level id is required.", 404);
+
+  const level = accessLevelById(levelId);
+  if (!level) return respond("That access level no longer exists.", 404);
+  return Response.json({ level }, { headers: NO_STORE });
 }
 
 export async function PATCH(

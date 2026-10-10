@@ -8,7 +8,7 @@
  *                        the JSON API routes.
  */
 
-import type { PermissionKey, PermissionsMap } from "./rbac";
+import type { PermissionsMap } from "./rbac";
 
 /* ------------------------------------------------------------------ */
 /* Domain enums                                                        */
@@ -585,6 +585,7 @@ export interface AccessLevelDto {
   enabled: number;
   total: number;
   accountCount: number;
+  createdAt: number;
 }
 
 export interface AccessLevelsResponse {
