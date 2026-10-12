@@ -1069,6 +1069,26 @@ export function deleteSystemAccount(accountId: number): { ok: boolean; reason?: 
   return { ok: true };
 }
 
+/**
+ * Change an account's login password — the "Set password" action on the
+ * System Accounts table. Re-uses the exact validation the create form runs
+ * so the two paths cannot drift, then stores only the sha256 digest (the
+ * plaintext is never persisted). Admins can rotate any account's password
+ * after creation, including the built-in bridge administrator.
+ */
+export function updateSystemAccountPassword(
+  accountId: number,
+  password: string
+): { ok: boolean; reason?: string } {
+  const db = getDb();
+  const row = queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
+  if (!row) return { ok: false, reason: "That account no longer exists." };
+  const next = password ?? "";
+  if (next.length < 6) return { ok: false, reason: "Password must be at least 6 characters." };
+  exec(db, "UPDATE System_Accounts SET Password_Hash = ? WHERE Account_ID = ?", hashPassword(next), accountId);
+  return { ok: true };
+}
+
 export function systemAccountById(accountId: number): SystemAccountRow | null {
   return queryOne<SystemAccountRow>(getDb(), "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId) ?? null;
 }

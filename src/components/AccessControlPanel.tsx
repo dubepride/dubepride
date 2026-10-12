@@ -19,7 +19,8 @@
  *                     email / password) with access level + branch dropdowns
  *                     fetched from their tables, plus an optional linked
  *                     employee (drives the My Portal worker demo). The table
- *                     lists every account with its level + branch.
+ *                     lists every account with its level + branch and a
+ *                     "Set password" row action to rotate the login password.
  *
  *  Every panel fetches its data on mount and re-fetches after each CRUD
  *  call so the views always mirror the SQLite tables.
@@ -28,7 +29,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   PERMISSION_GROUPS,
-  serializePermissions,
   type PermissionKey,
   type PermissionsMap,
 } from "@/lib/rbac";
@@ -41,7 +41,7 @@ import type {
   SystemAccountDto,
   SystemAccountsResponse,
 } from "@/lib/types";
-import { IconCheck, IconChevronDown, IconPlus, IconTrash } from "./icons";
+import { IconCheck, IconChevronDown, IconPlus } from "./icons";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
@@ -870,11 +870,18 @@ export function SystemAccountsTab() {
 function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
+  const [rowNotice, setRowNotice] = useState<string | null>(null);
+
+  // Inline "Set password" editor state.
+  const [settingPassword, setSettingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
 
   async function remove() {
     if (busy) return;
     setBusy(true);
     setRowError(null);
+    setRowNotice(null);
     try {
       const res = await fetch(`/api/settings/accounts/${account.id}`, { method: "DELETE" });
       const json = (await res.json()) as { ok: boolean; error?: string };
@@ -887,6 +894,44 @@ function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChang
       setRowError("Could not delete the account.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function openPasswordEditor() {
+    setRowError(null);
+    setRowNotice(null);
+    setNewPassword("");
+    setSettingPassword(true);
+  }
+
+  function closePasswordEditor() {
+    setSettingPassword(false);
+    setNewPassword("");
+  }
+
+  async function savePassword() {
+    if (savingPassword || busy) return;
+    setRowError(null);
+    setRowNotice(null);
+    setSavingPassword(true);
+    try {
+      const res = await fetch(`/api/settings/accounts/${account.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setRowError(json.error ?? "Could not update the password.");
+        return;
+      }
+      setSettingPassword(false);
+      setNewPassword("");
+      setRowNotice(`Login password updated for ${account.name}.`);
+    } catch {
+      setRowError("Could not update the password.");
+    } finally {
+      setSavingPassword(false);
     }
   }
 
@@ -905,9 +950,46 @@ function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChang
         </span>
       </td>
       <td className="px-4 py-3 text-[12px] text-ink/80">{account.branchName ?? "Unassigned"}</td>
-      <td className="px-4 py-3 text-right">
-        <ConfirmDelete label="remove" onConfirm={() => void remove()} busy={busy} />
+      <td className="px-4 py-3 text-right align-top">
+        {settingPassword ? (
+          <div className="ml-auto flex w-[220px] flex-col items-stretch gap-1.5">
+            <input
+              type="text"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void savePassword();
+                if (e.key === "Escape") closePasswordEditor();
+              }}
+              placeholder="New password (min. 6)"
+              autoComplete="new-password"
+              autoFocus
+              className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50"
+            />
+            <div className="flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                disabled={savingPassword || newPassword.length < 6}
+                onClick={() => void savePassword()}
+                className={`${ROW_ACTION} disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                {savingPassword ? "Saving…" : "Save"}
+              </button>
+              <button type="button" disabled={savingPassword} onClick={closePasswordEditor} className={ROW_ACTION}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-1.5">
+            <button type="button" onClick={openPasswordEditor} className={ROW_ACTION}>
+              Set password
+            </button>
+            <ConfirmDelete label="remove" onConfirm={() => void remove()} busy={busy} />
+          </div>
+        )}
         {rowError ? <p className="mt-1 text-[11px] text-danger">{rowError}</p> : null}
+        {rowNotice ? <p className="mt-1 text-[11px] text-neon">{rowNotice}</p> : null}
       </td>
     </tr>
   );
