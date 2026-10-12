@@ -15,6 +15,13 @@
  *  link, proxy redirects the route) so a worker with only that capability
  *  sees a single-item rail and lands here after login.
  *
+ *  The admin "Ready to Clock" biometric-simulation widget now lives on this
+ *  page too (moved from the Dashboard). It is deliberately gated by
+ *  can_view_dashboard — the same capability that surfaced it via the old
+ *  Dashboard placement — so ordinary Workers never see the roster-wide
+ *  picker; they keep only their own self-service clock (can_remote_clock),
+ *  which the server locks to their linked employee.
+ *
  *  Data is polled from GET /api/my-portal and refreshed after every
  *  clock/time-off action so the UI stays in sync with SQLite.
  */
@@ -30,6 +37,7 @@ import type {
   MyPortalTimeOffResponse,
 } from "@/lib/types";
 import { IconCheck, IconClock, IconPlus, IconServer } from "./icons";
+import ReadyToClock from "./ReadyToClock";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
@@ -317,6 +325,12 @@ export default function MyPortal() {
         </Card>
       )}
 
+      {/* Admin "Ready to Clock" simulation widget (moved from Dashboard).
+          Roster-wide employee picker is an admin tool — same gate as the
+          Dashboard placement it replaces (can_view_dashboard), so Workers
+          never see or reach it. */}
+      {permissions.can_view_dashboard === true && <ReadyToClock />}
+
       {/* Punch History (can_view_my_history) --------------------------- */}
       {permissions.can_view_my_history && (
         <Card title="My Punch History">
@@ -507,13 +521,16 @@ export default function MyPortal() {
       )}
 
       {/* No-widgets state --------------------------------------------- */}
-      {!permissions.can_remote_clock && !permissions.can_view_my_history && !permissions.can_request_time_off && (
-        <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-sm text-muted">
-          This account has no My Portal widgets enabled. Ask an IT administrator to
-          grant can_remote_clock, can_view_my_history or can_request_time_off in the
-          Access Level Matrix.
-        </p>
-      )}
+      {permissions.can_view_dashboard !== true &&
+        !permissions.can_remote_clock &&
+        !permissions.can_view_my_history &&
+        !permissions.can_request_time_off && (
+          <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-sm text-muted">
+            This account has no My Portal widgets enabled. Ask an IT administrator to
+            grant can_remote_clock, can_view_my_history or can_request_time_off in the
+            Access Level Matrix.
+          </p>
+        )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import EmployeeStatusCard from "@/components/EmployeeStatusCard";
 import LiveFeed from "@/components/LiveFeed";
 import MetricCard from "@/components/MetricCard";
 import OvertimeCard from "@/components/OvertimeCard";
-import ReadyToClock from "@/components/ReadyToClock";
 import RecentActivity from "@/components/RecentActivity";
 import SyncMini from "@/components/SyncMini";
 import TerminalPulse from "@/components/TerminalPulse";
@@ -34,7 +33,7 @@ import { usePoll } from "@/lib/use-poll";
  *   4. the widget grid — Employee Status (search + roster), Today's
  *      Attendance Overview doughnut (replaced the exceptions grid in
  *      Phase 11), Approaching Overtime, Time Off Requests
- *   5. Recent Clocking Activity table + Ready to Clock admin test widget
+ *   5. Recent Clocking Activity table
  *   6. live scan feed + terminal health / sync side panels
  *
  * The grid stacks to a single column below lg and splits into two
@@ -142,13 +141,8 @@ export default function DashboardBody() {
         <TimeOffCard />
       </section>
 
-      {/* ── Clocking activity + admin test widget (Phase 11) ──────── */}
-      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <RecentActivity entries={data?.feed ?? []} loading={loading} />
-        </div>
-        <ReadyToClock />
-      </div>
+      {/* ── Recent clocking activity ──────────────────────────────── */}
+      <RecentActivity entries={data?.feed ?? []} loading={loading} />
 
       {/* ── Feed + side panels ────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
