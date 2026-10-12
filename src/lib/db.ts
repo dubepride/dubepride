@@ -1039,6 +1039,10 @@ export function createSystemAccount(input: SystemAccountInput): number {
   if (password.length < 6) {
     throw new Error("Password must be at least 6 characters.");
   }
+  const refError = checkAccountReferences(db, input.accessLevelId, input.branchId, input.employeeId);
+  if (refError) {
+    throw new Error(refError);
+  }
   exec(
     db,
     `INSERT INTO System_Accounts
@@ -1070,22 +1074,133 @@ export function deleteSystemAccount(accountId: number): { ok: boolean; reason?: 
 }
 
 /**
- * Change an account's login password — the "Set password" action on the
- * System Accounts table. Re-uses the exact validation the create form runs
- * so the two paths cannot drift, then stores only the sha256 digest (the
- * plaintext is never persisted). Admins can rotate any account's password
- * after creation, including the built-in bridge administrator.
+ * A partial account update from the unified Add / Edit form. Only the keys
+ * actually present are applied, so an edit that leaves the password fields
+ * blank keeps the current credential untouched.
  */
-export function updateSystemAccountPassword(
+export interface SystemAccountPatch {
+  firstName?: string;
+  surname?: string;
+  email?: string;
+  accessLevelId?: number | null;
+  branchId?: number | null;
+  employeeId?: number | null;
+  /** New plaintext password — undefined or "" keeps the existing credential. */
+  password?: string;
+}
+
+/**
+ * Validate the optional level / branch / employee references. This schema
+ * never enables SQLite foreign-key enforcement, so we check the parent rows
+ * by hand and return a friendly message when one has disappeared.
+ */
+function checkAccountReferences(
+  db: DatabaseSync,
+  accessLevelId: number | null,
+  branchId: number | null,
+  employeeId: number | null
+): string | null {
+  if (
+    accessLevelId != null &&
+    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Access_Levels WHERE Access_Level_ID = ?", accessLevelId)
+  ) {
+    return "That access level no longer exists.";
+  }
+  if (
+    branchId != null &&
+    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Branches WHERE Branch_ID = ?", branchId)
+  ) {
+    return "That branch no longer exists.";
+  }
+  if (
+    employeeId != null &&
+    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Employees WHERE Employee_ID = ?", employeeId)
+  ) {
+    return "That linked employee no longer exists.";
+  }
+  return null;
+}
+
+/**
+ * Update an existing account (the Edit mode of the unified form). The account
+ * is identified by its numeric id — never by the displayed name or email.
+ *
+ *  • Required fields, email format + uniqueness and every FK reference are
+ *    re-validated here, so the API is authoritative regardless of the client.
+ *  • The password is re-hashed **only** when an explicit non-empty value is
+ *    supplied: a blank password can never overwrite the stored digest.
+ */
+export function updateSystemAccount(
   accountId: number,
-  password: string
+  patch: SystemAccountPatch
 ): { ok: boolean; reason?: string } {
   const db = getDb();
-  const row = queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
+  const row = systemAccountById(accountId);
   if (!row) return { ok: false, reason: "That account no longer exists." };
-  const next = password ?? "";
-  if (next.length < 6) return { ok: false, reason: "Password must be at least 6 characters." };
-  exec(db, "UPDATE System_Accounts SET Password_Hash = ? WHERE Account_ID = ?", hashPassword(next), accountId);
+
+  const first = (patch.firstName !== undefined ? String(patch.firstName) : row.First_Name).trim();
+  const surname = (patch.surname !== undefined ? String(patch.surname) : row.Surname).trim();
+  const email = (patch.email !== undefined ? String(patch.email) : row.Company_Email).trim().toLowerCase();
+
+  if (!first || !surname || !email) {
+    return { ok: false, reason: "First name, surname and company email are required." };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { ok: false, reason: "Enter a valid company email address." };
+  }
+
+  const clash = queryOne<{ Account_ID: number }>(
+    db,
+    "SELECT Account_ID FROM System_Accounts WHERE Company_Email = ? COLLATE NOCASE AND Account_ID <> ?",
+    email,
+    accountId
+  );
+  if (clash) return { ok: false, reason: "An account with that company email already exists." };
+
+  const accessLevelId = patch.accessLevelId !== undefined ? patch.accessLevelId : row.Access_Level_ID;
+  const branchId = patch.branchId !== undefined ? patch.branchId : row.Branch_ID;
+  const employeeId = patch.employeeId !== undefined ? patch.employeeId : row.Employee_ID;
+
+  const refError = checkAccountReferences(db, accessLevelId, branchId, employeeId);
+  if (refError) return { ok: false, reason: refError };
+
+  const password = patch.password ?? "";
+  if (password.length > 0 && password.length < 6) {
+    return { ok: false, reason: "Password must be at least 6 characters." };
+  }
+
+  if (password.length > 0) {
+    exec(
+      db,
+      `UPDATE System_Accounts
+          SET First_Name = ?, Surname = ?, Company_Email = ?,
+              Access_Level_ID = ?, Branch_ID = ?, Employee_ID = ?, Password_Hash = ?
+        WHERE Account_ID = ?`,
+      first,
+      surname,
+      email,
+      accessLevelId,
+      branchId,
+      employeeId,
+      hashPassword(password),
+      accountId
+    );
+  } else {
+    exec(
+      db,
+      `UPDATE System_Accounts
+          SET First_Name = ?, Surname = ?, Company_Email = ?,
+              Access_Level_ID = ?, Branch_ID = ?, Employee_ID = ?
+        WHERE Account_ID = ?`,
+      first,
+      surname,
+      email,
+      accessLevelId,
+      branchId,
+      employeeId,
+      accountId
+    );
+  }
   return { ok: true };
 }
 

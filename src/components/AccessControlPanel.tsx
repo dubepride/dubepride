@@ -15,12 +15,14 @@
  *                     grouped by module, with checkboxes. "Save matrix"
  *                     PATCHes the full permissions object.
  *
- *  SystemAccountsTab  "+ Add System Account" form (name / surname / company
- *                     email / password) with access level + branch dropdowns
- *                     fetched from their tables, plus an optional linked
- *                     employee (drives the My Portal worker demo). The table
- *                     lists every account with its level + branch and a
- *                     "Set password" row action to rotate the login password.
+ *  SystemAccountsTab  one unified "Add / Edit System Account" form (name /
+ *                     surname / company email / password + confirm) with
+ *                     access level + branch dropdowns fetched from their
+ *                     tables, plus an optional linked employee (drives the My
+ *                     Portal worker demo). Clicking a table row loads that
+ *                     account into the form for editing — no modal, no
+ *                     per-row password control. The table lists every account
+ *                     with its level + branch.
  *
  *  Every panel fetches its data on mount and re-fetches after each CRUD
  *  call so the views always mirror the SQLite tables.
@@ -41,13 +43,15 @@ import type {
   SystemAccountDto,
   SystemAccountsResponse,
 } from "@/lib/types";
-import { IconCheck, IconChevronDown, IconPlus } from "./icons";
+import { IconCheck, IconChevronDown, IconEdit, IconPlus } from "./icons";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
 const LABEL = "mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase";
 const ROW_ACTION =
   "rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] uppercase transition hover:border-white/25 hover:text-ink";
+/** Minimum login password length enforced by the API (db.createSystemAccount). */
+const MIN_PASSWORD = 6;
 
 /** Glass panel shell shared by the three access-control tabs. */
 function SlatePanel({
@@ -639,17 +643,31 @@ export function SystemAccountsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Add-account form state
+  // Unified Add / Edit form state. `editingId === null` → Add mode.
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [firstName, setFirstName] = useState("");
   const [surname, setSurname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [accessLevelId, setAccessLevelId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [employeeId, setEmployeeId] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const formRef = useRef<HTMLFormElement>(null);
+  const isEditMode = editingId !== null;
+  const selectedAccount = accounts.find((a) => a.id === editingId) ?? null;
+  // The linked employee may be absent from the roster (e.g. no
+  // can_view_employees) — keep a fallback option so an edit can't drop the link.
+  const linkedEmployeeMissing =
+    employeeId !== "" && !employees.some((em) => String(em.id) === employeeId);
+  const linkedEmployeeName = selectedAccount?.employeeName ?? null;
+
+  /** Re-fetch the directory; returns the fresh list so callers can re-sync. */
+  const load = useCallback(async (): Promise<SystemAccountDto[]> => {
     try {
       const [res, empRes] = await Promise.all([
         fetch("/api/settings/accounts", { cache: "no-store" }),
@@ -658,8 +676,10 @@ export function SystemAccountsTab() {
         fetch("/api/employees?q=", { cache: "no-store" }).catch(() => null),
       ]);
       const json = (await res.json()) as SystemAccountsResponse;
+      let list: SystemAccountDto[] = [];
       if (res.ok && json.accounts) {
-        setAccounts(json.accounts);
+        list = json.accounts;
+        setAccounts(list);
         setLevels(json.levels ?? []);
         setBranches(json.branches ?? []);
       } else {
@@ -669,8 +689,10 @@ export function SystemAccountsTab() {
         const empJson = (await empRes.json()) as { employees?: EmployeeDirectoryEntry[] };
         setEmployees(empJson.employees ?? []);
       }
+      return list;
     } catch {
       setError("Could not reach the accounts directory.");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -680,41 +702,133 @@ export function SystemAccountsTab() {
     queueMicrotask(() => void load());
   }, [load]);
 
-  async function addAccount() {
-    if (adding) return;
-    setAdding(true);
+  /** Return the form to Add mode and clear every field, including passwords. */
+  function resetForm() {
+    setEditingId(null);
+    setFirstName("");
+    setSurname("");
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setAccessLevelId("");
+    setBranchId("");
+    setEmployeeId("");
+    setPasswordError(null);
+  }
+
+  /** Load one account into the form and switch to Edit mode. */
+  function selectAccount(account: SystemAccountDto) {
+    if (saving) return;
+    // Clicking the row that is already open keeps the user's in-progress edits.
+    if (editingId === account.id) return;
     setError(null);
+    setNotice(null);
+    setEditingId(account.id);
+    setFirstName(account.firstName);
+    setSurname(account.surname);
+    setEmail(account.email);
+    setAccessLevelId(account.accessLevelId != null ? String(account.accessLevelId) : "");
+    setBranchId(account.branchId != null ? String(account.branchId) : "");
+    setEmployeeId(account.employeeId != null ? String(account.employeeId) : "");
+    // Password fields are *always* blank — stored hashes are never exposed.
+    setPassword("");
+    setConfirmPassword("");
+    setPasswordError(null);
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /** Client-side password rules (the server re-validates regardless). */
+  function validatePasswords(): string | null {
+    const hasPassword = password.length > 0;
+    const hasConfirm = confirmPassword.length > 0;
+    if (!isEditMode) {
+      if (!hasPassword) return "Password is required.";
+      if (password.length < MIN_PASSWORD) return `Password must be at least ${MIN_PASSWORD} characters.`;
+      if (!hasConfirm) return "Please confirm the password.";
+      if (password !== confirmPassword) return "Passwords do not match.";
+      return null;
+    }
+    // Edit mode — blank in both fields means "keep the current password".
+    if (!hasPassword && !hasConfirm) return null;
+    if (!hasPassword) return "Enter a new password, or clear both fields to keep the current one.";
+    if (password.length < MIN_PASSWORD) return `Password must be at least ${MIN_PASSWORD} characters.`;
+    if (!hasConfirm) return "Please confirm the new password.";
+    if (password !== confirmPassword) return "Passwords do not match.";
+    return null;
+  }
+
+  async function submitForm() {
+    if (saving) return;
+    const passwordIssue = validatePasswords();
+    if (passwordIssue) {
+      setPasswordError(passwordIssue);
+      return;
+    }
+    setPasswordError(null);
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+
+    const payload: Record<string, unknown> = {
+      firstName,
+      surname,
+      email,
+      accessLevelId: accessLevelId ? Number(accessLevelId) : null,
+      branchId: branchId ? Number(branchId) : null,
+      employeeId: employeeId ? Number(employeeId) : null,
+    };
+    // Only send a password when the user actually typed one — a blank field
+    // must never overwrite the stored credential.
+    if (password.length > 0) payload.password = password;
+
     try {
-      const res = await fetch("/api/settings/accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstName,
-          surname,
-          email,
-          password,
-          accessLevelId: accessLevelId ? Number(accessLevelId) : null,
-          branchId: branchId ? Number(branchId) : null,
-          employeeId: employeeId ? Number(employeeId) : null,
-        }),
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!res.ok || !json.ok) {
-        setError(json.error ?? "Could not create the account.");
-        return;
+      if (isEditMode) {
+        // Update the *selected* account by id — never creates a duplicate.
+        const res = await fetch(`/api/settings/accounts/${editingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string };
+        if (!res.ok || !json.ok) {
+          // Stay in Edit mode so nothing the user typed is lost.
+          setError(json.error ?? "Could not save the account changes.");
+          return;
+        }
+        setPassword("");
+        setConfirmPassword("");
+        setPasswordError(null);
+        const list = await load();
+        // Re-sync the form with the persisted (normalised) values.
+        const fresh = list.find((a) => a.id === editingId);
+        if (fresh) {
+          setFirstName(fresh.firstName);
+          setSurname(fresh.surname);
+          setEmail(fresh.email);
+          setAccessLevelId(fresh.accessLevelId != null ? String(fresh.accessLevelId) : "");
+          setBranchId(fresh.branchId != null ? String(fresh.branchId) : "");
+          setEmployeeId(fresh.employeeId != null ? String(fresh.employeeId) : "");
+        }
+        setNotice(`Saved changes to ${firstName} ${surname}`.trim() + ".");
+      } else {
+        const res = await fetch("/api/settings/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string };
+        if (!res.ok || !json.ok) {
+          setError(json.error ?? "Could not create the account.");
+          return;
+        }
+        resetForm();
+        await load();
+        setNotice("System account created.");
       }
-      setFirstName("");
-      setSurname("");
-      setEmail("");
-      setPassword("");
-      setAccessLevelId("");
-      setBranchId("");
-      setEmployeeId("");
-      await load();
     } catch {
-      setError("Could not create the account.");
+      setError(isEditMode ? "Could not save the account changes." : "Could not create the account.");
     } finally {
-      setAdding(false);
+      setSaving(false);
     }
   }
 
@@ -723,18 +837,38 @@ export function SystemAccountsTab() {
       title="System Accounts"
       subtitle="People who can sign in to BIOBRIDGE — each tied to an Access Level and a Branch."
     >
-      {/* Add-account form --------------------------------------------- */}
+      {/* Unified Add / Edit form -------------------------------------- */}
       <form
+        ref={formRef}
         onSubmit={(e: FormEvent) => {
           e.preventDefault();
-          void addAccount();
+          void submitForm();
         }}
-        className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4"
+        className="scroll-mt-6 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4"
       >
-        <p className="mb-4 flex items-center gap-2 text-xs font-bold tracking-[0.2em] text-neon uppercase">
-          <IconPlus className="h-4 w-4" /> Add System Account
-        </p>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-xs font-bold tracking-[0.2em] text-neon uppercase">
+            {isEditMode ? (
+              <>
+                <IconEdit className="h-4 w-4" /> Edit System Account
+              </>
+            ) : (
+              <>
+                <IconPlus className="h-4 w-4" /> Add System Account
+              </>
+            )}
+          </p>
+          {isEditMode ? (
+            <span className="chip chip--neon">
+              Editing · {firstName} {surname}
+            </span>
+          ) : null}
+        </div>
+
+        {/* Two-column layout: left = identity/level/password, right =
+            surname/assignment/confirmation. Stacks on small screens. */}
         <div className="grid gap-4 sm:grid-cols-2">
+          {/* Left — First Name */}
           <label className="block">
             <span className={LABEL}>First Name</span>
             <input
@@ -745,6 +879,8 @@ export function SystemAccountsTab() {
               autoComplete="off"
             />
           </label>
+
+          {/* Right — Surname */}
           <label className="block">
             <span className={LABEL}>Surname</span>
             <input
@@ -755,6 +891,8 @@ export function SystemAccountsTab() {
               autoComplete="off"
             />
           </label>
+
+          {/* Left — Company Email */}
           <label className="block">
             <span className={LABEL}>Company Email</span>
             <input
@@ -766,17 +904,21 @@ export function SystemAccountsTab() {
               autoComplete="off"
             />
           </label>
+
+          {/* Right — Branch */}
           <label className="block">
-            <span className={LABEL}>Password</span>
-            <input
-              type="text"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={INPUT}
-              placeholder="Min. 6 characters"
-              autoComplete="new-password"
-            />
+            <span className={LABEL}>Branch</span>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className={INPUT}>
+              <option value="">Select branch…</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
           </label>
+
+          {/* Left — Access Level */}
           <label className="block">
             <span className={LABEL}>Access Level</span>
             <select
@@ -792,21 +934,15 @@ export function SystemAccountsTab() {
               ))}
             </select>
           </label>
+
+          {/* Right — Linked Employee (optional) */}
           <label className="block">
-            <span className={LABEL}>Branch</span>
-            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className={INPUT}>
-              <option value="">Select branch…</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block sm:col-span-2">
             <span className={LABEL}>Linked Employee (optional — powers My Portal)</span>
             <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className={INPUT}>
               <option value="">No link</option>
+              {linkedEmployeeMissing ? (
+                <option value={employeeId}>{linkedEmployeeName ?? `Employee #${employeeId}`}</option>
+              ) : null}
               {employees.map((em) => (
                 <option key={em.id} value={em.id}>
                   {em.fullName} · {em.erpUserId}
@@ -814,15 +950,75 @@ export function SystemAccountsTab() {
               ))}
             </select>
           </label>
+
+          {/* Left — Password / New Password */}
+          <label className="block">
+            <span className={LABEL}>{isEditMode ? "New Password" : "Password"}</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (passwordError) setPasswordError(null);
+              }}
+              className={INPUT}
+              placeholder={isEditMode ? "Leave blank to keep current" : "Min. 6 characters"}
+              autoComplete="new-password"
+            />
+          </label>
+
+          {/* Right — Confirm Password / Confirm New Password */}
+          <label className="block">
+            <span className={LABEL}>{isEditMode ? "Confirm New Password" : "Confirm Password"}</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                if (passwordError) setPasswordError(null);
+              }}
+              className={INPUT}
+              placeholder={isEditMode ? "Repeat new password" : "Repeat password"}
+              autoComplete="new-password"
+            />
+          </label>
         </div>
-        <div className="mt-4 flex justify-end">
-          <button
-            type="submit"
-            disabled={adding}
-            className="btn btn--neon"
-          >
-            <IconPlus className="h-4 w-4" />
-            {adding ? "Creating…" : "Add Account"}
+
+        {isEditMode ? (
+          <p className="mt-3 text-[11px] text-muted/70">
+            Leave password fields blank to keep the current password.
+          </p>
+        ) : null}
+
+        {passwordError ? (
+          <p role="alert" className="mt-2 text-[11px] font-semibold text-danger">
+            ✕ {passwordError}
+          </p>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+          {isEditMode ? (
+            <button
+              type="button"
+              onClick={resetForm}
+              disabled={saving}
+              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-[11px] font-bold tracking-[0.14em] text-muted uppercase transition hover:border-white/25 hover:text-ink disabled:opacity-40"
+            >
+              Cancel Edit
+            </button>
+          ) : null}
+          <button type="submit" disabled={saving} className="btn btn--neon">
+            {isEditMode ? (
+              <>
+                <IconCheck className="h-4 w-4" />
+                {saving ? "Saving…" : "Save Changes"}
+              </>
+            ) : (
+              <>
+                <IconPlus className="h-4 w-4" />
+                {saving ? "Creating…" : "Add Account"}
+              </>
+            )}
           </button>
         </div>
       </form>
@@ -830,6 +1026,13 @@ export function SystemAccountsTab() {
       {error ? (
         <p role="alert" className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
           ✕ {error}
+        </p>
+      ) : null}
+
+      {notice ? (
+        <p className="rounded-xl border border-neon/40 bg-neon/10 px-4 py-2.5 text-sm text-neon">
+          <IconCheck className="mr-1 inline h-4 w-4" />
+          {notice}
         </p>
       ) : null}
 
@@ -856,7 +1059,17 @@ export function SystemAccountsTab() {
             </thead>
             <tbody className="divide-y divide-white/[0.05]">
               {accounts.map((a) => (
-                <AccountRow key={a.id} account={a} onChanged={load} />
+                <AccountRow
+                  key={a.id}
+                  account={a}
+                  selected={a.id === editingId}
+                  onSelect={() => selectAccount(a)}
+                  onDeleted={(id) => {
+                    if (id === editingId) resetForm();
+                    setNotice("Account removed.");
+                    void load();
+                  }}
+                />
               ))}
             </tbody>
           </table>
@@ -866,22 +1079,25 @@ export function SystemAccountsTab() {
   );
 }
 
-/** One account row in the System Accounts table. */
-function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChanged: () => void }) {
+/** One account row — clicking it loads the account into the form above. */
+function AccountRow({
+  account,
+  selected,
+  onSelect,
+  onDeleted,
+}: {
+  account: SystemAccountDto;
+  selected: boolean;
+  onSelect: () => void;
+  onDeleted: (id: number) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
-  const [rowNotice, setRowNotice] = useState<string | null>(null);
-
-  // Inline "Set password" editor state.
-  const [settingPassword, setSettingPassword] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
 
   async function remove() {
     if (busy) return;
     setBusy(true);
     setRowError(null);
-    setRowNotice(null);
     try {
       const res = await fetch(`/api/settings/accounts/${account.id}`, { method: "DELETE" });
       const json = (await res.json()) as { ok: boolean; error?: string };
@@ -889,7 +1105,7 @@ function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChang
         setRowError(json.error ?? "Could not delete the account.");
         return;
       }
-      onChanged();
+      onDeleted(account.id);
     } catch {
       setRowError("Could not delete the account.");
     } finally {
@@ -897,47 +1113,22 @@ function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChang
     }
   }
 
-  function openPasswordEditor() {
-    setRowError(null);
-    setRowNotice(null);
-    setNewPassword("");
-    setSettingPassword(true);
-  }
-
-  function closePasswordEditor() {
-    setSettingPassword(false);
-    setNewPassword("");
-  }
-
-  async function savePassword() {
-    if (savingPassword || busy) return;
-    setRowError(null);
-    setRowNotice(null);
-    setSavingPassword(true);
-    try {
-      const res = await fetch(`/api/settings/accounts/${account.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: newPassword }),
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!res.ok || !json.ok) {
-        setRowError(json.error ?? "Could not update the password.");
-        return;
-      }
-      setSettingPassword(false);
-      setNewPassword("");
-      setRowNotice(`Login password updated for ${account.name}.`);
-    } catch {
-      setRowError("Could not update the password.");
-    } finally {
-      setSavingPassword(false);
-    }
-  }
-
   return (
-    <tr className="bg-white/[0.01] transition hover:bg-white/[0.04]">
-      <td className="px-4 py-3">
+    <tr
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className={`cursor-pointer outline-none transition focus-visible:bg-white/[0.05] ${
+        selected ? "bg-neon/[0.08] hover:bg-neon/[0.1]" : "bg-white/[0.01] hover:bg-white/[0.04]"
+      }`}
+    >
+      <td className={`px-4 py-3 ${selected ? "border-l-2 border-neon" : ""}`}>
         <span className="block font-semibold text-ink">{account.name}</span>
         {account.employeeName ? (
           <span className="block text-[11px] text-muted">Linked: {account.employeeName}</span>
@@ -951,45 +1142,16 @@ function AccountRow({ account, onChanged }: { account: SystemAccountDto; onChang
       </td>
       <td className="px-4 py-3 text-[12px] text-ink/80">{account.branchName ?? "Unassigned"}</td>
       <td className="px-4 py-3 text-right align-top">
-        {settingPassword ? (
-          <div className="ml-auto flex w-[220px] flex-col items-stretch gap-1.5">
-            <input
-              type="text"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void savePassword();
-                if (e.key === "Escape") closePasswordEditor();
-              }}
-              placeholder="New password (min. 6)"
-              autoComplete="new-password"
-              autoFocus
-              className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50"
-            />
-            <div className="flex items-center justify-end gap-1.5">
-              <button
-                type="button"
-                disabled={savingPassword || newPassword.length < 6}
-                onClick={() => void savePassword()}
-                className={`${ROW_ACTION} disabled:cursor-not-allowed disabled:opacity-40`}
-              >
-                {savingPassword ? "Saving…" : "Save"}
-              </button>
-              <button type="button" disabled={savingPassword} onClick={closePasswordEditor} className={ROW_ACTION}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-end gap-1.5">
-            <button type="button" onClick={openPasswordEditor} className={ROW_ACTION}>
-              Set password
-            </button>
-            <ConfirmDelete label="remove" onConfirm={() => void remove()} busy={busy} />
-          </div>
-        )}
-        {rowError ? <p className="mt-1 text-[11px] text-danger">{rowError}</p> : null}
-        {rowNotice ? <p className="mt-1 text-[11px] text-neon">{rowNotice}</p> : null}
+        {/* stopPropagation keeps Delete independent of the row-select click. */}
+        <div
+          className="flex items-center justify-end gap-2"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {selected ? <span className="chip chip--neon">Editing</span> : null}
+          <ConfirmDelete label="remove" onConfirm={() => void remove()} busy={busy} />
+        </div>
+        {rowError ? <p className="mt-1 text-[11px] text-danger">✕ {rowError}</p> : null}
       </td>
     </tr>
   );
