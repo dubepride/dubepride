@@ -1967,6 +1967,16 @@ export function todayPunchesByEmployee(): Map<number, { ts: number; terminalId: 
   return map;
 }
 
+/** Earliest recorded punch for one employee (null = no records yet). */
+export function getEmployeeFirstLog(employeeId: number): number | null {
+  const row = queryOne<{ ts: number | null }>(
+    getDb(),
+    "SELECT MIN(Timestamp) AS ts FROM Attendance_Logs WHERE Employee_ID = ?",
+    employeeId
+  );
+  return row?.ts ?? null;
+}
+
 /** One employee's punches inside a window (timesheet builder input). */
 export function getEmployeeLogs(
   employeeId: number,

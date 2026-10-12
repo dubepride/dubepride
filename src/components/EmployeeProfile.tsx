@@ -15,6 +15,8 @@ import type {
   TimesheetPunch,
   TimesheetWeek,
 } from "@/lib/types";
+import TimesheetExport from "./TimesheetExport";
+import { IconPrint } from "./icons";
 
 /**
  * Employee Profile + formal weekly timesheet (Objectives 3 & 4).
@@ -34,6 +36,8 @@ export default function EmployeeProfile() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<number | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  /** Per-employee Timesheet Export overlay (custom period → print / CSV). */
+  const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,13 +151,23 @@ export default function EmployeeProfile() {
             </Link>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => setRefreshNonce((n) => n + 1)}
-          className="btn btn--ghost py-1.5! text-[11px] tracking-[0.14em] uppercase"
-        >
-          ↻ Refresh timesheet
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setRefreshNonce((n) => n + 1)}
+            className="btn btn--ghost py-1.5! text-[11px] tracking-[0.14em] uppercase"
+          >
+            ↻ Refresh timesheet
+          </button>
+          <button
+            type="button"
+            onClick={() => setExportOpen(true)}
+            className="btn btn--neon py-1.5! text-[11px] tracking-[0.14em] uppercase"
+          >
+            <IconPrint className="h-3.5 w-3.5" />
+            Print Timesheet
+          </button>
+        </div>
       </div>
 
       {/* ── Profile header ─────────────────────────────────────────── */}
@@ -303,6 +317,14 @@ export default function EmployeeProfile() {
           ) : null}
         </p>
       </section>
+
+      {exportOpen ? (
+        <TimesheetExport
+          key={`export-${e.id}`}
+          employee={{ id: e.id, fullName: e.fullName, erpUserId: e.erpUserId }}
+          onClose={() => setExportOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

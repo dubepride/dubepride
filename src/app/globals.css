@@ -546,3 +546,206 @@ body {
     print-color-adjust: exact;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Individual timesheet export — per-employee print / CSV document
+   --------------------------------------------------------------------------
+   Shares the white "paper" palette (.tsr-paper …) above. The export panel is
+   portalled to <body> as .tsx-print-root: the @media print block below uses a
+   :has() guard so that when the panel is open ONLY its report prints, while the
+   roster-wide report (#biobridge-print-report) keeps its own rules untouched.
+   -------------------------------------------------------------------------- */
+
+.tsx-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem 1.2rem;
+  margin: 0.7rem 0 0;
+}
+.tsx-meta-item dt {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5b5668;
+}
+.tsx-meta-item dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #16121f;
+}
+.tsx-punches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tsx-punch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.12rem 0;
+}
+.tsx-punch + .tsx-punch {
+  border-top: 1px dotted #e2dfea;
+}
+.tsx-seq {
+  width: 0.9rem;
+  flex: none;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.6rem;
+  color: #8b8698;
+}
+.tsx-time {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.tsx-dir {
+  border: 1px solid #cfe9db;
+  background: #eaf8f0;
+  color: #0b7a43;
+  border-radius: 9999px;
+  padding: 0 0.4rem;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.tsx-label {
+  color: #3a3546;
+}
+.tsx-branch {
+  border: 1px solid #ddd8ea;
+  background: #f4f1fa;
+  color: #4a148c;
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.tsx-flag {
+  color: #9a6700;
+  background: #fff5d9;
+  border: 1px solid #f0d68a;
+  border-radius: 0.25rem;
+  padding: 0 0.35rem;
+  font-size: 0.55rem;
+  font-weight: 700;
+}
+.tsx-punch--denied .tsx-dir,
+.tsx-punch--open .tsx-dir,
+.tsx-punch--unmatched-in .tsx-dir,
+.tsx-punch--unmatched-out .tsx-dir {
+  border-color: #f0d68a;
+  background: #fff5d9;
+  color: #9a6700;
+}
+.tsx-punch--denied .tsx-label {
+  color: #9a6700;
+}
+.tsx-rest td {
+  background: #faf9fc;
+}
+.tsx-total td {
+  border-top: 2px solid #d8d4e2;
+  background: #faf9fc;
+}
+.tsx-issues {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.72rem;
+  color: #3a3546;
+}
+.tsx-issues li {
+  margin-bottom: 0.15rem;
+}
+.tsx-clean {
+  font-size: 0.72rem;
+  margin: 0 0 1.4rem;
+}
+.tsx-sign {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  margin-top: 1.4rem;
+}
+.tsx-sign-line {
+  display: flex;
+  flex-direction: column;
+}
+.tsx-sign-rule {
+  display: block;
+  height: 1.4rem;
+  border-bottom: 1.5px solid #16121f;
+}
+.tsx-sign-label {
+  margin-top: 0.25rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #5b5668;
+}
+
+/* Print: when the export panel is mounted, it is the only thing that prints. */
+@media print {
+  body:has(.tsx-print-root) > *:not(.tsx-print-root) {
+    display: none !important;
+  }
+  body:has(.tsx-print-root) {
+    background: #ffffff !important;
+  }
+  .tsx-print-root {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+  }
+  .tsx-print-root * {
+    visibility: visible !important;
+  }
+  .tsx-print-root .tsx-screen-only {
+    display: none !important;
+  }
+  .tsx-print-root .tsx-root-inner {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .tsx-print-root .tsx-paper {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Keep day rows from splitting across a page break. */
+  .tsx-paper tr,
+  .tsx-paper .tsx-sign {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .tsx-paper thead {
+    display: table-header-group;
+  }
+}
+
+/* A4 with an explicit page-number margin box (engines that support it). */
+@page {
+  size: A4;
+  margin: 12mm;
+}
+@page {
+  @bottom-center {
+    content: "Page " counter(page) " of " counter(pages);
+    font-size: 8pt;
+    color: #5b5668;
+  }
+}

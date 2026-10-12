@@ -545,6 +545,78 @@ export interface TimesheetReportResponse {
 }
 
 /* ------------------------------------------------------------------ */
+/* Individual employee timesheet export (print + CSV)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Why a punch does not pair cleanly. `null` on the punch = clean pair.
+ *   unmatched-in  → a second clock-in while already clocked in
+ *   unmatched-out → a clock-out with no open clock-in
+ *   open          → clock-in with no clock-out recorded (shift in progress)
+ *   denied        → biometric verification failed (never counted as work)
+ */
+export type TimesheetPunchFlag =
+  | "unmatched-in"
+  | "unmatched-out"
+  | "open"
+  | "denied";
+
+/** One punch in an individual export day, annotated with its pairing flag. */
+export interface TimesheetExportPunch extends TimesheetPunch {
+  flag: TimesheetPunchFlag | null;
+}
+
+/** Per-day attendance status shown in the preview / print / CSV. */
+export type TimesheetDayStatus =
+  | "Present"
+  | "Incomplete"
+  | "No punches"
+  | "Rest day";
+
+/** One calendar day of an individual employee export (full punch sequence). */
+export interface TimesheetExportDay extends Omit<TimesheetDay, "punches"> {
+  punches: TimesheetExportPunch[];
+  /** Sunday = rest day for the Monday–Saturday working week. */
+  isRestDay: boolean;
+  status: TimesheetDayStatus;
+  /** Human-readable description of every unmatched / denied event. */
+  issues: string[];
+}
+
+/** GET /api/employees/[id]/timesheet — one employee, one custom period. */
+export interface EmployeeTimesheetExport {
+  employee: {
+    id: number;
+    erpUserId: string;
+    fullName: string;
+    department: string;
+    position: string;
+    branch: string;
+    status: string;
+    enrolled: boolean;
+    fingers: number[];
+    shiftId: number | null;
+  };
+  period: {
+    fromKey: string; // "YYYY-MM-DD"
+    toKey: string;
+    fromMs: number; // local midnight
+    toMs: number; // inclusive end of the `to` day
+    days: number; // calendar days in range
+  };
+  days: TimesheetExportDay[];
+  totals: {
+    daysRecorded: number; // days with ≥1 punch
+    daysWorked: number; // days with a clock-in
+    punches: number;
+    workedMs: number;
+    openShifts: number;
+    issues: number;
+  };
+  generatedAt: number;
+}
+
+/* ------------------------------------------------------------------ */
 /* Phase 13/14 — relational settings, access matrix, system accounts   */
 /* ------------------------------------------------------------------ */
 

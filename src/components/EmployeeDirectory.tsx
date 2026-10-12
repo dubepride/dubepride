@@ -9,6 +9,7 @@ import type {
   EmployeeDirectoryResponse,
   ShiftRow,
 } from "@/lib/types";
+import TimesheetExport from "./TimesheetExport";
 import TimesheetReport from "./TimesheetReport";
 import { IconEdit, IconEye, IconFingerprint, IconPrint, IconSearch, IconTrash, IconX } from "./icons";
 
@@ -538,6 +539,8 @@ export default function EmployeeDirectory() {
   const [modal, setModal] = useState<ModalState | null>(null);
   /** Timesheet Report overlay (custom period → print / save as PDF). */
   const [reportOpen, setReportOpen] = useState(false);
+  /** Per-employee Timesheet Export overlay (custom period → print / CSV). */
+  const [exportFor, setExportFor] = useState<EmployeeDirectoryEntry | null>(null);
 
   // /timesheets → /employees?focus=search: focus the search box once.
   useEffect(() => {
@@ -817,6 +820,16 @@ export default function EmployeeDirectory() {
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
+                          aria-label={`Timesheet export for ${e.fullName}`}
+                          title="Print timesheet / export CSV for this employee"
+                          className="btn btn--ghost px-2.5! py-1.5! text-[10px]! tracking-[0.12em]! uppercase"
+                          onClick={() => setExportFor(e)}
+                        >
+                          <IconPrint className="h-3.5 w-3.5" />
+                          Timesheet Export
+                        </button>
+                        <button
+                          type="button"
                           aria-label={`View ${e.fullName}`}
                           title="View timesheet"
                           className="rounded-lg border border-white/10 bg-white/[0.04] p-1.5 text-muted transition hover:border-neon/40 hover:text-neon"
@@ -891,6 +904,18 @@ export default function EmployeeDirectory() {
               : `All ${employees.length} employees`
           }
           onClose={() => setReportOpen(false)}
+        />
+      ) : null}
+
+      {exportFor ? (
+        <TimesheetExport
+          key={`export-${exportFor.id}`}
+          employee={{
+            id: exportFor.id,
+            fullName: exportFor.fullName,
+            erpUserId: exportFor.erpUserId,
+          }}
+          onClose={() => setExportFor(null)}
         />
       ) : null}
     </div>
