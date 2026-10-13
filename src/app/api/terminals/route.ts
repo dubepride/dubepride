@@ -1,6 +1,9 @@
 /**
  * /api/terminals — device registry for the Clocking Devices page.
  * Supports GET (list), POST (add), PUT (edit/move), DELETE (remove).
+ *
+ * Phase 15: each device also carries an allowed Clocking_Method and an
+ * optional geofence centre. A "Geofence Only" device needs no MAC/IP.
  */
 import { requireAdmin } from "@/lib/auth";
 import {
@@ -9,6 +12,7 @@ import {
   listTerminals,
   updateTerminal,
 } from "@/lib/db";
+import { normalizeClockingMethod, readClockingConfig, validateClockingConfig } from "@/lib/geofence";
 import type { TerminalDto, TerminalsResponse } from "@/lib/types";
 
 export async function GET(): Promise<Response> {
@@ -24,6 +28,10 @@ export async function GET(): Promise<Response> {
     status: t.Status,
     lastPing: t.Last_Ping,
     scansToday: Number(t.Scans_Today ?? 0),
+    clockingMethod: normalizeClockingMethod(t.Clocking_Method),
+    latitude: t.Latitude,
+    longitude: t.Longitude,
+    geofenceRadiusMeters: t.Geofence_Radius_Meters,
   }));
 
   const payload: TerminalsResponse = { terminals, generatedAt: Date.now() };
@@ -35,18 +43,29 @@ export async function POST(req: Request): Promise<Response> {
   if (guard) return guard;
   try {
     const body = await req.json();
-    const mac = String(body.mac || "").trim();
-    const branch = String(body.branch || "").trim();
-    if (!mac || !branch) {
-      return Response.json({ ok: false, error: "MAC and Branch required" }, { status: 400 });
+    const clocking = readClockingConfig(body);
+    const method = normalizeClockingMethod(body?.clockingMethod ?? clocking.clockingMethod);
+    const mac = String(body?.mac ?? "").trim();
+    const branch = String(body?.branch ?? "").trim();
+    // A Geofence-only device has no physical terminal, so MAC is optional.
+    if (!branch || (!mac && method !== "Geofence")) {
+      return Response.json(
+        { ok: false, error: "MAC and Branch required" },
+        { status: 400 }
+      );
     }
+    const problem = validateClockingConfig(clocking);
+    if (problem) return Response.json({ ok: false, error: problem }, { status: 400 });
+
     const id = createTerminal({
       mac,
-      ip: body.ip ?? null,
-      location: body.location ?? null,
-      deviceName: body.deviceName ?? body.location ?? null,
+      ip: body?.ip ?? null,
+      location: body?.location ?? null,
+      deviceName: body?.deviceName ?? body?.location ?? null,
       branch,
-      status: body.status === "Online" ? "Online" : "Offline",
+      status: body?.status === "Online" ? "Online" : "Offline",
+      clockingMethod: method,
+      ...clocking,
     });
     return Response.json({ ok: true, id }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
@@ -66,6 +85,10 @@ export async function PUT(req: Request): Promise<Response> {
     if (!Number.isFinite(id)) {
       return Response.json({ ok: false, error: "Invalid id" }, { status: 400 });
     }
+    const clocking = readClockingConfig(body);
+    const problem = validateClockingConfig(clocking);
+    if (problem) return Response.json({ ok: false, error: problem }, { status: 400 });
+
     updateTerminal(id, {
       mac: body.mac !== undefined ? String(body.mac) : undefined,
       ip: body.ip !== undefined ? body.ip : undefined,
@@ -73,6 +96,7 @@ export async function PUT(req: Request): Promise<Response> {
       deviceName: body.deviceName !== undefined ? body.deviceName : undefined,
       branch: body.branch !== undefined ? String(body.branch) : undefined,
       status: body.status === "Online" ? "Online" : body.status === "Offline" ? "Offline" : undefined,
+      ...clocking,
     });
     return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {

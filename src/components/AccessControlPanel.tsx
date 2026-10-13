@@ -44,6 +44,14 @@ import type {
   SystemAccountsResponse,
 } from "@/lib/types";
 import { IconCheck, IconChevronDown, IconEdit, IconPlus } from "./icons";
+import {
+  ClockingMethodBadge,
+  ClockingMethodFields,
+  clockingPayload,
+  emptyClockingFields,
+  formatCoordinate,
+  type ClockingFieldsValue,
+} from "./ClockingMethodFields";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
@@ -115,6 +123,7 @@ export function BranchesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [newClocking, setNewClocking] = useState<ClockingFieldsValue>(() => emptyClockingFields());
   const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
@@ -143,7 +152,7 @@ export function BranchesTab() {
       const res = await fetch("/api/settings/branches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, ...clockingPayload(newClocking) }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!res.ok || !json.ok) {
@@ -151,6 +160,7 @@ export function BranchesTab() {
         return;
       }
       setNewName("");
+      setNewClocking(emptyClockingFields());
       await load();
     } catch {
       setError("Could not add the branch.");
@@ -162,7 +172,7 @@ export function BranchesTab() {
   return (
     <SlatePanel
       title="Branches"
-      subtitle="The global site list — Employees & Terminals select branches from here."
+      subtitle="The global site list — Employees & Terminals select branches from here. Each site can opt into hands-free geofenced mobile clocking."
     >
       {/* Add branch ------------------------------------------------- */}
       <form
@@ -170,20 +180,27 @@ export function BranchesTab() {
           e.preventDefault();
           void addBranch();
         }}
-        className="flex gap-2"
+        className="space-y-4"
       >
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="New branch name, e.g. Branch 18"
-          className={INPUT}
-          aria-label="New branch name"
-          autoComplete="off"
+        <div className="flex gap-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New branch name, e.g. Branch 18"
+            className={INPUT}
+            aria-label="New branch name"
+            autoComplete="off"
+          />
+          <button type="submit" disabled={adding || newName.trim().length === 0} className="btn btn--neon flex-none">
+            <IconPlus className="h-4 w-4" />
+            Add Branch
+          </button>
+        </div>
+        <ClockingMethodFields
+          value={newClocking}
+          onChange={(patch) => setNewClocking((prev) => ({ ...prev, ...patch }))}
+          idPrefix="new-branch"
         />
-        <button type="submit" disabled={adding || newName.trim().length === 0} className="btn btn--neon flex-none">
-          <IconPlus className="h-4 w-4" />
-          Add Branch
-        </button>
       </form>
 
       {error ? (
@@ -212,12 +229,22 @@ export function BranchesTab() {
   );
 }
 
-/** One branch row: identity + headcounts + inline rename / confirm-delete. */
+/** One branch row: identity + headcounts + inline rename / clocking / delete. */
 function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => void }) {
   const [renaming, setRenaming] = useState(false);
   const [value, setValue] = useState(branch.name);
   const [busy, setBusy] = useState(false);
   const [rowError, setRowError] = useState<string | null>(null);
+  // Phase 15 — clocking method + geofence editor (collapsed by default).
+  const [clockingOpen, setClockingOpen] = useState(false);
+  const [clocking, setClocking] = useState<ClockingFieldsValue>(() =>
+    emptyClockingFields(
+      branch.clockingMethod,
+      branch.latitude,
+      branch.longitude,
+      branch.geofenceRadiusMeters
+    )
+  );
 
   async function saveRename() {
     const name = value.trim();
@@ -244,6 +271,30 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
     }
   }
 
+  async function saveClocking() {
+    if (busy) return;
+    setBusy(true);
+    setRowError(null);
+    try {
+      const res = await fetch(`/api/settings/branches/${branch.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(clockingPayload(clocking)),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setRowError(json.error ?? "Could not save the clocking method.");
+        return;
+      }
+      setClockingOpen(false);
+      onChanged();
+    } catch {
+      setRowError("Could not save the clocking method.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove() {
     if (busy) return;
     setBusy(true);
@@ -263,14 +314,31 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
     }
   }
 
+  const geofenced = branch.clockingMethod !== "Biometric";
+
   return (
     <li className="bg-white/[0.02] px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{branch.name}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-ink">{branch.name}</p>
+            <ClockingMethodBadge
+              method={branch.clockingMethod}
+              radiusMeters={branch.geofenceRadiusMeters}
+            />
+          </div>
           <p className="mt-0.5 text-[11px] text-muted">
             {branch.employeeCount} employee{branch.employeeCount === 1 ? "" : "s"} ·{" "}
             {branch.terminalCount} terminal{branch.terminalCount === 1 ? "" : "s"}
+            {geofenced ? (
+              <>
+                {" · geofence "}
+                <span className="font-mono text-ink/70">
+                  {formatCoordinate(branch.latitude, branch.longitude)}
+                </span>
+                {branch.geofenceRadiusMeters ? ` @ ${branch.geofenceRadiusMeters} m` : ""}
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex flex-none items-center gap-2">
@@ -288,6 +356,18 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
               Rename
             </button>
           )}
+          <button
+            type="button"
+            className={`rounded-lg border px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] uppercase transition ${
+              clockingOpen
+                ? "border-neon/40 bg-neon/10 text-neon"
+                : "border-white/10 bg-white/[0.04] text-muted hover:border-neon/40 hover:text-neon"
+            }`}
+            aria-expanded={clockingOpen}
+            onClick={() => setClockingOpen((open) => !open)}
+          >
+            Clocking
+          </button>
           <ConfirmDelete label="remove" onConfirm={() => void remove()} busy={busy} />
         </div>
       </div>
@@ -307,6 +387,38 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
             aria-label={`Rename ${branch.name}`}
             autoFocus
           />
+        </div>
+      ) : null}
+      {clockingOpen ? (
+        <div className="mt-3 space-y-3 rounded-xl border border-white/[0.08] bg-black/20 p-4">
+          <ClockingMethodFields
+            value={clocking}
+            onChange={(patch) => setClocking((prev) => ({ ...prev, ...patch }))}
+            idPrefix={`branch-${branch.id}`}
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => {
+                setClocking(
+                  emptyClockingFields(
+                    branch.clockingMethod,
+                    branch.latitude,
+                    branch.longitude,
+                    branch.geofenceRadiusMeters
+                  )
+                );
+                setClockingOpen(false);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button type="button" className="btn btn--neon" onClick={() => void saveClocking()} disabled={busy}>
+              {busy ? "Saving…" : "Save Clocking"}
+            </button>
+          </div>
         </div>
       ) : null}
       {rowError ? <p className="mt-2 text-[11px] text-danger">✕ {rowError}</p> : null}

@@ -29,6 +29,20 @@ export type PunchDirection = "IN" | "OUT";
 /** Outcome of one batch push to the ERP. */
 export type BatchStatus = "Success" | "Failed";
 
+/**
+ * How a site / device is allowed to accept clock-ins (Phase 15).
+ *
+ *   Biometric  — the physical fingerprint terminal only (the default).
+ *   Geofence   — hands-free geofenced mobile app only (no terminal needed).
+ *   Both       — either channel (a.k.a. "Hybrid" in the admin UI).
+ *
+ * Stored verbatim in Branches/Terminals.Clocking_Method. The admin UI shows
+ * friendlier labels ("Biometric Only" / "Geofence Only" / "Hybrid — Both")
+ * while the API accepts common aliases and normalises via
+ * `normalizeClockingMethod()` (src/lib/geofence.ts).
+ */
+export type ClockingMethod = "Biometric" | "Geofence" | "Both";
+
 /* ------------------------------------------------------------------ */
 /* Raw SQLite rows                                                     */
 /* ------------------------------------------------------------------ */
@@ -61,6 +75,13 @@ export interface TerminalRow {
   Branch_Name: string;
   Status: TerminalStatus;
   Last_Ping: number | null; // epoch ms of last heartbeat / scan
+  /** Allowed clock-in channel for this device (Phase 15). */
+  Clocking_Method: ClockingMethod;
+  /** Geofence centre (WGS-84) — null when the device has none configured. */
+  Latitude: number | null;
+  Longitude: number | null;
+  /** Accept radius around the centre, in metres. */
+  Geofence_Radius_Meters: number | null;
 }
 
 export interface AttendanceLogRow {
@@ -71,8 +92,15 @@ export interface AttendanceLogRow {
   ERP_Sync_Status: ErpSyncStatus;
   Verify_Result: VerifyResult;
   Direction: PunchDirection;
-  Verify_Method: string; // "Fingerprint", "Card", "Face", ...
+  Verify_Method: string; // "Fingerprint", "Card", "Face", "Geofence", ...
   Raw_Payload: string | null; // original frame received from the device
+  /** GPS captured with a geofenced mobile punch (Phase 15) — null for terminals. */
+  Latitude: number | null;
+  Longitude: number | null;
+  /** Device-reported GPS accuracy in metres (null when unavailable). */
+  Location_Accuracy_Meters: number | null;
+  /** Metres from the site centre at punch time (null = not a geofence punch). */
+  Geofence_Distance_Meters: number | null;
   Created_At: number; // epoch ms of ingestion
 }
 
@@ -240,6 +268,11 @@ export interface TerminalDto {
   status: TerminalStatus;
   lastPing: number | null;
   scansToday: number;
+  /** Allowed clock-in channel (Phase 15). */
+  clockingMethod: ClockingMethod;
+  latitude: number | null;
+  longitude: number | null;
+  geofenceRadiusMeters: number | null;
 }
 
 export interface TerminalsResponse {
@@ -625,6 +658,13 @@ export interface BranchRow {
   Branch_ID: number;
   Branch_Name: string;
   Created_At: number; // epoch ms
+  /** Allowed clock-in channel for this site (Phase 15). */
+  Clocking_Method: ClockingMethod;
+  /** Geofence centre (WGS-84) — null when this site has none configured. */
+  Latitude: number | null;
+  Longitude: number | null;
+  /** Accept radius around the centre, in metres. */
+  Geofence_Radius_Meters: number | null;
 }
 
 /** Branch wired for the Settings tab — includes usage counts. */
@@ -634,6 +674,11 @@ export interface BranchDto {
   employeeCount: number;
   terminalCount: number;
   createdAt: number;
+  /** Allowed clock-in channel (Phase 15). */
+  clockingMethod: ClockingMethod;
+  latitude: number | null;
+  longitude: number | null;
+  geofenceRadiusMeters: number | null;
 }
 
 export interface BranchesResponse {
@@ -859,4 +904,65 @@ export interface ExceptionsResponse {
   rows: ExceptionRow[];
   counts: Record<ExceptionType, number>;
   generatedAt: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 15 — Hands-Free Geofenced Mobile Clocking                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Machine-readable outcome of a mobile GPS punch. The mobile app switches on
+ * `reason` rather than parsing prose.
+ */
+export type GeoPunchReason =
+  | "CLOCKED_IN"
+  | "CLOCKED_OUT"
+  | "OUTSIDE_GEOFENCE"
+  | "BIOMETRIC_ONLY"
+  | "GEOFENCE_NOT_CONFIGURED";
+
+/** Geofence verdict attached to a processed / rejected mobile punch. */
+export interface GeoPunchGeo {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  /** Great-circle distance from the site centre, rounded to whole metres. */
+  distanceMeters: number;
+  /** Configured accept radius in metres. */
+  radiusMeters: number;
+  withinGeofence: boolean;
+  /** The channel the resolved location permits. */
+  method: ClockingMethod;
+  /** Human location/branch the punch was validated against. */
+  location: string | null;
+  branch: string | null;
+}
+
+/**
+ * POST /api/attendance/geopunch response.
+ *
+ * `ok:true`  — an in-radius punch was written as Pending for the ERP.
+ * `ok:false` with `reason:"OUTSIDE_GEOFENCE"` — the attempt was recorded as an
+ *            exception (Verified_Result "Denied", not queued for the ERP).
+ * Other `ok:false` values (BIOMETRIC_ONLY / GEOFENCE_NOT_CONFIGURED + 4xx)
+ * mean nothing was written.
+ */
+export interface GeoPunchResponse {
+  ok: boolean;
+  reason: GeoPunchReason;
+  message: string;
+  punch: {
+    /** Attendance_Logs.Log_ID — null when no row was written. */
+    logId: number | null;
+    employeeId: number;
+    employeeName: string;
+    erpUserId: string;
+    timestamp: number;
+    direction: PunchDirection;
+    verifyMethod: string;
+    syncStatus: ErpSyncStatus | null;
+    verifyResult: VerifyResult | null;
+  } | null;
+  geo: GeoPunchGeo | null;
+  error?: string;
 }

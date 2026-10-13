@@ -2,10 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatRelative } from "@/lib/format";
+import { methodUsesTerminal } from "@/lib/geofence";
 import type { TerminalDto, TerminalsResponse } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
 import MetricCard from "./MetricCard";
 import { IconClock, IconScan, IconServer, IconX } from "./icons";
+import {
+  ClockingMethodBadge,
+  ClockingMethodFields,
+  clockingPayload,
+  emptyClockingFields,
+  type ClockingFieldsValue,
+} from "./ClockingMethodFields";
 
 /**
  * ============================================================================
@@ -111,15 +119,30 @@ function DeviceForm({
   const [name, setName] = useState(device?.location ?? "");
   const [branch, setBranch] = useState(device?.branch || BRANCHES[0]);
   const [status, setStatus] = useState<"Online" | "Offline">(device?.status ?? "Offline");
+  const [clocking, setClocking] = useState<ClockingFieldsValue>(() =>
+    emptyClockingFields(
+      device?.clockingMethod ?? "Biometric",
+      device?.latitude ?? null,
+      device?.longitude ?? null,
+      device?.geofenceRadiusMeters ?? null
+    )
+  );
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const isAdd = mode === "add";
+  // Biometric / Hybrid devices carry a physical MAC + IP; a Geofence-only
+  // device is purely virtual, so those network fields are hidden and optional.
+  const usesTerminal = methodUsesTerminal(clocking.clockingMethod);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!mac.trim() || !branch) {
-      setFormError("Terminal MAC and branch are required.");
+    if (!branch) {
+      setFormError("A branch is required.");
+      return;
+    }
+    if (usesTerminal && !mac.trim()) {
+      setFormError("Terminal MAC is required for biometric / hybrid devices.");
       return;
     }
     setSaving(true);
@@ -130,22 +153,27 @@ function DeviceForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           isAdd
-            ? { mac, ip, location: name, branch, status }
-            : { id: device?.id, mac, ip, location: name, branch, status }
+            ? { mac, ip, location: name, branch, status, ...clockingPayload(clocking) }
+            : { id: device?.id, mac, ip, location: name, branch, status, ...clockingPayload(clocking) }
         ),
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; id?: number; error?: string } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
 
+      const payload = clockingPayload(clocking);
       onSaved({
         id: isAdd ? Number(json.id ?? 0) : Number(device?.id ?? 0),
-        mac: mac.trim(),
+        mac: mac.trim() || device?.mac || "",
         ip: ip.trim(),
-        location: name.trim() || mac.trim(),
+        location: name.trim() || mac.trim() || device?.location || "Geofenced site",
         branch,
         status,
         lastPing: status === "Online" ? Date.now() : (device?.lastPing ?? null),
         scansToday: device?.scansToday ?? 0,
+        clockingMethod: payload.clockingMethod,
+        latitude: payload.latitude ?? null,
+        longitude: payload.longitude ?? null,
+        geofenceRadiusMeters: payload.geofenceRadiusMeters ?? null,
       });
       onClose();
     } catch (err) {
@@ -160,41 +188,56 @@ function DeviceForm({
       title={isAdd ? "Add Clocking Device" : "Edit / Move Device"}
       subtitle={
         isAdd
-          ? "Register a new fingerprint terminal against one of the 17 branches."
-          : `Editing ${device?.mac ?? ""} — change its identity, status or branch.`
+          ? "Register a clocking point — a fingerprint terminal, a geofenced mobile site, or both."
+          : `Editing ${device?.location ?? device?.mac ?? ""} — change its identity, clocking method, status or branch.`
       }
       onClose={onClose}
     >
       <form onSubmit={submit} className="space-y-4 px-5 py-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <label className={LABEL} htmlFor="dev-mac">
-              Terminal MAC
-            </label>
-            <input
-              id="dev-mac"
-              className={`${INPUT} font-mono`}
-              value={mac}
-              onChange={(e) => setMac(e.target.value)}
-              placeholder="A4:1F:72:0C:9B:31"
-              autoComplete="off"
-              required
-            />
-          </div>
+        <ClockingMethodFields
+          value={clocking}
+          onChange={(patch) => setClocking((prev) => ({ ...prev, ...patch }))}
+          idPrefix="dev"
+        />
 
-          <div>
-            <label className={LABEL} htmlFor="dev-ip">
-              IP Address
-            </label>
-            <input
-              id="dev-ip"
-              className={`${INPUT} font-mono`}
-              value={ip}
-              onChange={(e) => setIp(e.target.value)}
-              placeholder="192.168.10.40"
-              autoComplete="off"
-            />
-          </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {usesTerminal ? (
+            <>
+              <div className="sm:col-span-2">
+                <label className={LABEL} htmlFor="dev-mac">
+                  Terminal MAC
+                </label>
+                <input
+                  id="dev-mac"
+                  className={`${INPUT} font-mono`}
+                  value={mac}
+                  onChange={(e) => setMac(e.target.value)}
+                  placeholder="A4:1F:72:0C:9B:31"
+                  autoComplete="off"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className={LABEL} htmlFor="dev-ip">
+                  IP Address
+                </label>
+                <input
+                  id="dev-ip"
+                  className={`${INPUT} font-mono`}
+                  value={ip}
+                  onChange={(e) => setIp(e.target.value)}
+                  placeholder="192.168.10.40"
+                  autoComplete="off"
+                />
+              </div>
+            </>
+          ) : (
+            <p className="rounded-xl border border-neon/20 bg-neon/[0.04] px-3 py-2.5 text-[11px] leading-relaxed text-muted sm:col-span-2">
+              Geofence-only site — no physical terminal. MAC/IP are not required; employees clock in
+              from the mobile app when they are inside the GPS radius.
+            </p>
+          )}
 
           <div>
             <label className={LABEL} htmlFor="dev-name">
@@ -311,7 +354,9 @@ function RemoveConfirm({
         <div className="glass-inset rounded-xl p-4">
           <p className="text-sm font-semibold text-ink">{device.location}</p>
           <p className="mt-1 font-mono text-xs text-muted">
-            {device.mac} · {device.ip}
+            {device.clockingMethod === "Geofence"
+              ? `${device.clockingMethod} · ${device.latitude ?? "—"}, ${device.longitude ?? "—"} @ ${device.geofenceRadiusMeters ?? "—"} m`
+              : `${device.mac} · ${device.ip}`}
           </p>
           <p className="mt-1 text-xs text-muted">{device.branch || "Unassigned"}</p>
         </div>
@@ -543,10 +588,11 @@ export default function ClockingDevices() {
                       </p>
                     ) : (
                       <div className="scroll-thin overflow-x-auto">
-                        <table className="w-full min-w-[760px] border-collapse">
+                        <table className="w-full min-w-[880px] border-collapse">
                           <thead className="tbl-head">
                             <tr>
                               <th>Status</th>
+                              <th>Method</th>
                               <th>Device Name</th>
                               <th>Terminal MAC</th>
                               <th>IP Address</th>
@@ -558,6 +604,7 @@ export default function ClockingDevices() {
                           <tbody>
                             {rows.map((d) => {
                               const isOn = d.status === "Online";
+                              const geoOnly = d.clockingMethod === "Geofence";
                               return (
                                 <tr key={d.id} className="tbl-row transition-colors">
                                   <td>
@@ -572,9 +619,15 @@ export default function ClockingDevices() {
                                       {d.status}
                                     </span>
                                   </td>
+                                  <td>
+                                    <ClockingMethodBadge
+                                      method={d.clockingMethod}
+                                      radiusMeters={d.geofenceRadiusMeters}
+                                    />
+                                  </td>
                                   <td className="font-semibold text-ink">{d.location}</td>
-                                  <td className="font-mono text-muted">{d.mac}</td>
-                                  <td className="font-mono text-muted">{d.ip || "—"}</td>
+                                  <td className="font-mono text-muted">{geoOnly ? "—" : d.mac || "—"}</td>
+                                  <td className="font-mono text-muted">{geoOnly ? "—" : d.ip || "—"}</td>
                                   <td className="font-mono text-xs text-muted">
                                     {isOn ? formatRelative(d.lastPing) : "— offline —"}
                                   </td>

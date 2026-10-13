@@ -44,6 +44,7 @@ import {
   PERMISSION_KEYS,
   serializePermissions,
 } from "@/lib/rbac";
+import { normalizeClockingMethod } from "@/lib/geofence";
 import { verifySessionToken } from "@/lib/session";
 import type {
   AccessLevelDto,
@@ -53,12 +54,14 @@ import type {
   BacklogEntry,
   BranchDto,
   BranchRow,
+  ClockingMethod,
   DashboardMetrics,
   EmployeePunchRow,
   EmployeeRow,
   ErpBatchPayload,
   ErpLogRow,
   ErpSyncGetResponse,
+  ErpSyncStatus,
   ExceptionRow,
   ExceptionsResponse,
   ExceptionType,
@@ -185,7 +188,11 @@ function migrate(db: DatabaseSync): void {
       Status        TEXT    NOT NULL DEFAULT 'Offline',
       Last_Ping     INTEGER,
       Branch_Name   TEXT    NOT NULL DEFAULT '',
-      Device_Name   TEXT
+      Device_Name   TEXT,
+      Clocking_Method        TEXT    NOT NULL DEFAULT 'Biometric',
+      Latitude               REAL,
+      Longitude              REAL,
+      Geofence_Radius_Meters INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS Attendance_Logs (
@@ -198,6 +205,10 @@ function migrate(db: DatabaseSync): void {
       Direction       TEXT    NOT NULL DEFAULT 'IN',
       Verify_Method   TEXT    NOT NULL DEFAULT 'Fingerprint',
       Raw_Payload     TEXT,
+      Latitude                  REAL,        -- geofenced mobile punch (Phase 15)
+      Longitude                 REAL,
+      Location_Accuracy_Meters  INTEGER,
+      Geofence_Distance_Meters  INTEGER,
       Created_At      INTEGER NOT NULL
     );
 
@@ -226,7 +237,11 @@ function migrate(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS Branches (
       Branch_ID   INTEGER PRIMARY KEY AUTOINCREMENT,
       Branch_Name TEXT    NOT NULL UNIQUE,
-      Created_At  INTEGER NOT NULL
+      Created_At  INTEGER NOT NULL,
+      Clocking_Method        TEXT    NOT NULL DEFAULT 'Biometric',
+      Latitude               REAL,
+      Longitude              REAL,
+      Geofence_Radius_Meters INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS Access_Levels (
@@ -274,6 +289,22 @@ function migrate(db: DatabaseSync): void {
   ensureColumn(db, "Employees", "Status", "Status TEXT NOT NULL DEFAULT 'Active'");
   ensureColumn(db, "Employees", "Branch_Name", "Branch_Name TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "Employees", "Fingers_Enrolled", "Fingers_Enrolled TEXT NOT NULL DEFAULT ''");
+
+  // Phase 15 — Hands-Free Geofenced Mobile Clocking. The biometric path is
+  // the default, so every pre-existing row lands on 'Biometric' (mobile off)
+  // and only sites/devices an admin explicitly switches to Geofence/Both
+  // will accept a GPS punch. These ALTERs are additive — the ADMS push
+  // listener and the ERP payload are untouched.
+  for (const table of ["Branches", "Terminals"] as const) {
+    ensureColumn(db, table, "Clocking_Method", "Clocking_Method TEXT NOT NULL DEFAULT 'Biometric'");
+    ensureColumn(db, table, "Latitude", "Latitude REAL");
+    ensureColumn(db, table, "Longitude", "Longitude REAL");
+    ensureColumn(db, table, "Geofence_Radius_Meters", "Geofence_Radius_Meters INTEGER");
+  }
+  ensureColumn(db, "Attendance_Logs", "Latitude", "Latitude REAL");
+  ensureColumn(db, "Attendance_Logs", "Longitude", "Longitude REAL");
+  ensureColumn(db, "Attendance_Logs", "Location_Accuracy_Meters", "Location_Accuracy_Meters INTEGER");
+  ensureColumn(db, "Attendance_Logs", "Geofence_Distance_Meters", "Geofence_Distance_Meters INTEGER");
 }
 
 /* ------------------------------------------------------------------ */
@@ -353,15 +384,17 @@ interface SeedTerminal {
   ip: string;
   location: string;
   status: TerminalStatus;
+  /** Phase 15 — optional demo clocking channel (defaults to Biometric). */
+  clocking?: ClockingMethod;
 }
 
 /** One registered terminal per branch — the bridge's 17 sites. */
 const BRANCH_TERMINALS: SeedTerminal[] = [
-  { branch: "Branch 1",  mac: "A4:1F:72:0C:9B:31", ip: "192.168.10.21", location: "Main Gate — North Entrance",     status: "Online"  },
+  { branch: "Branch 1",  mac: "A4:1F:72:0C:9B:31", ip: "192.168.10.21", location: "Main Gate — North Entrance",     status: "Online",  clocking: "Both" },
   { branch: "Branch 2",  mac: "A4:1F:72:0C:9B:32", ip: "192.168.10.22", location: "Factory Floor — Line A",         status: "Online"  },
   { branch: "Branch 3",  mac: "A4:1F:72:0C:9B:33", ip: "192.168.10.23", location: "Warehouse — Bay 3",              status: "Online"  },
   { branch: "Branch 4",  mac: "A4:1F:72:0C:9B:34", ip: "192.168.10.24", location: "HQ — 2nd Floor Studio",          status: "Offline" },
-  { branch: "Branch 5",  mac: "A4:1F:72:0C:9B:35", ip: "192.168.10.25", location: "West Perimeter Fence",           status: "Online"  },
+  { branch: "Branch 5",  mac: "A4:1F:72:0C:9B:35", ip: "192.168.10.25", location: "West Perimeter Fence",           status: "Online",  clocking: "Geofence" },
   { branch: "Branch 6",  mac: "A4:1F:72:BC:06:01", ip: "192.168.17.26", location: "East Warehouse — Bay 1",         status: "Online"  },
   { branch: "Branch 7",  mac: "A4:1F:72:BC:07:01", ip: "192.168.17.27", location: "South Depot — Yard Entrance",    status: "Online"  },
   { branch: "Branch 8",  mac: "A4:1F:72:BC:08:01", ip: "192.168.17.28", location: "Airport Road — Service Desk",    status: "Online"  },
@@ -443,14 +476,15 @@ function seedTerminals(db: DatabaseSync): void {
     exec(
       db,
       `INSERT INTO Terminals
-         (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping, Clocking_Method)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       t.mac,
       t.ip,
       t.location,
       t.branch,
       t.status,
-      t.status === "Online" ? now : null
+      t.status === "Online" ? now : null,
+      t.clocking ?? "Biometric"
     );
   }
 }
@@ -629,6 +663,19 @@ function seedAttendanceHistory(db: DatabaseSync): void {
 /** The 17 fixed branch sites — seeds the global Branches list. */
 const SEED_BRANCH_NAMES = Array.from({ length: 17 }, (_, i) => `Branch ${i + 1}`);
 
+/**
+ * Demo geofences (Phase 15) written only on a fresh install. Branch 5 hosts
+ * the un-enrolled field officer (ERP-1014), so it ships as "Geofence Only";
+ * Branch 1 demonstrates the hybrid channel. Coordinates are Harare CBD.
+ */
+const SEED_BRANCH_GEOFENCES: Record<
+  string,
+  { method: ClockingMethod; lat: number; lng: number; radius: number }
+> = {
+  "Branch 1": { method: "Both", lat: -17.8292, lng: 31.0522, radius: 120 },
+  "Branch 5": { method: "Geofence", lat: -17.8223, lng: 31.0438, radius: 250 },
+};
+
 /** Deterministic password digest for demo accounts (sha256, static salt). */
 export function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(`${password}::biobridge-salt`).digest("hex");
@@ -643,7 +690,23 @@ function seedBranches(db: DatabaseSync): void {
   const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches")?.c ?? 0;
   if (count > 0) return;
   for (const name of SEED_BRANCH_NAMES) {
-    exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
+    const geo = SEED_BRANCH_GEOFENCES[name];
+    if (geo) {
+      exec(
+        db,
+        `INSERT INTO Branches
+           (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        name,
+        SEED_CREATED_AT,
+        geo.method,
+        geo.lat,
+        geo.lng,
+        geo.radius
+      );
+    } else {
+      exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
+    }
   }
 }
 
@@ -837,6 +900,10 @@ export function listBranches(): BranchDto[] {
     employeeCount: empMap.get(r.Branch_Name) ?? 0,
     terminalCount: termMap.get(r.Branch_Name) ?? 0,
     createdAt: r.Created_At,
+    clockingMethod: normalizeClockingMethod(r.Clocking_Method),
+    latitude: r.Latitude,
+    longitude: r.Longitude,
+    geofenceRadiusMeters: r.Geofence_Radius_Meters,
   }));
 }
 
@@ -845,12 +912,87 @@ export function listBranchNames(): string[] {
   return queryAll<BranchRow>(getDb(), "SELECT * FROM Branches ORDER BY Branch_ID").map((r) => r.Branch_Name);
 }
 
-export function createBranch(name: string): number {
+/** One branch row by exact (case-insensitive) name — the geofence lookup. */
+export function branchByName(name: string | null | undefined): BranchRow | null {
+  const value = (name ?? "").trim();
+  if (!value) return null;
+  return (
+    queryOne<BranchRow>(
+      getDb(),
+      "SELECT * FROM Branches WHERE Branch_Name COLLATE NOCASE = ?",
+      value
+    ) ?? null
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 15 — clocking method + geofence on Branches/Terminals          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Partial geofence configuration. Every field is optional: omitted values are
+ * left untouched, explicit `null` clears the stored value.
+ */
+export interface ClockingConfigInput {
+  clockingMethod?: ClockingMethod;
+  latitude?: number | null;
+  longitude?: number | null;
+  geofenceRadiusMeters?: number | null;
+}
+
+/** Coerce an untrusted numeric (null/""/NaN → null, else the finite number). */
+function coerceCoord(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function createBranch(name: string, clocking?: ClockingConfigInput): number {
   const db = getDb();
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("Branch name is required.");
-  exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", trimmed, Date.now());
+  const method = normalizeClockingMethod(clocking?.clockingMethod);
+  exec(
+    db,
+    `INSERT INTO Branches
+       (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    trimmed,
+    Date.now(),
+    method,
+    coerceCoord(clocking?.latitude),
+    coerceCoord(clocking?.longitude),
+    coerceCoord(clocking?.geofenceRadiusMeters)
+  );
   return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+}
+
+/** Set/clear a site's clocking method + geofence centre (Phase 15). */
+export function setBranchClocking(branchId: number, input: ClockingConfigInput): void {
+  const db = getDb();
+  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+  if (!current) throw new Error("That branch no longer exists.");
+  const method =
+    input.clockingMethod !== undefined
+      ? normalizeClockingMethod(input.clockingMethod)
+      : normalizeClockingMethod(current.Clocking_Method);
+  const lat = input.latitude !== undefined ? coerceCoord(input.latitude) : current.Latitude;
+  const lng = input.longitude !== undefined ? coerceCoord(input.longitude) : current.Longitude;
+  const radius =
+    input.geofenceRadiusMeters !== undefined
+      ? coerceCoord(input.geofenceRadiusMeters)
+      : current.Geofence_Radius_Meters;
+  exec(
+    db,
+    `UPDATE Branches
+        SET Clocking_Method = ?, Latitude = ?, Longitude = ?, Geofence_Radius_Meters = ?
+      WHERE Branch_ID = ?`,
+    method,
+    lat,
+    lng,
+    radius,
+    branchId
+  );
 }
 
 /** Rename a site and keep the denormalised Employees/Terminals in sync. */
@@ -1808,28 +1950,46 @@ export function createTerminal({
   branch,
   deviceName,
   status = "Offline",
+  clockingMethod,
+  latitude,
+  longitude,
+  geofenceRadiusMeters,
 }: {
-  mac: string;
+  mac?: string | null;
   ip?: string | null;
   location?: string | null;
   branch: string;
   deviceName?: string | null;
   status?: "Online" | "Offline";
-}) {
+} & ClockingConfigInput) {
   const db = getDb();
-  const loc = (location && location.trim()) || deviceName?.trim() || `Device ${mac.slice(-6)}`;
+  const method = normalizeClockingMethod(clockingMethod);
+  // A Geofence-only device has no physical MAC; synthesise a stable, unique
+  // placeholder so the NOT NULL UNIQUE column is satisfied (and no real
+  // terminal is ever mistaken for it).
+  const cleanMac =
+    mac?.trim() ||
+    `GEO-${branch.trim().replace(/[^A-Za-z0-9]+/g, "").toUpperCase()}-${Date.now().toString(36)}${Math.random()
+      .toString(36)
+      .slice(2, 6)}`;
+  const loc = (location && location.trim()) || deviceName?.trim() || `Device ${cleanMac.slice(-6)}`;
   const devName = (deviceName && deviceName.trim()) || loc;
   exec(
     db,
     `INSERT INTO Terminals
-       (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    mac.trim(),
+       (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping,
+        Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    cleanMac,
     ip?.trim() || "",
     devName,
     branch.trim(),
     status,
-    status === "Online" ? Date.now() : null
+    status === "Online" ? Date.now() : null,
+    method,
+    coerceCoord(latitude),
+    coerceCoord(longitude),
+    coerceCoord(geofenceRadiusMeters)
   );
   const id = queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id");
   return Number(id?.id ?? 0);
@@ -1844,14 +2004,14 @@ export function updateTerminal(
     branch?: string;
     deviceName?: string | null;
     status?: "Online" | "Offline";
-  }
+  } & ClockingConfigInput
 ) {
   const db = getDb();
   const current = queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE Terminal_ID = ?", terminalId);
   if (!current) return;
   const updates: string[] = [];
   const params: SQLInputValue[] = [];
-  if (patch.mac !== undefined) {
+  if (patch.mac !== undefined && patch.mac.trim()) {
     updates.push("Terminal_MAC = ?");
     params.push(patch.mac.trim());
   }
@@ -1876,6 +2036,22 @@ export function updateTerminal(
     updates.push("Last_Ping = ?");
     params.push(patch.status === "Online" ? Date.now() : null);
   }
+  if (patch.clockingMethod !== undefined) {
+    updates.push("Clocking_Method = ?");
+    params.push(normalizeClockingMethod(patch.clockingMethod));
+  }
+  if (patch.latitude !== undefined) {
+    updates.push("Latitude = ?");
+    params.push(coerceCoord(patch.latitude));
+  }
+  if (patch.longitude !== undefined) {
+    updates.push("Longitude = ?");
+    params.push(coerceCoord(patch.longitude));
+  }
+  if (patch.geofenceRadiusMeters !== undefined) {
+    updates.push("Geofence_Radius_Meters = ?");
+    params.push(coerceCoord(patch.geofenceRadiusMeters));
+  }
   if (updates.length === 0) return;
   params.push(terminalId);
   exec(db, `UPDATE Terminals SET ${updates.join(", ")} WHERE Terminal_ID = ?`, ...params);
@@ -1883,6 +2059,68 @@ export function updateTerminal(
 
 export function deleteTerminal(terminalId: number) {
   exec(getDb(), "DELETE FROM Terminals WHERE Terminal_ID = ?", terminalId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 15 — geofence location resolution (mobile punch validation)    */
+/* ------------------------------------------------------------------ */
+
+/** The resolved "location" a mobile GPS punch is validated against. */
+export interface GeofenceLocation {
+  kind: "terminal" | "branch";
+  id: number;
+  /** Human label — the device Location_Name or the branch name. */
+  label: string;
+  branch: string | null;
+  method: ClockingMethod;
+  latitude: number | null;
+  longitude: number | null;
+  radiusMeters: number | null;
+}
+
+/**
+ * Decide which site/device governs a mobile punch, in priority order:
+ *   1. an explicit terminal MAC (the app scanned a QR code on the device),
+ *   2. an explicit branch name,
+ *   3. the employee's assigned branch.
+ * Returns null when nothing resolves (validation is impossible).
+ */
+export function resolveGeofenceLocation(opts: {
+  terminalMac?: string | null;
+  branchName?: string | null;
+  employeeBranch?: string | null;
+}): GeofenceLocation | null {
+  const mac = opts.terminalMac?.trim();
+  if (mac) {
+    const t = findTerminal(getDb(), { mac });
+    if (t) {
+      return {
+        kind: "terminal",
+        id: t.Terminal_ID,
+        label: t.Location_Name,
+        branch: t.Branch_Name || null,
+        method: normalizeClockingMethod(t.Clocking_Method),
+        latitude: t.Latitude,
+        longitude: t.Longitude,
+        radiusMeters: t.Geofence_Radius_Meters,
+      };
+    }
+  }
+
+  const branch = branchByName(opts.branchName) ?? branchByName(opts.employeeBranch);
+  if (branch) {
+    return {
+      kind: "branch",
+      id: branch.Branch_ID,
+      label: branch.Branch_Name,
+      branch: branch.Branch_Name,
+      method: normalizeClockingMethod(branch.Clocking_Method),
+      latitude: branch.Latitude,
+      longitude: branch.Longitude,
+      radiusMeters: branch.Geofence_Radius_Meters,
+    };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1899,6 +2137,17 @@ export interface PunchInput {
   rawPayload?: string | null;
   /** Omitted → inferred from the employee's punch sequence that day. */
   direction?: PunchDirection;
+  /**
+   * Initial ERP sync state — defaults to "Pending" (the offline buffer).
+   * Geofence rejections write "Failed" so an out-of-range exception is kept
+   * for audit but never drains to the ERP.
+   */
+  erpSyncStatus?: ErpSyncStatus;
+  /** GPS captured with a geofenced mobile punch (Phase 15). */
+  latitude?: number | null;
+  longitude?: number | null;
+  locationAccuracyMeters?: number | null;
+  geofenceDistanceMeters?: number | null;
 }
 
 /**
@@ -1925,8 +2174,11 @@ export function inferDirection(employeeId: number | null, timestamp: number): Pu
  * Persist one punch as Pending (offline buffer) — the single write path
  * shared by the HTTP push listener, the simulator and the admin's
  * "Ready to Clock" test widget.
+ *
+ * Returns the new Attendance_Logs.Log_ID so callers (e.g. the mobile geofence
+ * endpoint) can echo the row they just created.
  */
-export function insertPunch(input: PunchInput): void {
+export function insertPunch(input: PunchInput): number {
   const db = getDb();
   const employee = input.employeeRef ? resolveEmployee(db, input.employeeRef) : null;
   const employeeId = employee?.Employee_ID ?? null;
@@ -1935,17 +2187,24 @@ export function insertPunch(input: PunchInput): void {
   exec(
     db,
     `INSERT INTO Attendance_Logs
-       (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload, Created_At)
-     VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?)`,
+       (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload,
+        Latitude, Longitude, Location_Accuracy_Meters, Geofence_Distance_Meters, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     employeeId,
     input.timestamp,
     input.terminalId,
+    input.erpSyncStatus ?? "Pending",
     input.verifyResult,
     direction,
     input.verifyMethod,
     input.rawPayload ?? null,
+    input.latitude ?? null,
+    input.longitude ?? null,
+    input.locationAccuracyMeters ?? null,
+    input.geofenceDistanceMeters ?? null,
     Date.now()
   );
+  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
 }
 
 /** Latest punch today per employee (simulator's anti-repeat guard). */

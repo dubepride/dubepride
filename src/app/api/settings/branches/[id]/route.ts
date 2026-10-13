@@ -15,7 +15,12 @@
 
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth";
-import { deleteBranch, renameBranch } from "@/lib/db";
+import { deleteBranch, renameBranch, setBranchClocking } from "@/lib/db";
+import {
+  hasClockingConfig,
+  readClockingConfig,
+  validateClockingConfig,
+} from "@/lib/geofence";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -38,19 +43,33 @@ export async function PATCH(
   if (!Number.isInteger(branchId) || branchId <= 0) return bad("A numeric branch id is required.");
 
   let name = "";
+  let clocking = {} as ReturnType<typeof readClockingConfig>;
   try {
-    const body = (await request.json()) as { name?: unknown };
-    name = typeof body?.name === "string" ? body.name : "";
+    const body = (await request.json()) as Record<string, unknown>;
+    name = typeof body?.name === "string" ? body.name.trim() : "";
+    clocking = readClockingConfig(body);
   } catch {
     return bad("Invalid JSON body.");
   }
 
+  const hasClocking = hasClockingConfig(clocking);
+  if (!name && !hasClocking) {
+    return bad("Provide a name and/or clocking configuration to update.");
+  }
+  if (hasClocking) {
+    const problem = validateClockingConfig(clocking);
+    if (problem) return bad(problem);
+  }
+
   try {
-    renameBranch(branchId, name);
+    // Rename first (keeps Employees/Terminals in sync), then apply the
+    // Phase 15 clocking method + geofence — both are independent edits.
+    if (name) renameBranch(branchId, name);
+    if (hasClocking) setBranchClocking(branchId, clocking);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Could not rename the branch.";
-    if (message.includes("UNIQUE")) return bad(`A branch named "${name.trim()}" already exists.`);
+    const message = e instanceof Error ? e.message : "Could not update the branch.";
+    if (message.includes("UNIQUE")) return bad(`A branch named "${name}" already exists.`);
     if (message.includes("no longer exists")) return bad(message, 404);
     return bad(message);
   }

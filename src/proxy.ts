@@ -42,7 +42,13 @@ import { SESSION_COOKIE } from "@/lib/session";
 
 /** Endpoints reachable without a session (see policy above). */
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
-const PUBLIC_PREFIXES = ["/api/biometrics/push"];
+const PUBLIC_PREFIXES = [
+  "/api/biometrics/push",
+  // Phase 15 — hands-free mobile clocking ingress. The mobile app cannot hold
+  // a session cookie, so the handler itself authenticates the shared
+  // MOBILE_PUNCH_KEY (or a signed-in admin session). See the route header.
+  "/api/attendance/geopunch",
+];
 
 /**
  * Page → capability mapping (longest prefixes first; "/" is the catch-all

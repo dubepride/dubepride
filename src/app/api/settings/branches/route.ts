@@ -19,6 +19,11 @@
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth";
 import { createBranch, listBranches } from "@/lib/db";
+import {
+  hasClockingConfig,
+  readClockingConfig,
+  validateClockingConfig,
+} from "@/lib/geofence";
 import type { BranchesResponse } from "@/lib/types";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -40,15 +45,23 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (guard) return guard;
 
   let name = "";
+  let clocking = {} as ReturnType<typeof readClockingConfig>;
   try {
-    const body = (await request.json()) as { name?: unknown };
+    const body = (await request.json()) as Record<string, unknown>;
     name = typeof body?.name === "string" ? body.name : "";
+    clocking = readClockingConfig(body);
   } catch {
     return bad("Invalid JSON body.");
   }
 
+  // Phase 15 — optional clocking method + geofence centre for the new site.
+  if (hasClockingConfig(clocking)) {
+    const problem = validateClockingConfig(clocking);
+    if (problem) return bad(problem);
+  }
+
   try {
-    const id = createBranch(name);
+    const id = createBranch(name, clocking);
     return Response.json({ ok: true, id }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not add the branch.";
