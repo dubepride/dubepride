@@ -8,8 +8,9 @@
  *   1. A pulsing status chip — "Geofence Active" (neon) or "Searching..." (grey).
  *   2. Which registered site you are in (or the nearest one), and what the
  *      monitor is doing.
- *   3. Any punches the phone could not deliver, with a "Sync Now" button.
- *   4. A manual Clock In / Out button, for when the geofence cannot help
+ *   3. The site map — every fence the phone watches, plus your live position.
+ *   4. Any punches the phone could not deliver, with a "Sync Now" button.
+ *   5. A manual Clock In / Out button, for when the geofence cannot help
  *      (GPS indoors, a dead battery day, a site with no fence configured).
  *
  *  The manual button is a genuine fallback, not a bypass: it sends the same
@@ -29,11 +30,12 @@ import {
 
 import { Panel } from "@/components/Panel";
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { SiteMap } from "@/components/SiteMap";
 import { StatusChip } from "@/components/StatusChip";
 import { useGeofenceStatus } from "@/hooks/useGeofenceStatus";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
 import { sendOrQueue } from "@/lib/api";
-import { formatDistance } from "@/lib/geo";
+import { formatDistance, sessionSites } from "@/lib/geo";
 import { useAuth } from "@/lib/session";
 import type { GeoPunchPayload } from "@/lib/types";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
@@ -73,6 +75,7 @@ export function Dashboard(): React.ReactElement {
 
   const { employee } = session;
   const homeSite = employee.branch || "No home site";
+  const sites = sessionSites(session);
 
   const manualPunch = async (): Promise<void> => {
     if (manualBusy) return;
@@ -210,6 +213,32 @@ export function Dashboard(): React.ReactElement {
         ) : null}
       </Panel>
 
+      {/* ── 3. Site map (courtesy display) ───────────────────────────── */}
+      <Panel
+        title="Site map"
+        subtitle={
+          sites.length === 0
+            ? "No site has hands-free mobile clocking set up yet."
+            : `${sites.length} site${sites.length === 1 ? "" : "s"} you can clock in at · the neon dot is you.`
+        }
+        style={styles.card}
+      >
+        <SiteMap
+          sites={sites}
+          home={session.geofence}
+          me={
+            geofence.hasFix && geofence.latitude !== null && geofence.longitude !== null
+              ? { latitude: geofence.latitude, longitude: geofence.longitude }
+              : null
+          }
+          height={260}
+        />
+        <Text style={styles.note}>
+          The bridge validates every punch on the server — the map is a guide,
+          not the decision.
+        </Text>
+      </Panel>
+
       {/* ── 4. Manual fallback ───────────────────────────────────────── */}
       <Panel
         title="Manual punch"
@@ -238,7 +267,7 @@ export function Dashboard(): React.ReactElement {
         ) : null}
       </Panel>
 
-      {/* ── 3. Offline queue ─────────────────────────────────────────── */}
+      {/* ── 5. Offline queue ─────────────────────────────────────────── */}
       <Panel
         title="Pending offline punches"
         subtitle={

@@ -919,6 +919,8 @@ export type GeoPunchReason =
   | "CLOCKED_OUT"
   | "OUTSIDE_GEOFENCE"
   | "BIOMETRIC_ONLY"
+  | "LOW_ACCURACY"
+  | "RATE_LIMITED"
   | "GEOFENCE_NOT_CONFIGURED";
 
 /** How a punch's governing site was chosen (Phase 17). */
@@ -1044,3 +1046,108 @@ export interface GeoPunchResponse {
   geo: GeoPunchGeo | null;
   error?: string;
 }
+
+/**
+ * GET /api/attendance/geofences — every site a browser self-clock may use
+ * (Phase 18). Feeds the My Portal map so the worker can see the fences near
+ * them. Read-only and non-sensitive (site names + centres, already visible in
+ * Settings → Branches); gated by can_remote_clock along with the punch route.
+ */
+export interface GeofencesResponse {
+  ok: boolean;
+  sites: GeoFenceSite[];
+  generatedAt: number;
+  error?: string;
+}
+
+/**
+ * GET /api/attendance/geofence-activity — the Phase 9 mobile-GPS report.
+ * One row per GPS-validated punch, filterable by date range, branch, verdict
+ * and employee, with a source comparison against non-geofence punches.
+ */
+export interface GeofenceActivityRow {
+  logId: number;
+  employeeId: number | null;
+  employeeName: string;
+  erpUserId: string | null;
+  branch: string | null;
+  timestamp: number;
+  direction: PunchDirection;
+  verifyResult: VerifyResult;
+  syncStatus: ErpSyncStatus;
+  distanceMeters: number | null;
+  accuracyMeters: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  insideGeofence: boolean;
+}
+
+export interface GeofenceActivityResponse {
+  ok: boolean;
+  rows: GeofenceActivityRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+  accepted: number;
+  rejected: number;
+  totalBiometric: number;
+  totalGeofence: number;
+  branches: string[];
+  generatedAt: number;
+  error?: string;
+}
+
+/**
+ * GET /api/map/overview — data for the always-available map overlay (Phase 18).
+ *
+ * A single read-only snapshot of everything the floating map shows: the site
+ * fences the caller may see and the most recent GPS punch locations. Scope is
+ * permission-aware:
+ *   • "org"  — callers with attendance/settings visibility see every
+ *              geo-ready branch and organisation-wide recent punches.
+ *   • "self" — everyone else sees the mobile-capable fences and only their own
+ *              punches.
+ * Because the overlay is display-only, a tampered response cannot affect where
+ * a punch lands — the bridge re-derives the governing site on every punch.
+ */
+export interface MapOverviewSite {
+  id: number;
+  branch: string;
+  method: ClockingMethod;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  /** False for biometric-only sites (shown, but not usable for a mobile punch). */
+  mobile: boolean;
+}
+
+export interface MapOverviewPunch {
+  logId: number;
+  employeeId: number | null;
+  employeeName: string;
+  branch: string | null;
+  timestamp: number;
+  direction: PunchDirection;
+  verifyResult: VerifyResult;
+  latitude: number;
+  longitude: number;
+  distanceMeters: number | null;
+  accuracyMeters: number | null;
+  insideGeofence: boolean;
+}
+
+export interface MapOverviewResponse {
+  ok: boolean;
+  /** "org" = all sites + everyone's punches; "self" = your fences + your punches. */
+  scope: "org" | "self";
+  sites: MapOverviewSite[];
+  punches: MapOverviewPunch[];
+  /** Suggested initial centre (centroid of the visible fences), or null. */
+  center: { latitude: number; longitude: number } | null;
+  /** Window the punches cover, in ms. */
+  windowMs: number;
+  generatedAt: number;
+  error?: string;
+}
+

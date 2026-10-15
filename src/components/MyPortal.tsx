@@ -38,6 +38,7 @@ import type {
 } from "@/lib/types";
 import { IconCheck, IconClock, IconPlus, IconServer } from "./icons";
 import ReadyToClock from "./ReadyToClock";
+import GeofenceClock from "./GeofenceClock";
 
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
@@ -324,6 +325,13 @@ export default function MyPortal() {
           )}
         </Card>
       )}
+
+      {/* Geofenced GPS clock (can_remote_clock) — the mobile-first browser
+          clock. The server is authoritative: the widget only ever reports the
+          verdict returned by /api/my-portal/geopunch. */}
+      {employee && permissions.can_remote_clock ? (
+        <GeofenceClock clockedIn={status.clockedIn} onClocked={() => void loadPortal()} />
+      ) : null}
 
       {/* Admin "Ready to Clock" simulation widget (moved from Dashboard).
           Roster-wide employee picker is an admin tool — same gate as the

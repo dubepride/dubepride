@@ -1366,3 +1366,294 @@ body {
       0 0 34px rgba(0, 230, 118, 0.45);
   }
 }
+
+/* --------------------------------------------------------------------------
+   Leaflet maps (Phase 18) — geofence editor + browser clocking
+   -------------------------------------------------------------------------- */
+
+.bb-map {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0d0d12;
+}
+
+.bb-map--schematic {
+  display: flex;
+  flex-direction: column;
+}
+
+.bb-map__note {
+  margin: 0;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.625rem;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: #a0aec0;
+  background: rgba(0, 0, 0, 0.35);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bb-map__note--overlay {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 500;
+  background: rgba(10, 10, 10, 0.85);
+}
+
+.bb-map__note code {
+  color: #00e676;
+  font-size: 0.625rem;
+}
+
+/* Leaflet's default chrome, darkened to match the app theme. */
+.leaflet-container {
+  background: #0d0d12;
+  font: inherit;
+  outline: none;
+}
+.leaflet-control-attribution {
+  background: rgba(10, 10, 10, 0.72) !important;
+  color: #a0aec0 !important;
+  font-size: 9px !important;
+}
+.leaflet-control-attribution a {
+  color: #00e676 !important;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: rgba(20, 20, 26, 0.95);
+  color: #ffffff;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+.leaflet-bar a:hover {
+  color: #00e676;
+}
+
+/* Theme-matched pins (divIcon) — no bundler-broken marker assets. */
+.bb-pin-wrap {
+  background: transparent;
+  border: 0;
+}
+.bb-pin {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 2px solid rgba(0, 0, 0, 0.65);
+  box-shadow: 0 0 12px rgba(0, 230, 118, 0.55);
+}
+.bb-pin--neon {
+  background: #00e676;
+}
+.bb-pin--muted {
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
+.bb-pin--danger {
+  background: #ff5252;
+  box-shadow: 0 0 12px rgba(255, 82, 82, 0.6);
+}
+.bb-pin--user {
+  background: #00e676;
+  box-shadow:
+    0 0 0 4px rgba(0, 230, 118, 0.22),
+    0 0 16px rgba(0, 230, 118, 0.7);
+}
+.bb-pin[data-draggable="true"],
+.leaflet-marker-draggable .bb-pin {
+  cursor: grab;
+}
+
+/* --------------------------------------------------------------------------
+   Map overlay (Phase 18) — floating launcher + full-screen map
+   -------------------------------------------------------------------------- */
+
+/* Small button variants (used by the overlay controls). */
+.btn--sm {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.75rem;
+  border-radius: 0.6rem;
+}
+.btn--icon {
+  padding: 0.4rem;
+  border-radius: 0.6rem;
+}
+
+/* Floating launcher: bottom-right, clears the mobile safe area. */
+.bb-map-fab {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 230, 118, 0.45);
+  background: rgba(10, 10, 10, 0.9);
+  color: #00e676;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow:
+    0 0 22px rgba(0, 230, 118, 0.28),
+    0 10px 30px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+.bb-map-fab:hover {
+  transform: translateY(-1px);
+  background: rgba(20, 20, 26, 0.95);
+  box-shadow:
+    0 0 30px rgba(0, 230, 118, 0.5),
+    0 12px 34px rgba(0, 0, 0, 0.6);
+}
+.bb-map-fab:focus-visible {
+  outline: 2px solid #00e676;
+  outline-offset: 2px;
+}
+
+/* Full-screen modal. */
+.bb-map-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  animation: bb-map-fade 0.16s ease;
+}
+@media (min-width: 640px) {
+  .bb-map-overlay {
+    padding: 1.5rem;
+  }
+}
+@keyframes bb-map-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bb-map-overlay__panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 72rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  outline: none;
+}
+
+.bb-map-overlay__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.bb-map-overlay__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bb-map-overlay__canvas {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.bb-map-overlay__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 16rem;
+  padding: 2rem;
+  font-size: 0.875rem;
+  color: #a0aec0;
+  text-align: center;
+}
+
+.bb-map-overlay__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.bb-map-overlay__meta {
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: rgba(160, 174, 192, 0.85);
+}
+
+.bb-map-overlay__stale {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid rgba(255, 82, 82, 0.3);
+  background: rgba(255, 82, 82, 0.12);
+  font-size: 0.6875rem;
+  color: #ff8f8f;
+}
+
+/* Legend swatches. */
+.bb-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+.bb-map-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: #a0aec0;
+}
+.bb-map-legend__item .bb-pin {
+  width: 11px;
+  height: 11px;
+  box-shadow: none;
+}
+.bb-map-legend__ring {
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  border: 2px solid #00e676;
+  background: rgba(0, 230, 118, 0.14);
+}
+.bb-map-legend__ring--muted {
+  border-color: rgba(160, 174, 192, 0.7);
+  background: rgba(160, 174, 192, 0.1);
+}
+
+/* The launcher's text label collapses to the icon on very small screens. */
+@media (max-width: 380px) {
+  .bb-map-fab__label {
+    display: none;
+  }
+  .bb-map-fab {
+    padding: 0.65rem;
+  }
+}

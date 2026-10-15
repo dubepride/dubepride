@@ -19,8 +19,10 @@
  *  accents, muted labels) so the new fields blend into the existing forms.
  */
 
+import { useState } from "react";
 import { CLOCKING_METHOD_OPTIONS, normalizeClockingMethod } from "@/lib/geofence";
 import type { ClockingMethod } from "@/lib/types";
+import GeofenceMapEditor from "./GeofenceMapEditor";
 
 const LABEL = "mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase";
 const INPUT =
@@ -84,13 +86,17 @@ export function ClockingMethodFields({
   onChange,
   idPrefix = "clocking",
   className = "",
+  showMap = true,
 }: {
   value: ClockingFieldsValue;
   onChange: (patch: Partial<ClockingFieldsValue>) => void;
   idPrefix?: string;
   className?: string;
+  /** Render the interactive Leaflet geofence editor under the numeric fields. */
+  showMap?: boolean;
 }) {
   const needsGeo = value.clockingMethod !== "Biometric";
+  const [mapOpen, setMapOpen] = useState(true);
 
   return (
     <div className={className}>
@@ -178,6 +184,31 @@ export function ClockingMethodFields({
               autoComplete="off"
             />
           </div>
+
+          {showMap ? (
+            <div className="sm:col-span-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase">
+                  Pin the site on the map
+                </span>
+                <button
+                  type="button"
+                  className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-muted uppercase transition hover:border-neon/40 hover:text-neon"
+                  aria-expanded={mapOpen}
+                  onClick={() => setMapOpen((open) => !open)}
+                >
+                  {mapOpen ? "Hide map" : "Show map"}
+                </button>
+              </div>
+              {mapOpen ? (
+                <GeofenceMapEditor value={value} onChange={onChange} idPrefix={`${idPrefix}-map`} />
+              ) : (
+                <p className="text-[11px] text-muted">
+                  Map hidden — the latitude, longitude and radius above are still saved exactly as typed.
+                </p>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

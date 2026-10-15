@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import Sidebar from "@/components/Sidebar";
+import MapOverlay from "@/components/MapOverlay";
 
 /** Header title per route — mirrors the sidebar's label wording. */
 const TITLES: Record<string, string> = {
@@ -82,6 +83,7 @@ export default function AppChrome() {
         activePath={pathname}
       />
       <Nav onLogin={onLogin} title={title} onMenu={() => setDrawerOpen(true)} />
+      <MapOverlay hidden={onLogin} />
     </>
   );
 }

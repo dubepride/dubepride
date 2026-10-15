@@ -230,3 +230,21 @@ export const IconHistory = ({ className = base }: P) => (
     <path d="M12 7v5l3 3" />
   </svg>
 );
+
+/** Folded map — opens the geofence map overlay (Phase 18). */
+export const IconMap = ({ className = base }: P) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+    <path d="M9 4 3.6 6.2a1 1 0 0 0-.6.9v11.4a1 1 0 0 0 1.4.9L9 17" />
+    <path d="m9 4 6 2.2V17L9 20.2V4Z" />
+    <path d="m15 6.2 5.4-2.1a1 1 0 0 1 1.4.9v11.4a1 1 0 0 1-.6.9L15 17.4" />
+  </svg>
+);
+
+/** Crosshair — centre the map on my location. */
+export const IconLocate = ({ className = base }: P) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+    <circle cx="12" cy="12" r="7" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    <circle cx="12" cy="12" r="2.2" />
+  </svg>
+);

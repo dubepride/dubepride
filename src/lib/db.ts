@@ -3078,3 +3078,183 @@ export function getSyncOverview(): Pick<ErpSyncGetResponse, "stats" | "batches" 
 
   return { stats, batches, backlog };
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase 18 — Geofence activity report                                 */
+/* ------------------------------------------------------------------ */
+
+/** One mobile GPS punch, joined to its employee, for the activity report. */
+export interface GeoActivityRowDto {
+  logId: number;
+  employeeId: number | null;
+  employeeName: string;
+  erpUserId: string | null;
+  branch: string | null;
+  timestamp: number;
+  direction: PunchDirection;
+  verifyResult: VerifyResult;
+  syncStatus: ErpSyncStatus;
+  distanceMeters: number | null;
+  accuracyMeters: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** Verified (inside the fence) vs Denied (an auditable exception). */
+  insideGeofence: boolean;
+}
+
+export interface GeoActivityFilters {
+  fromMs?: number;
+  toMs?: number;
+  /** Governing site (Attendance_Logs.Branch_Name). */
+  branch?: string;
+  /** "accepted" = Verified, "rejected" = Denied. Omit for both. */
+  verdict?: "accepted" | "rejected";
+  employeeId?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface GeoActivityResult {
+  rows: GeoActivityRowDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+  accepted: number;
+  rejected: number;
+  /** Non-geofence punches in the same window, for a source comparison. */
+  totalBiometric: number;
+  totalGeofence: number;
+  /** Distinct governing sites seen in the window (filter dropdown). */
+  branches: string[];
+  generatedAt: number;
+}
+
+interface GeoActivityJoinedRow {
+  Log_ID: number;
+  Employee_ID: number | null;
+  Timestamp: number;
+  Direction: PunchDirection;
+  Verify_Result: VerifyResult;
+  ERP_Sync_Status: ErpSyncStatus;
+  Verify_Method: string;
+  Branch_Name: string | null;
+  Latitude: number | null;
+  Longitude: number | null;
+  Location_Accuracy_Meters: number | null;
+  Geofence_Distance_Meters: number | null;
+  Full_Name: string | null;
+  ERP_User_ID: string | null;
+}
+
+/**
+ * Every GPS-validated punch in a window, newest first, with the filters the
+ * Phase 9 reporting surface needs: date range, branch, verdict and employee.
+ * Read-only — this never writes and never touches the ERP sync state.
+ */
+export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityResult {
+  const db = getDb();
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
+  const pageSize = Math.max(1, Math.min(200, Math.floor(filters.pageSize ?? 50)));
+
+  const from = filters.fromMs ?? 0;
+  const to = filters.toMs ?? Date.now() + 7_200_000;
+
+  const params: (string | number)[] = [from, to];
+  let where = "WHERE l.Timestamp >= ? AND l.Timestamp < ? AND l.Verify_Method = 'Geofence'";
+
+  if (filters.employeeId != null) {
+    where += " AND l.Employee_ID = ?";
+    params.push(filters.employeeId);
+  }
+  if (filters.branch) {
+    where += " AND l.Branch_Name = ?";
+    params.push(filters.branch);
+  }
+  if (filters.verdict === "accepted") {
+    where += " AND l.Verify_Result = 'Verified'";
+  } else if (filters.verdict === "rejected") {
+    where += " AND l.Verify_Result = 'Denied'";
+  }
+
+  const rows = queryAll<GeoActivityJoinedRow>(
+    db,
+    `SELECT l.Log_ID, l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result, l.ERP_Sync_Status,
+            l.Verify_Method, l.Branch_Name, l.Latitude, l.Longitude,
+            l.Location_Accuracy_Meters, l.Geofence_Distance_Meters,
+            e.Full_Name, e.ERP_User_ID
+       FROM Attendance_Logs l
+       LEFT JOIN Employees e ON e.Employee_ID = l.Employee_ID
+       ${where}
+      ORDER BY l.Timestamp DESC, l.Log_ID DESC`,
+    ...params
+  );
+
+  const dto: GeoActivityRowDto[] = rows.map((r) => ({
+    logId: r.Log_ID,
+    employeeId: r.Employee_ID,
+    employeeName: r.Full_Name ?? "Unregistered ID",
+    erpUserId: r.ERP_User_ID,
+    branch: r.Branch_Name,
+    timestamp: r.Timestamp,
+    direction: r.Direction,
+    verifyResult: r.Verify_Result,
+    syncStatus: r.ERP_Sync_Status,
+    distanceMeters: r.Geofence_Distance_Meters,
+    accuracyMeters: r.Location_Accuracy_Meters,
+    latitude: r.Latitude,
+    longitude: r.Longitude,
+    insideGeofence: r.Verify_Result === "Verified",
+  }));
+
+  const accepted = dto.filter((r) => r.insideGeofence).length;
+  const rejected = dto.length - accepted;
+
+  const branches = [
+    ...new Set(
+      queryAll<{ b: string | null }>(
+        db,
+        `SELECT DISTINCT l.Branch_Name AS b
+           FROM Attendance_Logs l
+          WHERE l.Timestamp >= ? AND l.Timestamp < ?
+            AND l.Verify_Method = 'Geofence' AND l.Branch_Name IS NOT NULL
+          ORDER BY b ASC`,
+        from,
+        to
+      )
+        .map((b) => b.b)
+        .filter((b): b is string => typeof b === "string" && b.length > 0)
+    ),
+  ];
+
+  const total = dto.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pages);
+  const start = (safePage - 1) * pageSize;
+
+  const totalGeofence = total;
+  const nonGeofence =
+    queryOne<{ c: number }>(
+      db,
+      `SELECT COUNT(*) AS c
+         FROM Attendance_Logs
+        WHERE Timestamp >= ? AND Timestamp < ? AND Verify_Method <> 'Geofence'`,
+      from,
+      to
+    )?.c ?? 0;
+  const totalBiometric = nonGeofence;
+
+  return {
+    rows: dto.slice(start, start + pageSize),
+    total,
+    page: safePage,
+    pageSize,
+    pages,
+    accepted,
+    rejected,
+    totalBiometric,
+    totalGeofence,
+    branches,
+    generatedAt: Date.now(),
+  };
+}

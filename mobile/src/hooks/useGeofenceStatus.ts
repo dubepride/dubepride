@@ -44,6 +44,9 @@ export interface GeofenceStatusState {
   /** The background monitor is armed — drives the neon "Geofence Active" chip. */
   active: boolean;
   hasFix: boolean;
+  /** Current fix coordinates, or null while locating — for the site map. */
+  latitude: number | null;
+  longitude: number | null;
   /** How many registered sites are being watched. */
   siteCount: number;
   /** The site whose fence contains the fix, or null when outside all of them. */
@@ -181,6 +184,8 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
   return {
     active,
     hasFix: fix !== null,
+    latitude: fix?.latitude ?? null,
+    longitude: fix?.longitude ?? null,
     siteCount: sites.length,
     site: match,
     nearest,
