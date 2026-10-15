@@ -235,7 +235,7 @@ export function Dashboard(): React.ReactElement {
         />
         <Text style={styles.note}>
           The bridge validates every punch on the server — the map is a guide,
-          not the decision.
+          not the decision. Tap "Open full map" for a larger view.
         </Text>
       </Panel>
 

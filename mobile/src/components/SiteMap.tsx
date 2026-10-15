@@ -21,7 +21,14 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { WebView } from "react-native-webview";
 
 import { isDemoTiles, mapAttribution, tileUrlTemplate, zoomForRadius } from "@/lib/maps";
@@ -224,10 +231,11 @@ function buildHtml(payload: MapPayload): string {
 
 export function SiteMap({ sites, home, me, height = 260 }: SiteMapProps): React.ReactElement {
   const [failed, setFailed] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const html = useMemo(() => buildHtml(buildPayload({ sites, home, me })), [sites, home, me]);
 
-  return (
-    <View style={[styles.wrap, { height }]}>
+  const mapContent = (
+    <>
       <WebView
         originWhitelist={["*"]}
         source={{ html }}
@@ -246,7 +254,39 @@ export function SiteMap({ sites, home, me, height = 260 }: SiteMapProps): React.
           </Text>
         </View>
       ) : null}
-    </View>
+    </>
+  );
+
+  return (
+    <>
+      <View style={[styles.wrap, { height }]}>
+        {mapContent}
+        <TouchableOpacity
+          style={styles.expandBtn}
+          onPress={() => setFullscreen(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.expandText}>Open full map</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Modal
+        visible={fullscreen}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setFullscreen(false)}
+      >
+        <View style={styles.fullscreenWrap}>
+          <View style={styles.fullscreenHeader}>
+            <Text style={styles.fullscreenTitle}>Site Map</Text>
+            <Pressable style={styles.closeBtn} onPress={() => setFullscreen(false)}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          </View>
+          <View style={styles.fullscreenBody}>{mapContent}</View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -279,5 +319,57 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     textAlign: "center",
     lineHeight: 19,
+  },
+  expandBtn: {
+    position: "absolute",
+    bottom: SPACING.sm,
+    right: SPACING.sm,
+    backgroundColor: "rgba(0,230,118,0.9)",
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    borderWidth: 1,
+    borderColor: "rgba(0,230,118,0.6)",
+  },
+  expandText: {
+    fontSize: FONT.tiny,
+    fontWeight: "700",
+    color: "#000",
+    letterSpacing: 0.5,
+  },
+  fullscreenWrap: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  fullscreenHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    backgroundColor: "rgba(10,10,10,0.95)",
+  },
+  fullscreenTitle: {
+    fontSize: FONT.body,
+    fontWeight: "700",
+    color: COLORS.white,
+  },
+  closeBtn: {
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    backgroundColor: "rgba(45,27,78,0.8)",
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+  },
+  closeText: {
+    fontSize: FONT.tiny,
+    fontWeight: "700",
+    color: COLORS.white,
+  },
+  fullscreenBody: {
+    flex: 1,
   },
 });

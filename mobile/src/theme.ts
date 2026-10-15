@@ -38,6 +38,8 @@ export const COLORS = {
   warning: "#ffb300",
   warningSoft: "rgba(255, 179, 0, 0.16)",
   black: "#000000",
+  /** Accent for labels/badges. */
+  accent: "#7c3aed",
 } as const;
 
 /** 4-point spacing scale. */
@@ -58,6 +60,7 @@ export const RADIUS = {
 } as const;
 
 export const FONT = {
+  tiny: 11,
   caption: 12,
   small: 13,
   body: 15,
