@@ -4,13 +4,32 @@
  * ============================================================================
  *
  *  The optional SECONDARY clock-in channel. The mobile app posts a background
- *  GPS fix; the bridge validates it against the employee's assigned site (or
- *  an explicitly referenced device/branch) and, when the fix is inside the
- *  configured radius, writes an ordinary Pending punch for the ERP sync
- *  engine — exactly the row the fingerprint terminal would have produced.
+ *  GPS fix; the bridge works out WHICH registered site that fix falls inside
+ *  and, when it is within that site's configured radius, writes an ordinary
+ *  Pending punch for the ERP sync engine — exactly the row the fingerprint
+ *  terminal would have produced.
+ *
+ *  An employee may travel, so the governing site is the one they are actually
+ *  standing in, NOT the branch on their roster row. Resolution order:
+ *
+ *    1. an explicit device (`terminalRef`) — a device-level override, and the
+ *       only case that still resolves a Terminal row;
+ *    2. an explicit site (`branchRef`) — validated STRICTLY against that named
+ *       branch (an unknown name is a 404; the home branch is never substituted,
+ *       which would validate against the wrong fence);
+ *    3. otherwise the GPS fix is matched against EVERY registered site that is
+ *       mobile-capable and geo-ready — the travelling employee's normal path.
+ *
+ *  A fix outside every registered site is recorded as an exception against the
+ *  NEAREST one, so the audit row still names a real place and carries a
+ *  meaningful distance.
+ *
+ *  The bridge is the authority: the phone never gets to claim a site. Whatever
+ *  the app sends, this handler re-derives the site from the coordinates.
  *
  *  Biometric remains the primary/default channel: a location whose
- *  Clocking_Method is 'Biometric' rejects mobile punches outright.
+ *  Clocking_Method is 'Biometric' rejects mobile punches outright, and is
+ *  never eligible for the automatic GPS match.
  *
  *  Body:
  *    {
@@ -46,11 +65,12 @@
  */
 
 import type { NextRequest } from "next/server";
-import { currentAccount } from "@/lib/auth";
 import {
   getDb,
   inferDirection,
   insertPunch,
+  rankMobileFences,
+  findTerminalOnlyFenceAt,
   resolveEmployee,
   resolveGeofenceLocation,
   type GeofenceLocation,
@@ -61,12 +81,15 @@ import {
   isValidRadius,
   methodAllowsMobile,
 } from "@/lib/geofence";
-import type { GeoPunchReason, GeoPunchResponse, PunchDirection } from "@/lib/types";
+import { DEFAULT_MOBILE_KEY, isMobileAuthorized } from "@/lib/mobile";
+import type {
+  GeoPunchDetection,
+  GeoPunchReason,
+  GeoPunchResponse,
+  PunchDirection,
+} from "@/lib/types";
 
 const NO_STORE = { "Cache-Control": "no-store" };
-
-/** Default shared secret for the mobile app (override with MOBILE_PUNCH_KEY). */
-const DEFAULT_MOBILE_KEY = "biobridge-mobile";
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: NO_STORE });
@@ -94,20 +117,8 @@ function parseTimestamp(value: unknown): number {
   return Date.now();
 }
 
-/**
- * Authenticate the caller: a valid admin session OR the shared mobile key.
- * (Admins keep console-testing ability; the app can't hold a session cookie.)
- */
-async function isAuthorized(request: NextRequest): Promise<boolean> {
-  const key = request.headers.get("x-mobile-key") ?? request.headers.get("x-api-key");
-  const expected = process.env.MOBILE_PUNCH_KEY?.trim() || DEFAULT_MOBILE_KEY;
-  if (key && key === expected) return true;
-  const account = await currentAccount();
-  return account !== null;
-}
-
 export async function POST(request: NextRequest): Promise<Response> {
-  if (!(await isAuthorized(request))) {
+  if (!(await isMobileAuthorized(request))) {
     return json(
       {
         ok: false,
@@ -147,26 +158,99 @@ export async function POST(request: NextRequest): Promise<Response> {
     body.accuracyMeters ?? body.accuracy ?? body.locationAccuracyMeters
   );
 
-  // ── 3. Resolve the governing location (device → branch → home branch) ─
+  // ── 3. Resolve the governing site (terminal → branchRef → GPS) ───────
+  //
+  //  Phase 17: an employee may travel, so the DEFAULT path is now to work the
+  //  site out from the fix itself. The bridge — never the phone — decides
+  //  where a punch happened, which is what makes "clock in at any branch"
+  //  tamper-proof: a phone cannot claim a site it is not standing in.
   const terminalRef =
     (typeof body.terminalRef === "string" && body.terminalRef) ||
     (typeof body.terminalMac === "string" && body.terminalMac) ||
     null;
-  const branchRef = typeof body.branchRef === "string" ? body.branchRef : null;
+  const branchRef = typeof body.branchRef === "string" ? body.branchRef.trim() : null;
 
-  const location: GeofenceLocation | null = resolveGeofenceLocation({
-    terminalMac: terminalRef,
-    branchName: branchRef,
-    employeeBranch: employee.Branch_Name,
-  });
-  if (!location) {
-    return json(
-      {
-        ok: false,
-        error: `No site is assigned to ${employee.Full_Name} — set a branch (or pass branchRef/terminalRef).`,
-      },
-      404
-    );
+  let location: GeofenceLocation | null = null;
+  let detectedBy: GeoPunchDetection = "auto";
+  /** Auto path: did the fix land inside a registered site at all? */
+  let insideAnySite = true;
+  /** Context for a miss — the closest registered site, if there is one. */
+  let nearest: { branch: string; distanceMeters: number } | null = null;
+
+  if (terminalRef) {
+    // 3a. An explicit device the app scanned — a device-level override.
+    detectedBy = "terminal";
+    location = resolveGeofenceLocation({ terminalMac: terminalRef });
+    if (!location) {
+      return json({ ok: false, error: `No device matches "${terminalRef}".` }, 404);
+    }
+  } else if (branchRef) {
+    // 3b. An explicitly named site. STRICT on purpose: an unknown name is a
+    //     404 rather than a silent fall back to the employee's home branch,
+    //     which would validate the punch against the wrong fence.
+    detectedBy = "branchRef";
+    location = resolveGeofenceLocation({ branchName: branchRef });
+    if (!location) {
+      return json({ ok: false, error: `No branch named "${branchRef}".` }, 404);
+    }
+  } else {
+    // 3c. THE TRAVELLING EMPLOYEE: match the fix against every registered
+    //     site. Mobile-capable and geo-ready sites only — a biometric-only
+    //     plant is never opened to GPS punches by this path.
+    const ranked = rankMobileFences(latitude, longitude);
+    if (ranked.length === 0) {
+      const terminalOnly = findTerminalOnlyFenceAt(latitude, longitude);
+      if (terminalOnly) {
+        return fail(
+          "BIOMETRIC_ONLY",
+          `You are inside ${terminalOnly.site.branch}, which requires the physical biometric terminal (mobile clocking is disabled there).`,
+          403
+        );
+      }
+      return fail(
+        "GEOFENCE_NOT_CONFIGURED",
+        "No registered site has mobile clocking configured yet — ask an administrator to add a branch with its coordinates.",
+        409
+      );
+    }
+    const hit = ranked.find((match) => match.withinGeofence) ?? null;
+    if (hit === null) {
+      const terminalOnly = findTerminalOnlyFenceAt(latitude, longitude);
+      if (terminalOnly) {
+        return fail(
+          "BIOMETRIC_ONLY",
+          `You are inside ${terminalOnly.site.branch}, which requires the physical biometric terminal (mobile clocking is disabled there).`,
+          403
+        );
+      }
+      const chosen = ranked[0];
+      insideAnySite = false;
+      nearest = { branch: chosen.site.branch, distanceMeters: chosen.distanceMeters };
+      location = {
+        kind: "branch",
+        id: chosen.site.id,
+        label: chosen.site.branch,
+        branch: chosen.site.branch,
+        method: chosen.site.method,
+        latitude: chosen.site.latitude,
+        longitude: chosen.site.longitude,
+        radiusMeters: chosen.site.radiusMeters,
+      };
+    } else {
+      const chosen = hit;
+      insideAnySite = true;
+      nearest = { branch: chosen.site.branch, distanceMeters: chosen.distanceMeters };
+      location = {
+        kind: "branch",
+        id: chosen.site.id,
+        label: chosen.site.branch,
+        branch: chosen.site.branch,
+        method: chosen.site.method,
+        latitude: chosen.site.latitude,
+        longitude: chosen.site.longitude,
+        radiusMeters: chosen.site.radiusMeters,
+      };
+    }
   }
 
   // ── 4. Crucial policy check: biometric-only locations reject the app ──
@@ -219,6 +303,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     location: location.label,
     branch: location.branch,
     method: location.method,
+    detectedBy,
+    insideAnySite,
+    nearestBranch: nearest?.branch ?? null,
+    nearestDistanceMeters: nearest?.distanceMeters ?? null,
   });
 
   const geo = {
@@ -231,6 +319,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     method: location.method,
     location: location.label,
     branch: location.branch,
+    detectedBy,
+    insideAnySite,
+    nearestBranch: nearest?.branch ?? null,
+    nearestDistanceMeters: nearest?.distanceMeters ?? null,
   };
 
   // ── 7a. Inside the radius → a normal Pending punch for the ERP ────────
@@ -248,6 +340,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       longitude,
       locationAccuracyMeters: accuracyMeters,
       geofenceDistanceMeters: distanceMeters,
+      // Phase 17 — the site that actually validated this punch, so reports can
+      // answer "who clocked in where" without parsing the JSON audit blob.
+      branchName: location.branch,
     });
 
     const payload: GeoPunchResponse = {
@@ -286,12 +381,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     longitude,
     locationAccuracyMeters: accuracyMeters,
     geofenceDistanceMeters: distanceMeters,
+    branchName: location.branch,
   });
 
   const payload: GeoPunchResponse = {
     ok: false,
     reason: "OUTSIDE_GEOFENCE",
-    message: `Rejected — ${distanceMeters} m from ${location.label}, outside the ${radiusMeters} m geofence. Logged as an exception.`,
+    message: insideAnySite
+      ? `Rejected — ${distanceMeters} m from ${location.label}, outside the ${radiusMeters} m geofence. Logged as an exception.`
+      : nearest
+        ? `Rejected — you are outside every registered site (nearest is ${nearest.branch}, ${nearest.distanceMeters} m away). Logged as an exception.`
+        : `Rejected — you are outside every registered site. Logged as an exception.`,
     punch: {
       logId,
       employeeId: employee.Employee_ID,

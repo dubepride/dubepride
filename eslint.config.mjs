@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The Expo companion app is its own toolchain (Metro/Hermes, React Native
+    // globals) — the Next.js lint config must not walk into it. It is
+    // type-checked with `npm run typecheck` from inside mobile/ instead.
+    "mobile/**",
   ]),
 ]);
 

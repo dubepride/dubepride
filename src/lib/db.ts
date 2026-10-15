@@ -44,7 +44,11 @@ import {
   PERMISSION_KEYS,
   serializePermissions,
 } from "@/lib/rbac";
-import { normalizeClockingMethod } from "@/lib/geofence";
+import {
+  haversineMetersRounded,
+  methodAllowsMobile,
+  normalizeClockingMethod,
+} from "@/lib/geofence";
 import { verifySessionToken } from "@/lib/session";
 import type {
   AccessLevelDto,
@@ -305,6 +309,18 @@ function migrate(db: DatabaseSync): void {
   ensureColumn(db, "Attendance_Logs", "Longitude", "Longitude REAL");
   ensureColumn(db, "Attendance_Logs", "Location_Accuracy_Meters", "Location_Accuracy_Meters INTEGER");
   ensureColumn(db, "Attendance_Logs", "Geofence_Distance_Meters", "Geofence_Distance_Meters INTEGER");
+  // Phase 17 — a mobile punch may happen at ANY registered site (an employee
+  // travelling between branches clocks in wherever they actually are), so the
+  // governing site is recorded on the row itself rather than being inferable
+  // only from the employee's roster branch. NULL for terminal/fingerprint
+  // punches, whose site is already carried by Terminal_ID.
+  ensureColumn(db, "Attendance_Logs", "Branch_Name", "Branch_Name TEXT");
+
+  // Phase 16 — BIOBRIDGE companion app sign-in. A *device* credential (an ATM
+  // PIN, not a password) stored as a digest. NULL means "this employee has no
+  // personal PIN yet, so the MOBILE_DEFAULT_PIN deployment value applies".
+  // Purely additive — no existing flow reads this column.
+  ensureColumn(db, "Employees", "Mobile_PIN", "Mobile_PIN TEXT");
 }
 
 /* ------------------------------------------------------------------ */
@@ -2124,6 +2140,203 @@ export function resolveGeofenceLocation(opts: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 17 — "clock in at any registered site"                        */
+/*                                                                     */
+/*  An employee may travel: the fence that governs a punch is the one   */
+/*  they are physically standing inside, NOT the branch on their        */
+/*  roster row. These helpers turn a GPS fix into that decision. They   */
+/*  are the single implementation the mobile sign-in handler, the       */
+/*  punch endpoint and the companion app all reason from — so the       */
+/*  phone and the bridge can never disagree about where someone is.     */
+/* ------------------------------------------------------------------ */
+
+/** A site that may validate a mobile punch: mobile-capable AND geo-ready. */
+export interface MobileFence {
+  id: number;
+  /** Branches.Branch_Name — the value the app quotes back as `branchRef`. */
+  branch: string;
+  method: ClockingMethod;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+
+/** A site plus how far a given fix sits from its centre. */
+export interface MobileFenceMatch {
+  site: MobileFence;
+  distanceMeters: number;
+  /** Inside the site's own configured radius. */
+  withinGeofence: boolean;
+}
+
+/** Coerce a stored REAL/INTEGER to a usable number, or null. */
+function finiteOrNull(value: number | null): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Every branch with a usable centre + radius, in branch order — whatever its
+ * Clocking_Method. The mobile channel filters this down; the punch endpoint
+ * also uses the full list to explain a refusal ("you are standing inside a
+ * site that requires the fingerprint terminal").
+ */
+export function listConfiguredBranches(): MobileFence[] {
+  const rows = queryAll<BranchRow>(getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
+  const out: MobileFence[] = [];
+  for (const row of rows) {
+    const latitude = finiteOrNull(row.Latitude);
+    const longitude = finiteOrNull(row.Longitude);
+    const radiusMeters = finiteOrNull(row.Geofence_Radius_Meters);
+    if (latitude === null || longitude === null || radiusMeters === null) continue;
+    if (radiusMeters <= 0) continue;
+
+    out.push({
+      id: row.Branch_ID,
+      branch: row.Branch_Name,
+      method: normalizeClockingMethod(row.Clocking_Method),
+      latitude,
+      longitude,
+      radiusMeters,
+    });
+  }
+  return out;
+}
+
+/**
+ * Every site the mobile channel may use, in branch order.
+ *
+ * A site qualifies only when BOTH hold:
+ *   1. its Clocking_Method permits mobile clocking (Geofence or Both), and
+ *   2. it has a usable centre + radius.
+ *
+ * Biometric-only sites are excluded by design — they stay terminal-only, so
+ * enabling "clock in anywhere" never silently opens a fingerprint-only plant
+ * to GPS punches.
+ */
+export function listMobileFences(): MobileFence[] {
+  return listConfiguredBranches().filter((fence) => methodAllowsMobile(fence.method));
+}
+
+/** Rank a set of sites by distance from the fix, nearest first, stable on ties. */
+function rankFences(
+  sites: MobileFence[],
+  latitude: number,
+  longitude: number
+): MobileFenceMatch[] {
+  return sites
+    .map((site) => {
+      const distanceMeters = haversineMetersRounded(
+        latitude,
+        longitude,
+        site.latitude,
+        site.longitude
+      );
+      return { site, distanceMeters, withinGeofence: distanceMeters <= site.radiusMeters };
+    })
+    .sort((a, b) => a.distanceMeters - b.distanceMeters || a.site.id - b.site.id);
+}
+
+/**
+ * Rank every mobile-capable site by how far the fix is from its centre,
+ * nearest first. Ties fall back to branch order so the answer is stable
+ * across calls — a flapping verdict would reset the dwell.
+ */
+export function rankMobileFences(latitude: number, longitude: number): MobileFenceMatch[] {
+  return rankFences(listMobileFences(), latitude, longitude);
+}
+
+/**
+ * The site whose fence actually contains the fix, or null when the employee
+ * is outside every registered site. Overlapping fences resolve to the nearest
+ * centre.
+ */
+export function findMobileFenceAt(
+  latitude: number,
+  longitude: number
+): MobileFenceMatch | null {
+  return rankMobileFences(latitude, longitude).find((match) => match.withinGeofence) ?? null;
+}
+
+/**
+ * A site the employee is standing inside that does NOT accept mobile clocking
+ * (Clocking_Method 'Biometric'), or null.
+ *
+ * Used only to explain a refusal: without this, an employee standing at a
+ * fingerprint-only branch is told they are "N m from <some other branch>",
+ * which sounds like a GPS fault rather than a policy. The correct answer is
+ * "this site requires the terminal", so the endpoint can say exactly that.
+ */
+export function findTerminalOnlyFenceAt(
+  latitude: number,
+  longitude: number
+): MobileFenceMatch | null {
+  const terminalOnly = listConfiguredBranches().filter(
+    (fence) => !methodAllowsMobile(fence.method)
+  );
+  return rankFences(terminalOnly, latitude, longitude).find((match) => match.withinGeofence) ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 16 — companion app sign-in (Employee ID + PIN)                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Deployment-wide fallback PIN for employees with no personal PIN set.
+ *
+ * The companion app's PIN is a *device* credential, not an account password:
+ * it unlocks the app UI and is verified here so the phone can never invent an
+ * identity (anyone may type someone else's ERP id). Every employee can be
+ * given their own PIN with `setEmployeeMobilePin()`; until an admin does,
+ * `MOBILE_DEFAULT_PIN` applies.
+ */
+export const DEFAULT_MOBILE_PIN = "0000";
+
+/** The fallback PIN the deployment currently uses. */
+export function mobileDefaultPin(): string {
+  return process.env.MOBILE_DEFAULT_PIN?.trim() || DEFAULT_MOBILE_PIN;
+}
+
+/** The stored digest for an employee — null when they rely on the default. */
+export function employeeMobilePinHash(employeeId: number): string | null {
+  return (
+    queryOne<{ Mobile_PIN: string | null }>(
+      getDb(),
+      "SELECT Mobile_PIN FROM Employees WHERE Employee_ID = ?",
+      employeeId
+    )?.Mobile_PIN ?? null
+  );
+}
+
+/** True when the employee has a personal PIN on file. */
+export function hasPersonalMobilePin(employeeId: number): boolean {
+  return employeeMobilePinHash(employeeId) !== null;
+}
+
+/** Set (or clear, with null / "") an employee's personal mobile PIN. */
+export function setEmployeeMobilePin(employeeId: number, pin: string | null): void {
+  const trimmed = pin?.trim() ?? "";
+  exec(
+    getDb(),
+    "UPDATE Employees SET Mobile_PIN = ? WHERE Employee_ID = ?",
+    trimmed ? hashPassword(trimmed) : null,
+    employeeId
+  );
+}
+
+/**
+ * Verify a companion-app PIN against the employee's personal digest, falling
+ * back to the deployment default when they have none. Empty PINs never pass.
+ */
+export function verifyEmployeeMobilePin(employee: EmployeeRow, pin: string): boolean {
+  const submitted = pin.trim();
+  if (!submitted) return false;
+  const stored = employeeMobilePinHash(employee.Employee_ID);
+  return stored ? verifyPassword(submitted, stored) : submitted === mobileDefaultPin();
+}
+
+/* ------------------------------------------------------------------ */
 /* Punches                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -2148,6 +2361,12 @@ export interface PunchInput {
   longitude?: number | null;
   locationAccuracyMeters?: number | null;
   geofenceDistanceMeters?: number | null;
+  /**
+   * The site the punch was validated against (Phase 17). A mobile punch can
+   * land at any registered branch, so this is the *governing* site — not the
+   * employee's roster branch. Left NULL for terminal punches.
+   */
+  branchName?: string | null;
 }
 
 /**
@@ -2188,8 +2407,8 @@ export function insertPunch(input: PunchInput): number {
     db,
     `INSERT INTO Attendance_Logs
        (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload,
-        Latitude, Longitude, Location_Accuracy_Meters, Geofence_Distance_Meters, Created_At)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        Latitude, Longitude, Location_Accuracy_Meters, Geofence_Distance_Meters, Branch_Name, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     employeeId,
     input.timestamp,
     input.terminalId,
@@ -2202,6 +2421,7 @@ export function insertPunch(input: PunchInput): number {
     input.longitude ?? null,
     input.locationAccuracyMeters ?? null,
     input.geofenceDistanceMeters ?? null,
+    input.branchName ?? null,
     Date.now()
   );
   return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);

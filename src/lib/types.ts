@@ -921,6 +921,9 @@ export type GeoPunchReason =
   | "BIOMETRIC_ONLY"
   | "GEOFENCE_NOT_CONFIGURED";
 
+/** How a punch's governing site was chosen (Phase 17). */
+export type GeoPunchDetection = "terminal" | "branchRef" | "auto";
+
 /** Geofence verdict attached to a processed / rejected mobile punch. */
 export interface GeoPunchGeo {
   latitude: number;
@@ -936,6 +939,17 @@ export interface GeoPunchGeo {
   /** Human location/branch the punch was validated against. */
   location: string | null;
   branch: string | null;
+  /**
+   * Which site was used and how it was picked: the terminal the app scanned,
+   * an explicit `branchRef`, or the bridge matching the GPS fix against every
+   * registered site. `auto` is the travelling employee's normal path.
+   */
+  detectedBy: GeoPunchDetection;
+  /** True when the fix fell outside every registered site (auto detection). */
+  insideAnySite: boolean;
+  /** Nearest registered site when the fix was outside all of them. */
+  nearestBranch: string | null;
+  nearestDistanceMeters: number | null;
 }
 
 /**
@@ -947,6 +961,70 @@ export interface GeoPunchGeo {
  * Other `ok:false` values (BIOMETRIC_ONLY / GEOFENCE_NOT_CONFIGURED + 4xx)
  * mean nothing was written.
  */
+/**
+ * One registered site a mobile punch may be validated against (Phase 17).
+ *
+ * Sign-in hands the phone EVERY qualifying site — not just the employee's
+ * roster branch — because an employee may travel and clock in wherever they
+ * can physically stand. The bridge stays authoritative: it re-derives the
+ * governing site from the GPS fix on every punch, so this list only tells the
+ * app which fences to listen for.
+ */
+export interface GeoFenceSite {
+  /** Branches.Branch_ID. */
+  id: number;
+  /** Branches.Branch_Name — quoted back as `branchRef`. */
+  branch: string;
+  method: ClockingMethod;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+
+/**
+ * POST /api/mobile/login response — the companion app's sign-in result.
+ *
+ * `ok:true` hands the phone the roster identity it must quote on every punch
+ * plus every site its punches may be judged against. The employee's own
+ * branch is reported for display only; it no longer gates sign-in and no
+ * longer decides where a punch is valid — the GPS fix does.
+ */
+export interface MobileLoginResponse {
+  ok: boolean;
+  message: string;
+  employee: {
+    employeeId: number;
+    erpUserId: string;
+    fullName: string;
+    department: string;
+    branch: string;
+  };
+  /**
+   * The employee's own (roster) site, shown as "Home site". Null when they
+   * have no branch assigned — which is no longer a sign-in error.
+   */
+  geofence: {
+    configured: boolean;
+    method: ClockingMethod;
+    /** Human label — the branch name (or device Location_Name). */
+    label: string | null;
+    branch: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    radiusMeters: number | null;
+  } | null;
+  /**
+   * Every site that may accept this phone's punch: mobile-capable AND
+   * geo-ready. Empty means nothing is set up yet — the app still signs in,
+   * but hands-free clocking has nothing to watch.
+   */
+  fences: GeoFenceSite[];
+  generatedAt: number;
+  /** Present only on ok:false — "BIOMETRIC_ONLY" is the common one. */
+  reason?: GeoPunchReason;
+  error?: string;
+}
+
 export interface GeoPunchResponse {
   ok: boolean;
   reason: GeoPunchReason;

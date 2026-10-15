@@ -48,6 +48,9 @@ const PUBLIC_PREFIXES = [
   // a session cookie, so the handler itself authenticates the shared
   // MOBILE_PUNCH_KEY (or a signed-in admin session). See the route header.
   "/api/attendance/geopunch",
+  // Phase 16 — companion app sign-in (Employee ID + PIN → identity + the
+  // geofence to satisfy). Same shared-key rule as the punch ingress.
+  "/api/mobile/login",
 ];
 
 /**

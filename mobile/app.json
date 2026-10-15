@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "BIOBRIDGE Mobile",
+    "slug": "biobridge-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "biobridge",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0a0a",
+    "primaryColor": "#00e676",
+    "ios": {
+      "bundleIdentifier": "com.biobridge.mobileclocking",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "package": "com.biobridge.mobileclocking",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "./plugins/withAndroidCleartext",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "BIOBRIDGE uses your location to confirm you are inside your branch's geofence when you clock in or out.",
+          "locationAlwaysAndWhenInUsePermission": "BIOBRIDGE uses your location in the background so you can be clocked in and out automatically when you arrive at, and leave, your branch.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "extra": {
+      "_comment": "Change `apiUrl` to your bridge's address. 10.0.2.2 is the Android emulator's alias for the host's localhost; on a physical phone use your machine's LAN IP. This is set to the build machine's current Wi-Fi IP so the phone works on first launch. The login screen overrides it at runtime (persisted in the session), so a changed DHCP lease or a new server needs no rebuild.",
+      "apiUrl": "http://192.168.1.52:3000",
+      "_comment_mobileKey": "Must match MOBILE_PUNCH_KEY on the server (default: biobridge-mobile).",
+      "mobileKey": "biobridge-mobile",
+      "_comment_cleartext": "RELEASE builds need android:usesCleartextTraffic=\"true\" on <application> (set by hand in android/app/src/main/AndroidManifest.xml). Without it Android blocks plain http:// and the app reports 'Cannot reach the bridge'. Re-running `expo prebuild` wipes that line; re-add it."
+    }
+  }
+}
