@@ -680,6 +680,31 @@ function seedAttendanceHistory(db: DatabaseSync): void {
 const SEED_BRANCH_NAMES = Array.from({ length: 17 }, (_, i) => `Branch ${i + 1}`);
 
 /**
+ * The real field sites, seeded alongside the demo branches on a fresh install.
+ * All ship as "Both" (biometric + mobile geofence) so a phone can clock in on
+ * site. Capacity/radius defaults to 150 m; the tightest site (Junkshop) uses
+ * 100 m because its neighbours are close together.
+ */
+const SEED_REAL_BRANCHES: Record<
+  string,
+  { lat: number; lng: number; radius: number }
+> = {
+  Belmont: { lat: -20.1725, lng: 28.5752, radius: 150 },
+  Tongogara: { lat: -20.1503, lng: 28.5898, radius: 150 },
+  Junkshop: { lat: -20.1486, lng: 28.587, radius: 100 },
+  Maphisa: { lat: -21.0648, lng: 28.4586, radius: 150 },
+  "Esigodini 2": { lat: -20.2932, lng: 28.9385, radius: 150 },
+  Habane: { lat: -20.3123, lng: 28.9426, radius: 150 },
+  Mthwakazi: { lat: -20.5455, lng: 29.2762, radius: 150 },
+  Mswela: { lat: -20.5337, lng: 29.2889, radius: 150 },
+  "Filabusi Mainshop": { lat: -20.5264, lng: 29.2981, radius: 150 },
+  "Gwanda VID": { lat: -20.9378, lng: 29.0092, radius: 150 },
+  Thobelani: { lat: -20.9431, lng: 29.0057, radius: 150 },
+  "Gweru MMS": { lat: -19.4468, lng: 29.8142, radius: 150 },
+  "Gweru EazyTools": { lat: -19.4484, lng: 29.8103, radius: 150 },
+};
+
+/**
  * Demo geofences (Phase 15) written only on a fresh install. Branch 5 hosts
  * the un-enrolled field officer (ERP-1014), so it ships as "Geofence Only";
  * Branch 1 demonstrates the hybrid channel. Coordinates are Harare CBD.
@@ -723,6 +748,28 @@ function seedBranches(db: DatabaseSync): void {
     } else {
       exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
     }
+  }
+  // Real field sites — geofenced so a phone can clock in on site. Idempotent:
+  // a branch of the same name is left untouched (never duplicated).
+  for (const [name, geo] of Object.entries(SEED_REAL_BRANCHES)) {
+    const existing = queryOne<{ id: number }>(
+      db,
+      "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name = ?",
+      name
+    );
+    if (existing) continue;
+    exec(
+      db,
+      `INSERT INTO Branches
+         (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      name,
+      SEED_CREATED_AT,
+      "Both",
+      geo.lat,
+      geo.lng,
+      geo.radius
+    );
   }
 }
 
