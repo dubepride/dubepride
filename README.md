@@ -20,6 +20,8 @@ operator dashboard shows everything live.
 | **ERP Sync Logs** | Batch history with inspectable JSON payloads (incl. branch), offline buffer view, **Force Sync Now** |
 | **Offline buffering** | Records stay `Pending` while the ERP is unreachable, delivered on recovery — never lost |
 | **Mock generator** | Simulated terminals punch every few seconds (direction auto-alternates per day) so the UI is alive on first render |
+| **Geofenced mobile clocking** | Optional secondary channel: the companion app (or a browser, from My Portal) clocks a worker in/out when GPS says they are inside a registered site's radius. The **bridge** re-derives the governing site on every punch, so a phone can never name a branch it is not standing in. Biometric terminals stay primary. |
+| **Site & punch maps** | Leaflet maps everywhere: a draggable fence editor in Settings, a clock-in map in My Portal, a GPS report on Attendance Records, and a floating **Map** button on every page showing all fences + recent punch locations. Tiles are a courtesy layer — every distance and verdict is computed server-side. |
 
 ## Quick start
 
@@ -39,6 +41,7 @@ change it), then the dashboard, feed and clock start working immediately
 npm run build   # production build
 npm start       # production server
 npx eslint src  # lint
+npm test        # node --test: geofence + map-config unit tests
 ```
 
 ## Architecture
@@ -78,6 +81,12 @@ TypeScript · SQLite via Node's built-in `node:sqlite` (zero native deps).
 | `POST` | `/api/erp/sync` | Force a sync of all `Pending` records to the ERP. |
 | `GET` | `/api/dashboard` | Metrics + live feed with branch + day-sequence (polled every 2.5s). |
 | `GET` | `/api/terminals` | Device registry with branch, health + daily counters. |
+| `POST` | `/api/mobile/login` | Companion-app sign-in (Employee ID + PIN) → roster identity + the fences it may be judged against. |
+| `POST` | `/api/attendance/geopunch` | The app's GPS punch. The bridge derives the governing site from the coordinates and returns an auditable verdict. |
+| `POST` | `/api/my-portal/geopunch` | Browser self-clock. Identity comes **only** from the session (any body `employeeRef` is ignored); rate-limited per account + IP. |
+| `GET` | `/api/attendance/geofences` | Display-only list of fences the browser clock-in map draws. |
+| `GET` | `/api/attendance/geofence-activity` | Admin GPS report: every geofenced punch with distance/accuracy/verdict, filters, paging and biometric-vs-geofence counts. |
+| `GET` | `/api/map/overview` | Session-gated, permission-aware snapshot for the app-wide map overlay (sites + recent punch locations). |
 
 Everything except `/login`, `/api/auth/*` and `/api/biometrics/push` requires a
 valid session: `src/proxy.ts` (Next 16's middleware) redirects page requests to
@@ -167,6 +176,31 @@ Delivery contract: **200 OK** → `Success`; unreachable/5xx → stays `Pending`
 (offline buffer, retried every 20s); **4xx** → `Failed` (quarantined for
 admin triage, retrying can't fix a rejected record).
 
+### 3. Mobile clocking & maps
+
+```bash
+# Map tiles (browser + companion app). With nothing set, the maps use the
+# public OpenStreetMap demo tiles — fine for review, NOT for production.
+NEXT_PUBLIC_GEOAPIFY_API_KEY=<browser-restricted Geoapify key>
+# Optional Geoapify style (default: osm-bright)
+NEXT_PUBLIC_MAP_TILE_STYLE=
+# …or point at any compliant provider with a full template:
+NEXT_PUBLIC_MAP_TILE_URL=https://tiles.example/{z}/{x}/{y}.png
+NEXT_PUBLIC_MAP_ATTRIBUTION=<required attribution HTML>
+# Turn the OSM demo fallback off in production (maps then show a schematic):
+NEXT_PUBLIC_MAP_DEMO_TILES=off
+
+# Optional GPS gate: reject a mobile punch whose fix is less accurate than this
+# many metres (0 / unset = no gate).
+GEOFENCE_MAX_ACCURACY_METERS=
+```
+
+Maps are a courtesy layer. Every distance and accept/reject verdict is computed
+on the server (`src/lib/geo-punch.ts`), so a missing key, a tile outage, or a
+tampered client map can never produce a wrong clock-in. The companion app reads
+its tile config from `mobile/app.json` → `expo.extra` instead; see
+`mobile/README.md` §11.
+
 ## Design system
 
 | Token | Value | Use |
@@ -200,12 +234,23 @@ src/
 │       ├── employees/[id]/route.ts   # Profile + grouped timesheet
 │       ├── erp/sync/route.ts         # Sync engine endpoint
 │       ├── dashboard/route.ts
+│       ├── mobile/login/route.ts     # Companion-app sign-in (ID + PIN)
+│       ├── attendance/geopunch/route.ts        # GPS punch (device channel)
+│       ├── attendance/geofences/route.ts       # Fences for the clock-in map
+│       ├── attendance/geofence-activity/route.ts# Admin GPS report
+│       ├── my-portal/geopunch/route.ts         # Browser self-clock (session identity)
+│       ├── map/overview/route.ts               # App-wide map overlay snapshot
 │       └── terminals/route.ts
 ├── components/                     # Clock, feed, search, timesheet, consoles…
+│   └── MapCanvas · MapOverlay · GeofenceClock · GeofenceMapEditor · GeofenceActivity
 ├── lib/
 │   ├── db.ts                       # SQLite schema, migrations, seeds, queries
 │   ├── session.ts                  # HMAC session cookies (used by proxy too)
 │   ├── auth.ts                     # requireAdmin() guard for API routes
+│   ├── geofence.ts                 # Pure fence helpers (haversine, radius, method)
+│   ├── geo-punch.ts                # Server-authoritative punch policy engine
+│   ├── maps.ts                     # Leaflet tile config (env-driven, OSM demo fallback)
+│   ├── rate-limit.ts               # In-memory fixed-window limiter
 │   ├── timesheet.ts                # Multi-punch day/week grouping engine
 │   ├── erp.ts                      # ERP delivery + buffering logic
 │   ├── mock-generator.ts           # Simulated terminals + retry loop

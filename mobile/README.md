@@ -52,6 +52,11 @@ You do **not** need to rebuild to change this: the login screen has a
 "Change server address" disclosure that overrides it at runtime, and the last
 working address is remembered.
 
+The **site map** (§11) reads four more optional keys from the same `extra`
+object — `geoapifyKey`, `mapTileStyle`, `mapTileUrl` and `mapAttribution`.
+With none of them set the map uses the public OpenStreetMap demo tiles; the
+tiles are a courtesy layer and never affect a punch (§11).
+
 > Make sure the bridge is listening on your LAN interface
 > (`npx next dev -H 0.0.0.0` or the equivalent for `next start`), and that
 > Windows Firewall allows the port.
@@ -307,12 +312,13 @@ mobile/
 ├── index.ts                    entry — registers the background tasks
 └── src/
     ├── theme.ts                the palette (see below)
-    ├── components/             Panel · PrimaryButton · StatusChip
+    ├── components/             Panel · PrimaryButton · StatusChip · SiteMap
     ├── screens/                Login · Dashboard
     ├── hooks/                  useGeofenceStatus · usePendingQueue
     ├── lib/
     │   ├── api.ts              transport + failure taxonomy
     │   ├── geo.ts              Haversine, per-site fence verdict + ranking, dwell constants
+    │   ├── maps.ts             tile-provider config for the WebView map (§11)
     │   ├── queue.ts            the offline queue (serialised, FIFO)
     │   ├── session.ts          auth context + sign-in / offline unlock
     │   ├── storage.ts          SecureStore (session, PIN) · AsyncStorage (queue, dwell)
@@ -343,7 +349,42 @@ npm run typecheck
 The root Next.js project excludes `mobile/` from both `tsc` and ESLint, so the
 two toolchains stay independent — run each from its own directory.
 
-## 11. Known limitations
+## 11. The site map
+
+The Dashboard shows a **Site map** panel: every registered fence the phone may
+clock in at (neon circles), your home site (dashed white ring) and your current
+fix (pulsing neon dot). It answers "where can I clock in, and am I near one?"
+at a glance.
+
+**Why a WebView?** The app carries no Google Maps key, and the web dashboard
+already draws its geofences with Leaflet. Running the same Leaflet stack in a
+WebView means one tile policy and one visual language across both surfaces.
+
+- `src/lib/maps.ts` resolves the tile provider from `app.json` → `extra`:
+
+  | Key | Meaning |
+  |---|---|
+  | `geoapifyKey` | Browser/app Geoapify key (preferred) |
+  | `mapTileStyle` | Geoapify style slug (default `osm-bright`) |
+  | `mapTileUrl` | A full tile template that overrides everything |
+  | `mapAttribution` | Required attribution HTML for a custom template |
+
+- With no key/template set, the map falls back to the **public OpenStreetMap
+  standard tile server**. That is a deliberate **demo** shortcut: OSM's tile
+  usage policy forbids heavy or commercial use, so add a keyed provider before
+  production. Adding `geoapifyKey` (or `mapTileUrl`) supersedes it with no code
+  change.
+- `src/components/SiteMap.tsx` builds the Leaflet page (Leaflet is loaded from
+  the unpkg CDN; tiles are HTTPS, so no cleartext exception is needed for the
+  map). Branch names are HTML-escaped before they are embedded.
+
+> The map is a **courtesy display only**, exactly like the web overlay. The
+> bridge re-derives the governing site from the coordinates on every punch, so
+> neither the tiles nor anything the WebView renders can change where a punch
+> lands. If tiles fail to load, the panel shows a note and the status card's
+> distances — computed in JS — stay exact.
+
+## 12. Known limitations
 
 - **Not verified on a physical device in this repo.** The logic is written
   against the documented platform behaviour; the `adb` recipe in §4 is the
