@@ -73,7 +73,7 @@ export default function TimesheetReport({ query, scopeLabel, onClose }: Props) {
       const res = await fetch(`/api/employees/timesheet-report?${params}`, {
         cache: "no-store",
       });
-      const json = (await res.json().catch(() => null)) as
+      const json = ((await res.json()).catch(() => null)) as
         | (TimesheetReportResponse & { error?: string })
         | null;
       if (!res.ok || !json?.employees) {

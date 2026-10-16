@@ -111,7 +111,7 @@ export async function DELETE(req: Request): Promise<Response> {
   const guard = await requireAdmin();
   if (guard) return guard;
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = (await req.json()).catch(() => ({}));
     const id = Number(body.id);
     if (!Number.isFinite(id)) {
       return Response.json({ ok: false, error: "Invalid id" }, { status: 400 });

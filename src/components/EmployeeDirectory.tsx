@@ -209,7 +209,7 @@ function EmployeeForm({
           status,
         }),
       });
-      const json = (await res.json().catch(() => null)) as {
+      const json = ((await res.json()).catch(() => null)) as {
         ok?: boolean;
         id?: number;
         error?: string;
@@ -460,7 +460,7 @@ function EmployeeDeleteConfirm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: employee.id }),
       });
-      const json = (await res.json().catch(() => null)) as {
+      const json = ((await res.json()).catch(() => null)) as {
         ok?: boolean;
         error?: string;
       } | null;

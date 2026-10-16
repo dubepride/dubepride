@@ -160,7 +160,7 @@ export default function FingerEnrolment() {
           fetch("/api/terminals", { cache: "no-store" }),
         ]);
         if (!profileRes.ok) {
-          const j = (await profileRes.json().catch(() => null)) as { error?: string } | null;
+          const j = ((await profileRes.json()).catch(() => null)) as { error?: string } | null;
           throw new Error(j?.error || `HTTP ${profileRes.status}`);
         }
         const profile = (await profileRes.json()) as EmployeeProfileResponse;
@@ -256,7 +256,7 @@ export default function FingerEnrolment() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fingers: next }),
         });
-        const json = (await res.json().catch(() => null)) as
+        const json = ((await res.json()).catch(() => null)) as
           | (FingersSaveResponse & { error?: string })
           | null;
         if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);

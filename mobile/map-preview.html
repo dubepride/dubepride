@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #0d0d12; }
+  .leaflet-container { background: #0d0d12; font: 13px system-ui, sans-serif; }
+  .leaflet-control-attribution {
+    background: rgba(10,10,10,0.72) !important;
+    color: #a0aec0 !important;
+    font-size: 9px !important;
+  }
+  .leaflet-control-attribution a { color: #00e676 !important; }
+  .site-label {
+    background: rgba(10,10,10,0.82);
+    color: #ffffff;
+    border: 1px solid rgba(0,230,118,0.5);
+    border-radius: 6px;
+    padding: 1px 5px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .me-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #00e676;
+    box-shadow: 0 0 0 4px rgba(0,230,118,0.22), 0 0 14px rgba(0,230,118,0.8);
+  }
+  #tiles-note {
+    display: none;
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 500;
+    padding: 4px 8px; font-size: 10px; text-align: center;
+    color: #c9bce4; background: rgba(10,10,10,0.86);
+  }
+  #demo-note {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 400;
+    padding: 3px 8px; font-size: 9px; letter-spacing: 0.02em; text-align: center;
+    color: #a0aec0; background: rgba(10,10,10,0.8);
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="tiles-note">Map tiles unavailable — fences are still exact. Distances are computed on the bridge.</div>
+<div id="demo-note" style="display:block">OpenStreetMap demo tiles</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var data = {"tileUrl":"https://tile.openstreetmap.org/{z}/{x}/{y}.png","attribution":"&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors","demo":true,"sites":[{"branch":"Belmont","latitude":-20.1725,"longitude":28.5752,"radiusMeters":150},{"branch":"Tongogara","latitude":-20.1503,"longitude":28.5898,"radiusMeters":730},{"branch":"Junkshop","latitude":-20.1486,"longitude":28.587,"radiusMeters":100},{"branch":"Maphisa","latitude":-21.0648,"longitude":28.4586,"radiusMeters":150},{"branch":"Esigodini 2","latitude":-20.2932,"longitude":28.9385,"radiusMeters":150},{"branch":"Habane","latitude":-20.3123,"longitude":28.9426,"radiusMeters":150},{"branch":"Mthwakazi","latitude":-20.5455,"longitude":29.2762,"radiusMeters":150},{"branch":"Mswela","latitude":-20.5337,"longitude":29.2889,"radiusMeters":150},{"branch":"Filabusi Mainshop","latitude":-20.5264,"longitude":29.2981,"radiusMeters":150},{"branch":"Gwanda VID","latitude":-20.9378,"longitude":29.0092,"radiusMeters":150},{"branch":"Thobelani","latitude":-20.9431,"longitude":29.0057,"radiusMeters":150},{"branch":"Gweru MMS","latitude":-19.4468,"longitude":29.8142,"radiusMeters":150},{"branch":"Gweru EazyTools","latitude":-19.4484,"longitude":29.8103,"radiusMeters":150}],"home":{"branch":"Belmont","latitude":-20.1725,"longitude":28.5752,"radiusMeters":150},"me":{"latitude":-20.1486,"longitude":28.587},"center":{"latitude":-20.1486,"longitude":28.587},"zoom":16};
+
+  var map = L.map('map', { zoomControl: true, attributionControl: true, preferCanvas: true })
+             .setView([data.center.latitude, data.center.longitude], data.zoom);
+
+  var tiles = L.tileLayer(data.tileUrl, { maxZoom: 20, crossOrigin: true, attribution: data.attribution });
+  tiles.on('tileerror', function () { document.getElementById('tiles-note').style.display = 'block'; });
+  tiles.addTo(map);
+
+  var group = L.layerGroup().addTo(map);
+
+  data.sites.forEach(function (site) {
+    L.circle([site.latitude, site.longitude], {
+      radius: site.radiusMeters,
+      color: '#00e676', weight: 2, fillColor: '#00e676', fillOpacity: 0.12
+    }).addTo(group);
+    L.marker([site.latitude, site.longitude], {
+      interactive: false,
+      icon: L.divIcon({
+        className: '',
+        html: '<div class="site-label">' + escapeHtml(site.branch) + '</div>',
+        iconSize: [0, 0], iconAnchor: [0, 14]
+      })
+    }).addTo(group);
+  });
+
+  if (data.home) {
+    L.circle([data.home.latitude, data.home.longitude], {
+      radius: data.home.radiusMeters,
+      color: '#ffffff', weight: 1, dashArray: '4 4', fillOpacity: 0
+    }).addTo(group);
+  }
+
+  if (data.me) {
+    L.marker([data.me.latitude, data.me.longitude], {
+      interactive: false,
+      icon: L.divIcon({ className: '', html: '<div class="me-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
+    }).addTo(group);
+  }
+
+  if (!data.me && !data.home && data.sites.length > 0) {
+    map.fitBounds(group.getBounds().pad(0.25), { animate: false });
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+})();
+</script>
+</body>
+</html>

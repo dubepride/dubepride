@@ -171,7 +171,7 @@ function ShiftForm({
             : { id: shift?.Shift_ID, name: name.trim(), startTime: start, endTime: end, days: daysStr }
         ),
       });
-      const json = (await res.json().catch(() => null)) as
+      const json = ((await res.json()).catch(() => null)) as
         | { ok?: boolean; id?: number; error?: string }
         | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
@@ -312,7 +312,7 @@ function DeleteConfirm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: shift.Shift_ID }),
       });
-      const json = (await res.json().catch(() => null)) as
+      const json = ((await res.json()).catch(() => null)) as
         | { ok?: boolean; error?: string }
         | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
@@ -402,7 +402,7 @@ export default function ShiftsConsole() {
     (async () => {
       try {
         const res = await fetch("/api/employees", { cache: "no-store" });
-        const json = (await res.json().catch(() => null)) as
+        const json = ((await res.json()).catch(() => null)) as
           | (EmployeeDirectoryResponse & { error?: string })
           | null;
         if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);

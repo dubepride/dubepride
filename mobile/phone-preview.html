@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>BIOBRIDGE mobile — map view</title>
+<style>
+  :root { --bg:#0a0a0a; --panel:#2d1b4e; --panelDeep:#1d1233; --border:#452f6b; --neon:#00e676; --white:#fff; --muted:#c9bce4; --faint:#9086ad; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#050507; color:var(--white); font:14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding:28px; }
+  h1 { font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:700; margin:0 0 20px; }
+  .stage { display:flex; gap:36px; align-items:flex-start; flex-wrap:wrap; }
+  .phone { width:392px; border-radius:38px; padding:12px; background:#141419; border:2px solid #2a2a33; box-shadow:0 24px 60px rgba(0,0,0,.6); }
+  .screen { background:var(--bg); border-radius:28px; overflow:hidden; height:788px; display:flex; flex-direction:column; }
+  .notch { height:26px; display:flex; align-items:center; justify-content:center; }
+  .notch i { width:96px; height:6px; border-radius:3px; background:#2a2a33; display:block; }
+  .body { flex:1; overflow:hidden; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .cap { font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:2px; }
+  .hello { font-size:26px; font-weight:800; }
+  .sub { font-size:12px; color:var(--faint); letter-spacing:.3px; }
+
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:14px; }
+  .panel h2 { margin:0; font-size:15px; font-weight:700; }
+  .panel .psub { margin:4px 0 10px; font-size:12px; color:var(--muted); }
+  .mapwrap { position:relative; border-radius:12px; overflow:hidden; border:1px solid var(--border); background:#0d0d12; }
+  .mapwrap iframe { display:block; width:100%; border:0; }
+  .note { font-size:11px; color:var(--faint); margin-top:10px; line-height:1.5; }
+  .btn { position:absolute; right:8px; bottom:8px; background:rgba(0,230,118,.92); color:#000; font-size:11px; font-weight:800; letter-spacing:.4px; padding:5px 9px; border-radius:8px; border:1px solid rgba(0,230,118,.6); }
+
+  .fs .body { padding:0; gap:0; }
+  .fshead { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); background:#0d0d10; }
+  .fshead h2 { margin:0; font-size:15px; font-weight:700; }
+  .fclose { font-size:11px; font-weight:800; color:#fff; background:rgba(45,27,78,.85); border:1px solid #7c3aed; border-radius:8px; padding:5px 10px; }
+
+  .status { display:flex; flex-direction:column; gap:6px; margin-top:12px; }
+  .srow { display:flex; justify-content:space-between; font-size:12px; }
+  .srow b { color:#fff; font-weight:600; }
+  .srow span { color:var(--faint); text-transform:uppercase; letter-spacing:1px; font-size:10px; font-weight:700; }
+  .chip { display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:var(--neon); background:rgba(0,230,118,.16); border:1px solid rgba(0,230,118,.5); border-radius:999px; padding:6px 12px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--neon); box-shadow:0 0 10px var(--neon); }
+  .legend { display:flex; gap:14px; margin-top:10px; font-size:10px; color:var(--muted); flex-wrap:wrap; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+</style>
+</head>
+<body>
+  <h1>BIOBRIDGE mobile · map view</h1>
+  <div class="stage">
+    <div class="phone">
+      <div class="screen">
+        <div class="notch"><i></i></div>
+        <div class="body">
+          <div>
+            <div class="cap">Employee</div>
+            <div class="hello">Belmont Officer</div>
+            <div class="sub">ERP-2001 · Belmont · online session</div>
+          </div>
+
+          <div class="panel">
+            <span class="chip"><span class="dot"></span>Geofence active</span>
+            <div class="status">
+              <div class="srow"><span>Home site</span><b>Belmont</b></div>
+              <div class="srow"><span>You are at</span><b>Junkshop</b></div>
+              <div class="srow"><span>Distance</span><b>347 m · outside</b></div>
+              <div class="srow"><span>Watching</span><b>13 sites</b></div>
+              <div class="srow"><span>Accuracy</span><b>± 8 m</b></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Site map</h2>
+            <div class="psub">13 sites you can clock in at · the neon dot is you.</div>
+            <div class="mapwrap">
+              <iframe src="/map-preview.html" height="300" title="map"></iframe>
+              <div class="btn">Open full map</div>
+            </div>
+            <div class="note">The bridge validates every punch on the server — the map is a guide, not the decision. Tap “Open full map” for a larger view.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="phone fs">
+      <div class="screen">
+        <div class="notch"><i></i></div>
+        <div class="body">
+          <div class="fshead">
+            <h2>Site Map</h2>
+            <div class="fclose">Close</div>
+          </div>
+          <div style="flex:1">
+            <iframe src="/map-preview.html" style="height:730px" title="map full"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // legend under the first map is drawn inside the map page already
+  </script>
+</body>
+</html>

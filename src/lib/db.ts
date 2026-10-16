@@ -31,10 +31,15 @@
  *  ─────────────────────────────────────────────────────────────────────
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import type { Client } from "@libsql/client";
+import {
+  executeBatch,
+  getReadyClient,
+  setBootstrap,
+  type SqlStatement,
+  type SqlValue,
+} from "@/lib/sqlite";
 import { EXCEPTION_LABELS, EXCEPTION_RULES, EXCEPTION_TYPES } from "@/lib/exception-meta";
 import { dateKeyOf, formatPunchTime, startOfTodayMs } from "@/lib/format";
 import {
@@ -92,24 +97,55 @@ import type {
 /* Connection + low-level helpers                                      */
 /* ------------------------------------------------------------------ */
 
-/** Values accepted by node:sqlite bound parameters. */
-export type SQLInputValue = string | number | bigint | null | Uint8Array;
 
-type GlobalWithDb = typeof globalThis & { __taBridgeDb?: DatabaseSync };
+/** Values accepted as bound parameters (name kept for existing callers). */
+export type SQLInputValue = SqlValue;
 
 /** Run a statement for its side effects. */
-function exec(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): void {
-  db.prepare(sql).run(...params);
+async function exec(db: Client, sql: string, ...params: SQLInputValue[]): Promise<void> {
+  await db.execute({ sql, args: params });
+}
+
+/** Run a multi-statement script (DDL only — libSQL allows no bound params). */
+async function execMulti(db: Client, sql: string): Promise<void> {
+  await db.executeMultiple(sql);
+}
+
+/**
+ * Run a statement and return its row count + generated rowid.
+ *
+ * The rowid comes from THIS statement's result: a follow-up
+ * `SELECT last_insert_rowid()` is only reliable on a single connection, which
+ * remote libSQL (Turso) does not guarantee — see the create* functions.
+ */
+async function run(
+  db: Client,
+  sql: string,
+  ...params: SQLInputValue[]
+): Promise<{ changes: number; lastId: number }> {
+  const res = await db.execute({ sql, args: params });
+  return { changes: Number(res.rowsAffected), lastId: Number(res.lastInsertRowid ?? 0) };
 }
 
 /** Run a SELECT and return every row. */
-function queryAll<T>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T[] {
-  return db.prepare(sql).all(...params) as T[];
+async function queryAll<T>(db: Client, sql: string, ...params: SQLInputValue[]): Promise<T[]> {
+  const res = await db.execute({ sql, args: params });
+  return res.rows as unknown as T[];
 }
 
 /** Run a SELECT and return the first row (undefined when there is none). */
-function queryOne<T>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T | undefined {
-  return db.prepare(sql).get(...params) as T | undefined;
+async function queryOne<T>(
+  db: Client,
+  sql: string,
+  ...params: SQLInputValue[]
+): Promise<T | undefined> {
+  const res = await db.execute({ sql, args: params });
+  return res.rows[0] as unknown as T | undefined;
+}
+
+/** Run many statements in ONE round trip (remote-friendly bulk writes). */
+async function batch(db: Client, statements: SqlStatement[]): Promise<void> {
+  await executeBatch(db, statements);
 }
 
 /** WHERE-clause placeholder list: [1,2] → "?,?". */
@@ -118,60 +154,56 @@ function placeholders(count: number): string {
 }
 
 /** True when a column already exists on a table (idempotent migrations). */
-function columnExists(db: DatabaseSync, table: string, column: string): boolean {
-  return queryAll<{ name: string }>(db, `PRAGMA table_info(${table})`).some(
-    (c) => c.name === column
-  );
+async function columnExists(db: Client, table: string, column: string): Promise<boolean> {
+  // Table-valued pragma: accepted by a local file AND by remote libSQL, where
+  // the bare `PRAGMA table_info(x)` form is not.
+  const rows = await queryAll<{ name: string }>(db, "SELECT name FROM pragma_table_info(?)", table);
+  return rows.some((c) => c.name === column);
 }
 
 /** Add a column when an older data file predates it. */
-function ensureColumn(
-  db: DatabaseSync,
-  table: string,
-  column: string,
-  ddl: string
-): void {
-  if (!columnExists(db, table, column)) {
-    exec(db, `ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+async function ensureColumn(db: Client, table: string, column: string, ddl: string): Promise<void> {
+  if (!(await columnExists(db, table, column))) {
+    await exec(db, `ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
 }
 
-/**
- * Open (and lazily initialise) the process-wide connection.
- * Safe to call from any route / background service at any time.
- */
-export function getDb(): DatabaseSync {
-  const g = globalThis as GlobalWithDb;
-  if (g.__taBridgeDb) return g.__taBridgeDb;
-
-  const file =
-    process.env.TA_DB_PATH?.trim() || path.join(process.cwd(), "data", "ta-bridge.db");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-
-  const db = new DatabaseSync(file, { enableForeignKeyConstraints: false });
-  db.exec("PRAGMA journal_mode = WAL;");
-
-  migrate(db);
-  seedShifts(db);
-  seedRoster(db);
-  seedTerminals(db);
-  seedBranches(db);
-  seedAccessLevels(db);
-  ensureBranchCoverage(db);
-  backfillEmployeeMeta(db);
-  seedSystemAccounts(db);
-  seedAttendanceHistory(db);
-
-  g.__taBridgeDb = db;
-  return db;
+/** Schema + demo seed. Runs once per process, before the first query. */
+async function bootstrap(client: Client): Promise<void> {
+  await migrate(client);
+  await seedShifts(client);
+  await seedRoster(client);
+  await seedTerminals(client);
+  await seedBranches(client);
+  await seedAccessLevels(client);
+  await ensureBranchCoverage(client);
+  await backfillEmployeeMeta(client);
+  await seedSystemAccounts(client);
+  await seedAttendanceHistory(client);
 }
+
+// db.ts owns the schema; sqlite.ts owns the connection + bootstrap ordering.
+setBootstrap(bootstrap);
+
+/**
+ * Open (and lazily initialise) the process-wide connection. Safe to call from
+ * any route or background service at any time.
+ *
+ * Local dev/tests read a SQLite file; production reads remote Turso/libSQL.
+ */
+export function getDb(): Promise<Client> {
+  return getReadyClient();
+}
+
+/** Raw-SQL helpers for route handlers that need them (identical semantics). */
+export { exec as execSql, run as runSql, queryAll, queryOne, batch as batchSql };
 
 /* ------------------------------------------------------------------ */
 /* Schema                                                              */
 /* ------------------------------------------------------------------ */
 
-function migrate(db: DatabaseSync): void {
-  db.exec(`
+async function migrate(db: Client): Promise<void> {
+  await execMulti(db, `
     CREATE TABLE IF NOT EXISTS Employees (
       Employee_ID         INTEGER PRIMARY KEY AUTOINCREMENT,
       ERP_User_ID         TEXT    NOT NULL UNIQUE,
@@ -442,11 +474,11 @@ const SEED_SHIFTS: SeedShift[] = [
   { id: 4, name: "Night",   start: "22:00", end: "06:00", duration: 480, days: "Tue,Wed,Thu,Fri,Sat" },
 ];
 
-function seedShifts(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Shifts")?.c ?? 0;
+async function seedShifts(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Shifts"))?.c ?? 0;
   if (count > 0) return;
   for (const s of SEED_SHIFTS) {
-    exec(
+    await exec(
       db,
       `INSERT INTO Shifts (Shift_ID, Name, Start_Time, End_Time, Duration_Minutes, Days, Created_At)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -461,11 +493,11 @@ function seedShifts(db: DatabaseSync): void {
   }
 }
 
-function seedRoster(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Employees")?.c ?? 0;
+async function seedRoster(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Employees"))?.c ?? 0;
   if (count > 0) return;
   for (const e of SEED_EMPLOYEES) {
-    exec(
+    await exec(
       db,
       `INSERT INTO Employees
          (ERP_User_ID, Full_Name, Fingerprint_Enrolled, Fingers_Enrolled,
@@ -484,12 +516,12 @@ function seedRoster(db: DatabaseSync): void {
   }
 }
 
-function seedTerminals(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals")?.c ?? 0;
+async function seedTerminals(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals"))?.c ?? 0;
   if (count > 0) return;
   const now = Date.now();
   for (const t of BRANCH_TERMINALS) {
-    exec(
+    await exec(
       db,
       `INSERT INTO Terminals
          (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping, Clocking_Method)
@@ -509,17 +541,17 @@ function seedTerminals(db: DatabaseSync): void {
  * Every branch must expose at least one terminal (Phase 10 grouping).
  * Re-seeds any branch whose devices were all removed.
  */
-function ensureBranchCoverage(db: DatabaseSync): void {
+async function ensureBranchCoverage(db: Client): Promise<void> {
   const covered = new Set(
-    queryAll<{ Branch_Name: string }>(
+    (await queryAll<{ Branch_Name: string }>(
       db,
       "SELECT DISTINCT Branch_Name FROM Terminals WHERE Branch_Name <> ''"
-    ).map((r) => r.Branch_Name)
+    )).map((r) => r.Branch_Name)
   );
   const now = Date.now();
   for (const t of BRANCH_TERMINALS) {
     if (covered.has(t.branch)) continue;
-    exec(
+    await exec(
       db,
       `INSERT OR IGNORE INTO Terminals
          (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping)
@@ -539,9 +571,9 @@ function ensureBranchCoverage(db: DatabaseSync): void {
  * Matched on the demo roster's ERP ids so every employee keeps their own
  * position/shift; anything unknown falls back to a Department default.
  */
-function backfillEmployeeMeta(db: DatabaseSync): void {
+async function backfillEmployeeMeta(db: Client): Promise<void> {
   for (const e of SEED_EMPLOYEES) {
-    exec(
+    await exec(
       db,
       `UPDATE Employees
           SET Position = ?, Shift_ID = ?, Status = 'Active'
@@ -553,12 +585,12 @@ function backfillEmployeeMeta(db: DatabaseSync): void {
     );
   }
   // Roster rows outside the demo seed: give them a sensible department default.
-  const orphans = queryAll<{ Employee_ID: number; Position: string }>(
+  const orphans = await queryAll<{ Employee_ID: number; Position: string }>(
     db,
     "SELECT Employee_ID, Position FROM Employees WHERE Shift_ID IS NULL OR Position = ''"
   );
   for (const o of orphans) {
-    exec(db, "UPDATE Employees SET Position = ?, Shift_ID = 2 WHERE Employee_ID = ?", o.Position || "Team Member", o.Employee_ID);
+    await exec(db, "UPDATE Employees SET Position = ?, Shift_ID = 2 WHERE Employee_ID = ?", o.Position || "Team Member", o.Employee_ID);
   }
 
   // Branch + captured fingers for the demo roster (idempotent: only fills
@@ -567,7 +599,7 @@ function backfillEmployeeMeta(db: DatabaseSync): void {
   // this backfill from resurrecting them).
   for (const e of SEED_EMPLOYEES) {
     if (e.branch) {
-      exec(
+      await exec(
         db,
         "UPDATE Employees SET Branch_Name = ? WHERE ERP_User_ID = ? AND (Branch_Name IS NULL OR Branch_Name = '')",
         e.branch,
@@ -575,7 +607,7 @@ function backfillEmployeeMeta(db: DatabaseSync): void {
       );
     }
     if (e.enrolled && e.fingers > 0) {
-      exec(
+      await exec(
         db,
         `UPDATE Employees SET Fingers_Enrolled = ?
           WHERE ERP_User_ID = ? AND Fingerprint_Enrolled = 1
@@ -592,8 +624,8 @@ function backfillEmployeeMeta(db: DatabaseSync): void {
  * attendance records and reports are populated on the very first render.
  * Never runs against an existing data file (the simulator keeps it alive).
  */
-function seedAttendanceHistory(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs")?.c ?? 0;
+async function seedAttendanceHistory(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs"))?.c ?? 0;
   if (count > 0) return;
 
   // Small LCG — identical sequence for every fresh install.
@@ -605,11 +637,11 @@ function seedAttendanceHistory(db: DatabaseSync): void {
   const pick = <T>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
   const randInt = (min: number, max: number) => min + Math.floor(rnd() * (max - min + 1));
 
-  const employees = queryAll<{ Employee_ID: number; ERP_User_ID: string; Fingerprint_Enrolled: number }>(
+  const employees = await queryAll<{ Employee_ID: number; ERP_User_ID: string; Fingerprint_Enrolled: number }>(
     db,
     "SELECT Employee_ID, ERP_User_ID, Fingerprint_Enrolled FROM Employees ORDER BY Employee_ID"
   );
-  const terminals = queryAll<{ Terminal_ID: number; Terminal_MAC: string; IP_Address: string }>(
+  const terminals = await queryAll<{ Terminal_ID: number; Terminal_MAC: string; IP_Address: string }>(
     db,
     "SELECT Terminal_ID, Terminal_MAC, IP_Address FROM Terminals ORDER BY Terminal_ID"
   );
@@ -617,7 +649,7 @@ function seedAttendanceHistory(db: DatabaseSync): void {
 
   const HOUR = 3_600_000;
   const MINUTE = 60_000;
-  const insert = (
+  const insert = async (
     employeeId: number,
     ts: number,
     terminalId: number,
@@ -627,7 +659,7 @@ function seedAttendanceHistory(db: DatabaseSync): void {
     ip: string,
     mac: string
   ) => {
-    exec(
+    await exec(
       db,
       `INSERT INTO Attendance_Logs
          (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload, Created_At)
@@ -727,13 +759,13 @@ export function verifyPassword(password: string, hash: string): boolean {
   return hashPassword(password) === hash;
 }
 
-function seedBranches(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches")?.c ?? 0;
+async function seedBranches(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches"))?.c ?? 0;
   if (count > 0) return;
   for (const name of SEED_BRANCH_NAMES) {
     const geo = SEED_BRANCH_GEOFENCES[name];
     if (geo) {
-      exec(
+      await exec(
         db,
         `INSERT INTO Branches
            (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
@@ -746,19 +778,19 @@ function seedBranches(db: DatabaseSync): void {
         geo.radius
       );
     } else {
-      exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
+      await exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
     }
   }
   // Real field sites — geofenced so a phone can clock in on site. Idempotent:
   // a branch of the same name is left untouched (never duplicated).
   for (const [name, geo] of Object.entries(SEED_REAL_BRANCHES)) {
-    const existing = queryOne<{ id: number }>(
+    const existing = await queryOne<{ id: number }>(
       db,
       "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name = ?",
       name
     );
     if (existing) continue;
-    exec(
+    await exec(
       db,
       `INSERT INTO Branches
          (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
@@ -841,11 +873,11 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   },
 ];
 
-function seedAccessLevels(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Access_Levels")?.c ?? 0;
+async function seedAccessLevels(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Access_Levels"))?.c ?? 0;
   if (count > 0) return;
   for (const lvl of SEED_ACCESS_LEVELS) {
-    exec(
+    await exec(
       db,
       "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
       lvl.name,
@@ -910,19 +942,19 @@ const SEED_ACCOUNTS: SeedAccount[] = [
   },
 ];
 
-function seedSystemAccounts(db: DatabaseSync): void {
-  const count = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts")?.c ?? 0;
+async function seedSystemAccounts(db: Client): Promise<void> {
+  const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts"))?.c ?? 0;
   if (count > 0) return;
 
-  const levelId = (name: string): number | null =>
-    queryOne<{ id: number }>(db, "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?", name)?.id ?? null;
-  const branchId = (name: string): number | null =>
-    queryOne<{ id: number }>(db, "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name = ?", name)?.id ?? null;
-  const employeeId = (erp: string | null): number | null =>
-    erp ? (queryOne<{ id: number }>(db, "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = ?", erp)?.id ?? null) : null;
+  const levelId = async (name: string): Promise<number | null> =>
+    (await queryOne<{ id: number }>(db, "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?", name))?.id ?? null;
+  const branchId = async (name: string): Promise<number | null> =>
+    (await queryOne<{ id: number }>(db, "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name = ?", name))?.id ?? null;
+  const employeeId = async (erp: string | null): Promise<number | null> =>
+    erp ? ((await queryOne<{ id: number }>(db, "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = ?", erp))?.id ?? null) : null;
 
   for (const a of SEED_ACCOUNTS) {
-    exec(
+    await exec(
       db,
       `INSERT INTO System_Accounts
          (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
@@ -944,14 +976,14 @@ function seedSystemAccounts(db: DatabaseSync): void {
 /* ------------------------------------------------------------------ */
 
 /** Branch list with live headcounts (employees + terminals) per site. */
-export function listBranches(): BranchDto[] {
-  const db = getDb();
-  const rows = queryAll<BranchRow>(db, "SELECT * FROM Branches ORDER BY Branch_ID");
-  const employees = queryAll<{ Branch_Name: string; c: number }>(
+export async function listBranches(): Promise<BranchDto[]> {
+  const db = await getDb();
+  const rows = await queryAll<BranchRow>(db, "SELECT * FROM Branches ORDER BY Branch_ID");
+  const employees = await queryAll<{ Branch_Name: string; c: number }>(
     db,
     "SELECT Branch_Name, COUNT(*) AS c FROM Employees WHERE Branch_Name <> '' GROUP BY Branch_Name"
   );
-  const terminals = queryAll<{ Branch_Name: string; c: number }>(
+  const terminals = await queryAll<{ Branch_Name: string; c: number }>(
     db,
     "SELECT Branch_Name, COUNT(*) AS c FROM Terminals WHERE Branch_Name <> '' GROUP BY Branch_Name"
   );
@@ -971,17 +1003,17 @@ export function listBranches(): BranchDto[] {
 }
 
 /** The flat site names ("Branch 1" …) — branch dropdowns merge this with "Unassigned". */
-export function listBranchNames(): string[] {
-  return queryAll<BranchRow>(getDb(), "SELECT * FROM Branches ORDER BY Branch_ID").map((r) => r.Branch_Name);
+export async function listBranchNames(): Promise<string[]> {
+  return (await queryAll<BranchRow>(await getDb(), "SELECT * FROM Branches ORDER BY Branch_ID")).map((r) => r.Branch_Name);
 }
 
 /** One branch row by exact (case-insensitive) name — the geofence lookup. */
-export function branchByName(name: string | null | undefined): BranchRow | null {
+export async function branchByName(name: string | null | undefined): Promise<BranchRow | null> {
   const value = (name ?? "").trim();
   if (!value) return null;
   return (
-    queryOne<BranchRow>(
-      getDb(),
+    await queryOne<BranchRow>(
+      await getDb(),
       "SELECT * FROM Branches WHERE Branch_Name COLLATE NOCASE = ?",
       value
     ) ?? null
@@ -1010,12 +1042,12 @@ function coerceCoord(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export function createBranch(name: string, clocking?: ClockingConfigInput): number {
-  const db = getDb();
+export async function createBranch(name: string, clocking?: ClockingConfigInput): Promise<number> {
+  const db = await getDb();
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("Branch name is required.");
   const method = normalizeClockingMethod(clocking?.clockingMethod);
-  exec(
+  const { lastId } = await run(
     db,
     `INSERT INTO Branches
        (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
@@ -1027,13 +1059,13 @@ export function createBranch(name: string, clocking?: ClockingConfigInput): numb
     coerceCoord(clocking?.longitude),
     coerceCoord(clocking?.geofenceRadiusMeters)
   );
-  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+  return lastId;
 }
 
 /** Set/clear a site's clocking method + geofence centre (Phase 15). */
-export function setBranchClocking(branchId: number, input: ClockingConfigInput): void {
-  const db = getDb();
-  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+export async function setBranchClocking(branchId: number, input: ClockingConfigInput): Promise<void> {
+  const db = await getDb();
+  const current = await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
   if (!current) throw new Error("That branch no longer exists.");
   const method =
     input.clockingMethod !== undefined
@@ -1045,7 +1077,7 @@ export function setBranchClocking(branchId: number, input: ClockingConfigInput):
     input.geofenceRadiusMeters !== undefined
       ? coerceCoord(input.geofenceRadiusMeters)
       : current.Geofence_Radius_Meters;
-  exec(
+  await exec(
     db,
     `UPDATE Branches
         SET Clocking_Method = ?, Latitude = ?, Longitude = ?, Geofence_Radius_Meters = ?
@@ -1059,25 +1091,25 @@ export function setBranchClocking(branchId: number, input: ClockingConfigInput):
 }
 
 /** Rename a site and keep the denormalised Employees/Terminals in sync. */
-export function renameBranch(branchId: number, name: string): void {
-  const db = getDb();
+export async function renameBranch(branchId: number, name: string): Promise<void> {
+  const db = await getDb();
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("Branch name is required.");
-  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+  const current = await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
   if (!current) throw new Error("That branch no longer exists.");
-  exec(db, "UPDATE Employees SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
-  exec(db, "UPDATE Terminals SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
-  exec(db, "UPDATE Branches SET Branch_Name = ? WHERE Branch_ID = ?", trimmed, branchId);
+  await exec(db, "UPDATE Employees SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
+  await exec(db, "UPDATE Terminals SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
+  await exec(db, "UPDATE Branches SET Branch_Name = ? WHERE Branch_ID = ?", trimmed, branchId);
 }
 
 /** Remove a site; records that referenced it fall back to "Unassigned" (""). */
-export function deleteBranch(branchId: number): boolean {
-  const db = getDb();
-  const current = queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
+export async function deleteBranch(branchId: number): Promise<boolean> {
+  const db = await getDb();
+  const current = await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
   if (!current) return false;
-  exec(db, "UPDATE Employees SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
-  exec(db, "UPDATE Terminals SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
-  exec(db, "DELETE FROM Branches WHERE Branch_ID = ?", branchId);
+  await exec(db, "UPDATE Employees SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
+  await exec(db, "UPDATE Terminals SET Branch_Name = '' WHERE Branch_Name = ?", current.Branch_Name);
+  await exec(db, "DELETE FROM Branches WHERE Branch_ID = ?", branchId);
   return true;
 }
 
@@ -1086,10 +1118,10 @@ export function deleteBranch(branchId: number): boolean {
 /* ------------------------------------------------------------------ */
 
 /** Every level with its parsed matrix + how many accounts hold it. */
-export function listAccessLevels(): AccessLevelDto[] {
-  const db = getDb();
-  const rows = queryAll<AccessLevelRow>(db, "SELECT * FROM Access_Levels ORDER BY Access_Level_ID");
-  const counts = queryAll<{ Access_Level_ID: number; c: number }>(
+export async function listAccessLevels(): Promise<AccessLevelDto[]> {
+  const db = await getDb();
+  const rows = await queryAll<AccessLevelRow>(db, "SELECT * FROM Access_Levels ORDER BY Access_Level_ID");
+  const counts = await queryAll<{ Access_Level_ID: number; c: number }>(
     db,
     "SELECT Access_Level_ID, COUNT(*) AS c FROM System_Accounts GROUP BY Access_Level_ID"
   );
@@ -1109,17 +1141,17 @@ export function listAccessLevels(): AccessLevelDto[] {
 }
 
 /** A single level with its parsed matrix + account count — the matrix GET. */
-export function accessLevelById(levelId: number): AccessLevelDto | null {
-  const db = getDb();
-  const row = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+export async function accessLevelById(levelId: number): Promise<AccessLevelDto | null> {
+  const db = await getDb();
+  const row = await queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
   if (!row) return null;
   const permissions = parsePermissions(row.Permissions_JSON);
   const accountCount =
-    queryOne<{ c: number }>(
+    (await queryOne<{ c: number }>(
       db,
       "SELECT COUNT(*) AS c FROM System_Accounts WHERE Access_Level_ID = ?",
       levelId
-    )?.c ?? 0;
+    ))?.c ?? 0;
   return {
     id: row.Access_Level_ID,
     name: row.Level_Name,
@@ -1132,19 +1164,19 @@ export function accessLevelById(levelId: number): AccessLevelDto | null {
 }
 
 /** New level starts with every capability off — the IT admin ticks the matrix. */
-export function createAccessLevel(name: string, permissions?: PermissionsMap): number {
-  const db = getDb();
+export async function createAccessLevel(name: string, permissions?: PermissionsMap): Promise<number> {
+  const db = await getDb();
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("Access level name is required.");
   const perms = parsePermissions(permissions);
-  exec(
+  const { lastId } = await run(
     db,
     "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
     trimmed,
     serializePermissions(perms),
     Date.now()
   );
-  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+  return lastId;
 }
 
 export interface AccessLevelPatch {
@@ -1152,9 +1184,9 @@ export interface AccessLevelPatch {
   permissions?: PermissionsMap;
 }
 
-export function updateAccessLevel(levelId: number, patch: AccessLevelPatch): void {
-  const db = getDb();
-  const current = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+export async function updateAccessLevel(levelId: number, patch: AccessLevelPatch): Promise<void> {
+  const db = await getDb();
+  const current = await queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
   if (!current) throw new Error("That access level no longer exists.");
   const name = patch.name !== undefined ? patch.name.trim() : current.Level_Name;
   if (!name) throw new Error("Access level name is required.");
@@ -1162,22 +1194,22 @@ export function updateAccessLevel(levelId: number, patch: AccessLevelPatch): voi
     patch.permissions !== undefined
       ? serializePermissions(parsePermissions(patch.permissions))
       : current.Permissions_JSON;
-  exec(db, "UPDATE Access_Levels SET Level_Name = ?, Permissions_JSON = ? WHERE Access_Level_ID = ?", name, json, levelId);
+  await exec(db, "UPDATE Access_Levels SET Level_Name = ?, Permissions_JSON = ? WHERE Access_Level_ID = ?", name, json, levelId);
 }
 
 /** Levels still attached to accounts cannot be removed (avoid orphans). */
-export function deleteAccessLevel(levelId: number): { ok: boolean; reason?: string } {
-  const db = getDb();
-  const current = queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+export async function deleteAccessLevel(levelId: number): Promise<{ ok: boolean; reason?: string }> {
+  const db = await getDb();
+  const current = await queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
   if (!current) return { ok: false, reason: "That access level no longer exists." };
-  const used = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts WHERE Access_Level_ID = ?", levelId)?.c ?? 0;
+  const used = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts WHERE Access_Level_ID = ?", levelId))?.c ?? 0;
   if (used > 0) {
     return {
       ok: false,
       reason: `${used} system account${used === 1 ? "" : "s"} still use this level — reassign them first.`,
     };
   }
-  exec(db, "DELETE FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
+  await exec(db, "DELETE FROM Access_Levels WHERE Access_Level_ID = ?", levelId);
   return { ok: true };
 }
 
@@ -1192,9 +1224,9 @@ export interface SystemAccountJoinedRow extends SystemAccountRow {
   Employee_Name: string | null;
 }
 
-export function listSystemAccounts(): SystemAccountDto[] {
-  const db = getDb();
-  const rows = queryAll<SystemAccountJoinedRow>(
+export async function listSystemAccounts(): Promise<SystemAccountDto[]> {
+  const db = await getDb();
+  const rows = await queryAll<SystemAccountJoinedRow>(
     db,
     `SELECT a.*, l.Level_Name, b.Branch_Name, e.Full_Name AS Employee_Name
        FROM System_Accounts a
@@ -1229,8 +1261,8 @@ export interface SystemAccountInput {
   employeeId: number | null;
 }
 
-export function createSystemAccount(input: SystemAccountInput): number {
-  const db = getDb();
+export async function createSystemAccount(input: SystemAccountInput): Promise<number> {
+  const db = await getDb();
   const first = (input.firstName ?? "").trim();
   const surname = (input.surname ?? "").trim();
   const email = (input.email ?? "").trim().toLowerCase();
@@ -1244,11 +1276,11 @@ export function createSystemAccount(input: SystemAccountInput): number {
   if (password.length < 6) {
     throw new Error("Password must be at least 6 characters.");
   }
-  const refError = checkAccountReferences(db, input.accessLevelId, input.branchId, input.employeeId);
+  const refError = await checkAccountReferences(db, input.accessLevelId, input.branchId, input.employeeId);
   if (refError) {
     throw new Error(refError);
   }
-  exec(
+  const { lastId } = await run(
     db,
     `INSERT INTO System_Accounts
        (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
@@ -1262,19 +1294,19 @@ export function createSystemAccount(input: SystemAccountInput): number {
     input.employeeId,
     Date.now()
   );
-  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+  return lastId;
 }
 
 /** Remove an account (guarded: the built-in bridge administrator stays). */
-export function deleteSystemAccount(accountId: number): { ok: boolean; reason?: string } {
-  const db = getDb();
-  const row = queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
+export async function deleteSystemAccount(accountId: number): Promise<{ ok: boolean; reason?: string }> {
+  const db = await getDb();
+  const row = await queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
   if (!row) return { ok: false, reason: "That account no longer exists." };
   if (row.Company_Email.toLowerCase() === "admin@biobridge.example") {
     return { ok: false, reason: "The built-in bridge administrator cannot be removed." };
   }
-  exec(db, "DELETE FROM Time_Off_Requests WHERE Account_ID = ?", accountId);
-  exec(db, "DELETE FROM System_Accounts WHERE Account_ID = ?", accountId);
+  await exec(db, "DELETE FROM Time_Off_Requests WHERE Account_ID = ?", accountId);
+  await exec(db, "DELETE FROM System_Accounts WHERE Account_ID = ?", accountId);
   return { ok: true };
 }
 
@@ -1299,27 +1331,27 @@ export interface SystemAccountPatch {
  * never enables SQLite foreign-key enforcement, so we check the parent rows
  * by hand and return a friendly message when one has disappeared.
  */
-function checkAccountReferences(
-  db: DatabaseSync,
+async function checkAccountReferences(
+  db: Client,
   accessLevelId: number | null,
   branchId: number | null,
   employeeId: number | null
-): string | null {
+): Promise<string | null> {
   if (
     accessLevelId != null &&
-    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Access_Levels WHERE Access_Level_ID = ?", accessLevelId)
+    !await queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Access_Levels WHERE Access_Level_ID = ?", accessLevelId)
   ) {
     return "That access level no longer exists.";
   }
   if (
     branchId != null &&
-    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Branches WHERE Branch_ID = ?", branchId)
+    !await queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Branches WHERE Branch_ID = ?", branchId)
   ) {
     return "That branch no longer exists.";
   }
   if (
     employeeId != null &&
-    !queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Employees WHERE Employee_ID = ?", employeeId)
+    !await queryOne<{ ok: number }>(db, "SELECT 1 AS ok FROM Employees WHERE Employee_ID = ?", employeeId)
   ) {
     return "That linked employee no longer exists.";
   }
@@ -1335,11 +1367,11 @@ function checkAccountReferences(
  *  • The password is re-hashed **only** when an explicit non-empty value is
  *    supplied: a blank password can never overwrite the stored digest.
  */
-export function updateSystemAccount(
+export async function updateSystemAccount(
   accountId: number,
   patch: SystemAccountPatch
-): { ok: boolean; reason?: string } {
-  const db = getDb();
+): Promise<{ ok: boolean; reason?: string }> {
+  const db = await getDb();
   const row = systemAccountById(accountId);
   if (!row) return { ok: false, reason: "That account no longer exists." };
 
@@ -1354,7 +1386,7 @@ export function updateSystemAccount(
     return { ok: false, reason: "Enter a valid company email address." };
   }
 
-  const clash = queryOne<{ Account_ID: number }>(
+  const clash = await queryOne<{ Account_ID: number }>(
     db,
     "SELECT Account_ID FROM System_Accounts WHERE Company_Email = ? COLLATE NOCASE AND Account_ID <> ?",
     email,
@@ -1375,7 +1407,7 @@ export function updateSystemAccount(
   }
 
   if (password.length > 0) {
-    exec(
+    await exec(
       db,
       `UPDATE System_Accounts
           SET First_Name = ?, Surname = ?, Company_Email = ?,
@@ -1391,7 +1423,7 @@ export function updateSystemAccount(
       accountId
     );
   } else {
-    exec(
+    await exec(
       db,
       `UPDATE System_Accounts
           SET First_Name = ?, Surname = ?, Company_Email = ?,
@@ -1409,17 +1441,17 @@ export function updateSystemAccount(
   return { ok: true };
 }
 
-export function systemAccountById(accountId: number): SystemAccountRow | null {
-  return queryOne<SystemAccountRow>(getDb(), "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId) ?? null;
+export async function systemAccountById(accountId: number): Promise<SystemAccountRow | null> {
+  return await queryOne<SystemAccountRow>(await getDb(), "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId) ?? null;
 }
 
 /** Case-insensitive email lookup for the login handler. */
-export function findAccountByEmail(email: string): SystemAccountRow | null {
+export async function findAccountByEmail(email: string): Promise<SystemAccountRow | null> {
   const normalized = (email ?? "").trim().toLowerCase();
   if (!normalized) return null;
   return (
-    queryOne<SystemAccountRow>(
-      getDb(),
+    await queryOne<SystemAccountRow>(
+      await getDb(),
       "SELECT * FROM System_Accounts WHERE Company_Email COLLATE NOCASE = ?",
       normalized
     ) ?? null
@@ -1446,15 +1478,15 @@ export interface ResolvedAccount {
   home: string;
 }
 
-export function resolveAccount(account: SystemAccountRow): ResolvedAccount {
-  const db = getDb();
+export async function resolveAccount(account: SystemAccountRow): Promise<ResolvedAccount> {
+  const db = await getDb();
   const level =
     account.Access_Level_ID != null
-      ? queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", account.Access_Level_ID)
+      ? await queryOne<AccessLevelRow>(db, "SELECT * FROM Access_Levels WHERE Access_Level_ID = ?", account.Access_Level_ID)
       : undefined;
   const branch =
     account.Branch_ID != null
-      ? queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", account.Branch_ID)
+      ? await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", account.Branch_ID)
       : undefined;
   const permissions = parsePermissions(level?.Permissions_JSON);
   return {
@@ -1492,10 +1524,10 @@ export function accountByToken(token: string | null | undefined): ResolvedAccoun
 /* Time-off requests (Phase 14 — My Portal widget)                     */
 /* ------------------------------------------------------------------ */
 
-export function listTimeOffRequests(employeeId: number | null): TimeOffRequestRow[] {
+export async function listTimeOffRequests(employeeId: number | null): Promise<TimeOffRequestRow[]> {
   if (employeeId === null) return [];
-  return queryAll<TimeOffRequestRow>(
-    getDb(),
+  return await queryAll<TimeOffRequestRow>(
+    await getDb(),
     "SELECT * FROM Time_Off_Requests WHERE Employee_ID = ? ORDER BY Created_At DESC",
     employeeId
   );
@@ -1510,8 +1542,8 @@ export interface TimeOffInput {
   reason: string;
 }
 
-export function createTimeOffRequest(input: TimeOffInput): TimeOffRequestRow {
-  const db = getDb();
+export async function createTimeOffRequest(input: TimeOffInput): Promise<TimeOffRequestRow> {
+  const db = await getDb();
   const type = (input.type ?? "").trim();
   const start = (input.startDate ?? "").trim();
   const end = (input.endDate ?? "").trim();
@@ -1523,7 +1555,7 @@ export function createTimeOffRequest(input: TimeOffInput): TimeOffRequestRow {
     throw new Error("Request dates must use YYYY-MM-DD.");
   }
   if (end < start) throw new Error("The end date cannot be before the start date.");
-  exec(
+  const { lastId: id } = await run(
     db,
     `INSERT INTO Time_Off_Requests
        (Account_ID, Employee_ID, Type, Start_Date, End_Date, Reason, Status, Created_At)
@@ -1536,8 +1568,7 @@ export function createTimeOffRequest(input: TimeOffInput): TimeOffRequestRow {
     reason,
     Date.now()
   );
-  const id = Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
-  const row = queryOne<TimeOffRequestRow>(db, "SELECT * FROM Time_Off_Requests WHERE Request_ID = ?", id);
+  const row = await queryOne<TimeOffRequestRow>(db, "SELECT * FROM Time_Off_Requests WHERE Request_ID = ?", id);
   if (!row) throw new Error("Could not store the request.");
   return row;
 }
@@ -1547,13 +1578,13 @@ export function createTimeOffRequest(input: TimeOffInput): TimeOffRequestRow {
 /* ------------------------------------------------------------------ */
 
 /** Latest punch today for an employee → the "clocked in?" badge. */
-export function employeeDayStatus(employeeId: number): {
+export async function employeeDayStatus(employeeId: number): Promise<{
   clockedIn: boolean;
   lastPunchAt: number | null;
   lastDirection: PunchDirection | null;
-} {
-  const row = queryOne<{ ts: number; dir: PunchDirection }>(
-    getDb(),
+}> {
+  const row = await queryOne<{ ts: number; dir: PunchDirection }>(
+    await getDb(),
     `SELECT l.Timestamp AS ts, l.Direction AS dir
        FROM Attendance_Logs l
       WHERE l.Employee_ID = ? AND l.Timestamp >= ?
@@ -1567,9 +1598,9 @@ export function employeeDayStatus(employeeId: number): {
 }
 
 /** The worker's own punch history feed (newest first). */
-export function getEmployeeRecentPunches(employeeId: number, limit: number): MyPortalPunch[] {
-  return queryAll<MyPortalPunch>(
-    getDb(),
+export async function getEmployeeRecentPunches(employeeId: number, limit: number): Promise<MyPortalPunch[]> {
+  return await queryAll<MyPortalPunch>(
+    await getDb(),
     `SELECT l.Log_ID                              AS logId,
             l.Timestamp                           AS timestamp,
             l.Direction                           AS direction,
@@ -1592,9 +1623,9 @@ export function getEmployeeRecentPunches(employeeId: number, limit: number): MyP
 /* ------------------------------------------------------------------ */
 
 /** Full roster (every row of Employees), alphabetical. */
-export function allEmployees(): EmployeeRow[] {
-  return queryAll<EmployeeRow>(
-    getDb(),
+export async function allEmployees(): Promise<EmployeeRow[]> {
+  return await queryAll<EmployeeRow>(
+    await getDb(),
     "SELECT * FROM Employees ORDER BY Employee_ID"
   );
 }
@@ -1604,11 +1635,11 @@ export function allEmployees(): EmployeeRow[] {
  * Accepts ERP_User_ID ("ERP-1001"), the bare numeric id ("1", "1001" →
  * "ERP-1001") or a route param in either form. Returns null when unknown.
  */
-export function resolveEmployee(db: DatabaseSync, ref: string): EmployeeRow | null {
+export async function resolveEmployee(db: Client, ref: string): Promise<EmployeeRow | null> {
   const value = ref.trim();
   if (!value) return null;
 
-  const direct = queryOne<EmployeeRow>(
+  const direct = await queryOne<EmployeeRow>(
     db,
     "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
     value
@@ -1616,14 +1647,14 @@ export function resolveEmployee(db: DatabaseSync, ref: string): EmployeeRow | nu
   if (direct) return direct;
 
   if (/^\d+$/.test(value)) {
-    const byId = queryOne<EmployeeRow>(
+    const byId = await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE Employee_ID = ?",
       Number(value)
     );
     if (byId) return byId;
 
-    const prefixed = queryOne<EmployeeRow>(
+    const prefixed = await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
       `ERP-${value}`
@@ -1633,7 +1664,7 @@ export function resolveEmployee(db: DatabaseSync, ref: string): EmployeeRow | nu
 
   const unprefixed = value.replace(/^ERP-/i, "");
   return (
-    queryOne<EmployeeRow>(
+    await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
       `ERP-${unprefixed}`
@@ -1658,10 +1689,10 @@ export interface EmployeeSearchRow extends EmployeeRow {
  * the branch of the most recent punch (Punch_Branch — the record's own
  * Branch_Name comes through e.*). Partial match on name / ERP id.
  */
-export function listEmployees(q: string): EmployeeDirectoryRow[] {
+export async function listEmployees(q: string): Promise<EmployeeDirectoryRow[]> {
   const like = `%${q.trim()}%`;
-  return queryAll<EmployeeDirectoryRow>(
-    getDb(),
+  return await queryAll<EmployeeDirectoryRow>(
+    await getDb(),
     `SELECT e.*,
             (SELECT MAX(l.Timestamp) FROM Attendance_Logs l
               WHERE l.Employee_ID = e.Employee_ID) AS Last_Seen,
@@ -1679,11 +1710,11 @@ export function listEmployees(q: string): EmployeeDirectoryRow[] {
 }
 
 /** Dashboard type-ahead: top hits + 30-day activity counters. */
-export function searchEmployees(q: string, limit: number): EmployeeSearchRow[] {
+export async function searchEmployees(q: string, limit: number): Promise<EmployeeSearchRow[]> {
   const like = `%${q.trim()}%`;
   const since = Date.now() - 30 * 86_400_000;
-  return queryAll<EmployeeSearchRow>(
-    getDb(),
+  return await queryAll<EmployeeSearchRow>(
+    await getDb(),
     `SELECT e.*,
             (SELECT COUNT(*) FROM Attendance_Logs l
               WHERE l.Employee_ID = e.Employee_ID AND l.Timestamp >= ?) AS Punches_30d,
@@ -1712,9 +1743,9 @@ export interface WhoIsInRow {
   Clocked_In_At: number;
 }
 
-export function listWhoIsIn(): WhoIsInRow[] {
-  return queryAll<WhoIsInRow>(
-    getDb(),
+export async function listWhoIsIn(): Promise<WhoIsInRow[]> {
+  return await queryAll<WhoIsInRow>(
+    await getDb(),
     `WITH latest AS (
         SELECT l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result, l.Terminal_ID,
                ROW_NUMBER() OVER (
@@ -1755,13 +1786,13 @@ export interface EmployeeInput {
   status: string;
 }
 
-export function createEmployee(input: EmployeeInput): number {
-  const db = getDb();
+export async function createEmployee(input: EmployeeInput): Promise<number> {
+  const db = await getDb();
   // "Enrolled on a terminal" without an explicit finger set ⇒ all five
   // templates already live on the device.
   const fingers =
     input.fingers ?? (input.enrolled ? [0, 1, 2, 3, 4] : []);
-  exec(
+  const { lastId } = await run(
     db,
     `INSERT INTO Employees
        (ERP_User_ID, Full_Name, Fingerprint_Enrolled, Fingers_Enrolled,
@@ -1778,13 +1809,12 @@ export function createEmployee(input: EmployeeInput): number {
     input.status.trim() || "Active",
     Date.now()
   );
-  const id = queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id");
-  return Number(id?.id ?? 0);
+  return lastId;
 }
 
-export function updateEmployee(employeeId: number, patch: Partial<EmployeeInput>): void {
-  const db = getDb();
-  const current = queryOne<EmployeeRow>(db, "SELECT * FROM Employees WHERE Employee_ID = ?", employeeId);
+export async function updateEmployee(employeeId: number, patch: Partial<EmployeeInput>): Promise<void> {
+  const db = await getDb();
+  const current = await queryOne<EmployeeRow>(db, "SELECT * FROM Employees WHERE Employee_ID = ?", employeeId);
   if (!current) return;
 
   const updates: string[] = [];
@@ -1822,14 +1852,14 @@ export function updateEmployee(employeeId: number, patch: Partial<EmployeeInput>
 
   if (updates.length === 0) return;
   params.push(employeeId);
-  exec(db, `UPDATE Employees SET ${updates.join(", ")} WHERE Employee_ID = ?`, ...params);
+  await exec(db, `UPDATE Employees SET ${updates.join(", ")} WHERE Employee_ID = ?`, ...params);
 }
 
 /** Remove an employee and their punches (keeps the feed free of orphans). */
-export function deleteEmployee(employeeId: number): void {
-  const db = getDb();
-  exec(db, "DELETE FROM Attendance_Logs WHERE Employee_ID = ?", employeeId);
-  exec(db, "DELETE FROM Employees WHERE Employee_ID = ?", employeeId);
+export async function deleteEmployee(employeeId: number): Promise<void> {
+  const db = await getDb();
+  await exec(db, "DELETE FROM Attendance_Logs WHERE Employee_ID = ?", employeeId);
+  await exec(db, "DELETE FROM Employees WHERE Employee_ID = ?", employeeId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1846,9 +1876,9 @@ function spanMinutes(start: string, end: string): number {
   return diff > 0 ? diff : diff + 24 * 60;
 }
 
-export function listShifts(): ShiftRow[] {
-  return queryAll<ShiftRow>(
-    getDb(),
+export async function listShifts(): Promise<ShiftRow[]> {
+  return await queryAll<ShiftRow>(
+    await getDb(),
     `SELECT s.*,
             (SELECT COUNT(*) FROM Employees e WHERE e.Shift_ID = s.Shift_ID) AS Assigned
        FROM Shifts s
@@ -1863,9 +1893,9 @@ export interface ShiftInput {
   days: string;
 }
 
-export function createShift(input: ShiftInput): number {
-  const db = getDb();
-  exec(
+export async function createShift(input: ShiftInput): Promise<number> {
+  const db = await getDb();
+  const { lastId } = await run(
     db,
     `INSERT INTO Shifts (Name, Start_Time, End_Time, Duration_Minutes, Days, Created_At)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -1876,13 +1906,12 @@ export function createShift(input: ShiftInput): number {
     input.days,
     Date.now()
   );
-  const id = queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id");
-  return Number(id?.id ?? 0);
+  return lastId;
 }
 
-export function updateShift(shiftId: number, patch: Partial<ShiftInput>): void {
-  const db = getDb();
-  const current = queryOne<ShiftRow>(db, "SELECT * FROM Shifts WHERE Shift_ID = ?", shiftId);
+export async function updateShift(shiftId: number, patch: Partial<ShiftInput>): Promise<void> {
+  const db = await getDb();
+  const current = await queryOne<ShiftRow>(db, "SELECT * FROM Shifts WHERE Shift_ID = ?", shiftId);
   if (!current) return;
 
   const name = patch.name !== undefined ? patch.name.trim() || current.Name : current.Name;
@@ -1890,7 +1919,7 @@ export function updateShift(shiftId: number, patch: Partial<ShiftInput>): void {
   const end = patch.endTime !== undefined ? patch.endTime : current.End_Time;
   const days = patch.days !== undefined ? patch.days : current.Days;
 
-  exec(
+  await exec(
     db,
     `UPDATE Shifts
         SET Name = ?, Start_Time = ?, End_Time = ?, Duration_Minutes = ?, Days = ?
@@ -1905,10 +1934,10 @@ export function updateShift(shiftId: number, patch: Partial<ShiftInput>): void {
 }
 
 /** Delete a shift and release everyone assigned to it. */
-export function deleteShift(shiftId: number): void {
-  const db = getDb();
-  exec(db, "UPDATE Employees SET Shift_ID = NULL WHERE Shift_ID = ?", shiftId);
-  exec(db, "DELETE FROM Shifts WHERE Shift_ID = ?", shiftId);
+export async function deleteShift(shiftId: number): Promise<void> {
+  const db = await getDb();
+  await exec(db, "UPDATE Employees SET Shift_ID = NULL WHERE Shift_ID = ?", shiftId);
+  await exec(db, "DELETE FROM Shifts WHERE Shift_ID = ?", shiftId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1916,17 +1945,17 @@ export function deleteShift(shiftId: number): void {
 /* ------------------------------------------------------------------ */
 
 /** Every terminal row (used by the simulator + heartbeat). */
-export function allTerminalRows(): TerminalRow[] {
-  return queryAll<TerminalRow>(getDb(), "SELECT * FROM Terminals ORDER BY Terminal_ID");
+export async function allTerminalRows(): Promise<TerminalRow[]> {
+  return await queryAll<TerminalRow>(await getDb(), "SELECT * FROM Terminals ORDER BY Terminal_ID");
 }
 
 /**
  * Device registry for /api/terminals — joined with today's capture count
  * so the Clocking Devices page can show live activity per device.
  */
-export function listTerminals(): TerminalJoinedRow[] {
-  return queryAll<TerminalJoinedRow>(
-    getDb(),
+export async function listTerminals(): Promise<TerminalJoinedRow[]> {
+  return await queryAll<TerminalJoinedRow>(
+    await getDb(),
     `SELECT t.*,
             (SELECT COUNT(*) FROM Attendance_Logs l
               WHERE l.Terminal_ID = t.Terminal_ID AND l.Timestamp >= ?) AS Scans_Today
@@ -1937,9 +1966,9 @@ export function listTerminals(): TerminalJoinedRow[] {
 }
 
 /** A random ONLINE terminal — where the next simulated punch comes from. */
-export function randomTerminal(): TerminalRow | null {
-  const rows = queryAll<TerminalRow>(
-    getDb(),
+export async function randomTerminal(): Promise<TerminalRow | null> {
+  const rows = await queryAll<TerminalRow>(
+    await getDb(),
     "SELECT * FROM Terminals WHERE Status = 'Online'"
   );
   if (rows.length === 0) return null;
@@ -1950,13 +1979,13 @@ export function randomTerminal(): TerminalRow | null {
  * Identify the sending device: serial (SN ≙ MAC) first, then source IP.
  * MAC comparison is case-insensitive — firmware often lowercases it.
  */
-export function findTerminal(
-  db: DatabaseSync,
+export async function findTerminal(
+  db: Client,
   hint: { mac?: string | null; ip?: string | null }
-): TerminalRow | null {
+): Promise<TerminalRow | null> {
   const mac = hint.mac?.trim();
   if (mac) {
-    const byMac = queryOne<TerminalRow>(
+    const byMac = await queryOne<TerminalRow>(
       db,
       "SELECT * FROM Terminals WHERE Terminal_MAC COLLATE NOCASE = ?",
       mac
@@ -1965,15 +1994,15 @@ export function findTerminal(
   }
   const ip = hint.ip?.trim();
   if (ip) {
-    const byIp = queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE IP_Address = ?", ip);
+    const byIp = await queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE IP_Address = ?", ip);
     if (byIp) return byIp;
   }
   return null;
 }
 
 /** Keep-alive stamp: mark the device Online and refresh its heartbeat. */
-export function touchTerminal(db: DatabaseSync, terminalId: number): void {
-  exec(
+export async function touchTerminal(db: Client, terminalId: number): Promise<void> {
+  await exec(
     db,
     "UPDATE Terminals SET Status = 'Online', Last_Ping = ? WHERE Terminal_ID = ?",
     Date.now(),
@@ -1982,10 +2011,10 @@ export function touchTerminal(db: DatabaseSync, terminalId: number): void {
 }
 
 /** Simulator flap / manual status change. */
-export function setTerminalStatus(terminalId: number, status: TerminalStatus): void {
-  const db = getDb();
+export async function setTerminalStatus(terminalId: number, status: TerminalStatus): Promise<void> {
+  const db = await getDb();
   if (status === "Online") {
-    exec(
+    await exec(
       db,
       "UPDATE Terminals SET Status = ?, Last_Ping = ? WHERE Terminal_ID = ?",
       status,
@@ -1993,20 +2022,20 @@ export function setTerminalStatus(terminalId: number, status: TerminalStatus): v
       terminalId
     );
   } else {
-    exec(db, "UPDATE Terminals SET Status = ? WHERE Terminal_ID = ?", status, terminalId);
+    await exec(db, "UPDATE Terminals SET Status = ? WHERE Terminal_ID = ?", status, terminalId);
   }
 }
 
 /** Heartbeat: refresh Last_Ping on every device currently reporting Online. */
-export function pingOnlineTerminals(): void {
-  exec(getDb(), "UPDATE Terminals SET Last_Ping = ? WHERE Status = 'Online'", Date.now());
+export async function pingOnlineTerminals(): Promise<void> {
+  await exec(await getDb(), "UPDATE Terminals SET Last_Ping = ? WHERE Status = 'Online'", Date.now());
 }
 
 /* ------------------------------------------------------------------ */
 /* Terminal CRUD (Phase 10 — /api/terminals)                           */
 /* ------------------------------------------------------------------ */
 
-export function createTerminal({
+export async function createTerminal({
   mac,
   ip,
   location,
@@ -2025,7 +2054,7 @@ export function createTerminal({
   deviceName?: string | null;
   status?: "Online" | "Offline";
 } & ClockingConfigInput) {
-  const db = getDb();
+  const db = await getDb();
   const method = normalizeClockingMethod(clockingMethod);
   // A Geofence-only device has no physical MAC; synthesise a stable, unique
   // placeholder so the NOT NULL UNIQUE column is satisfied (and no real
@@ -2037,7 +2066,7 @@ export function createTerminal({
       .slice(2, 6)}`;
   const loc = (location && location.trim()) || deviceName?.trim() || `Device ${cleanMac.slice(-6)}`;
   const devName = (deviceName && deviceName.trim()) || loc;
-  exec(
+  const { lastId } = await run(
     db,
     `INSERT INTO Terminals
        (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping,
@@ -2054,11 +2083,10 @@ export function createTerminal({
     coerceCoord(longitude),
     coerceCoord(geofenceRadiusMeters)
   );
-  const id = queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id");
-  return Number(id?.id ?? 0);
+  return lastId;
 }
 
-export function updateTerminal(
+export async function updateTerminal(
   terminalId: number,
   patch: {
     mac?: string;
@@ -2069,8 +2097,8 @@ export function updateTerminal(
     status?: "Online" | "Offline";
   } & ClockingConfigInput
 ) {
-  const db = getDb();
-  const current = queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE Terminal_ID = ?", terminalId);
+  const db = await getDb();
+  const current = await queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE Terminal_ID = ?", terminalId);
   if (!current) return;
   const updates: string[] = [];
   const params: SQLInputValue[] = [];
@@ -2117,11 +2145,11 @@ export function updateTerminal(
   }
   if (updates.length === 0) return;
   params.push(terminalId);
-  exec(db, `UPDATE Terminals SET ${updates.join(", ")} WHERE Terminal_ID = ?`, ...params);
+  await exec(db, `UPDATE Terminals SET ${updates.join(", ")} WHERE Terminal_ID = ?`, ...params);
 }
 
-export function deleteTerminal(terminalId: number) {
-  exec(getDb(), "DELETE FROM Terminals WHERE Terminal_ID = ?", terminalId);
+export async function deleteTerminal(terminalId: number) {
+  await exec(await getDb(), "DELETE FROM Terminals WHERE Terminal_ID = ?", terminalId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2148,14 +2176,14 @@ export interface GeofenceLocation {
  *   3. the employee's assigned branch.
  * Returns null when nothing resolves (validation is impossible).
  */
-export function resolveGeofenceLocation(opts: {
+export async function resolveGeofenceLocation(opts: {
   terminalMac?: string | null;
   branchName?: string | null;
   employeeBranch?: string | null;
-}): GeofenceLocation | null {
+}): Promise<GeofenceLocation | null> {
   const mac = opts.terminalMac?.trim();
   if (mac) {
-    const t = findTerminal(getDb(), { mac });
+    const t = findTerminal(await getDb(), { mac });
     if (t) {
       return {
         kind: "terminal",
@@ -2229,8 +2257,8 @@ function finiteOrNull(value: number | null): number | null {
  * also uses the full list to explain a refusal ("you are standing inside a
  * site that requires the fingerprint terminal").
  */
-export function listConfiguredBranches(): MobileFence[] {
-  const rows = queryAll<BranchRow>(getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
+export async function listConfiguredBranches(): Promise<MobileFence[]> {
+  const rows = await queryAll<BranchRow>(await getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
   const out: MobileFence[] = [];
   for (const row of rows) {
     const latitude = finiteOrNull(row.Latitude);
@@ -2346,13 +2374,13 @@ export function mobileDefaultPin(): string {
 }
 
 /** The stored digest for an employee — null when they rely on the default. */
-export function employeeMobilePinHash(employeeId: number): string | null {
+export async function employeeMobilePinHash(employeeId: number): Promise<string | null> {
   return (
-    queryOne<{ Mobile_PIN: string | null }>(
-      getDb(),
+    (await queryOne<{ Mobile_PIN: string | null }>(
+      await getDb(),
       "SELECT Mobile_PIN FROM Employees WHERE Employee_ID = ?",
       employeeId
-    )?.Mobile_PIN ?? null
+    ))?.Mobile_PIN ?? null
   );
 }
 
@@ -2362,10 +2390,10 @@ export function hasPersonalMobilePin(employeeId: number): boolean {
 }
 
 /** Set (or clear, with null / "") an employee's personal mobile PIN. */
-export function setEmployeeMobilePin(employeeId: number, pin: string | null): void {
+export async function setEmployeeMobilePin(employeeId: number, pin: string | null): Promise<void> {
   const trimmed = pin?.trim() ?? "";
-  exec(
-    getDb(),
+  await exec(
+    await getDb(),
     "UPDATE Employees SET Mobile_PIN = ? WHERE Employee_ID = ?",
     trimmed ? hashPassword(trimmed) : null,
     employeeId
@@ -2420,10 +2448,10 @@ export interface PunchInput {
  * Alternate IN → OUT → IN … across the employee's day, starting on IN.
  * Unregistered ids (Employee_ID IS NULL) always land as IN.
  */
-export function inferDirection(employeeId: number | null, timestamp: number): PunchDirection {
+export async function inferDirection(employeeId: number | null, timestamp: number): Promise<PunchDirection> {
   if (employeeId === null) return "IN";
-  const last = queryOne<{ Direction: PunchDirection }>(
-    getDb(),
+  const last = await queryOne<{ Direction: PunchDirection }>(
+    await getDb(),
     `SELECT Direction FROM Attendance_Logs
       WHERE Employee_ID = ? AND Timestamp >= ? AND Timestamp <= ?
       ORDER BY Timestamp DESC, Log_ID DESC
@@ -2444,13 +2472,13 @@ export function inferDirection(employeeId: number | null, timestamp: number): Pu
  * Returns the new Attendance_Logs.Log_ID so callers (e.g. the mobile geofence
  * endpoint) can echo the row they just created.
  */
-export function insertPunch(input: PunchInput): number {
-  const db = getDb();
-  const employee = input.employeeRef ? resolveEmployee(db, input.employeeRef) : null;
+export async function insertPunch(input: PunchInput): Promise<number> {
+  const db = await getDb();
+  const employee = input.employeeRef ? await resolveEmployee(db, input.employeeRef) : null;
   const employeeId = employee?.Employee_ID ?? null;
   const direction = input.direction ?? inferDirection(employeeId, input.timestamp);
 
-  exec(
+  const { lastId } = await run(
     db,
     `INSERT INTO Attendance_Logs
        (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload,
@@ -2471,13 +2499,13 @@ export function insertPunch(input: PunchInput): number {
     input.branchName ?? null,
     Date.now()
   );
-  return Number(queryOne<{ id: number }>(db, "SELECT last_insert_rowid() AS id")?.id ?? 0);
+  return lastId;
 }
 
 /** Latest punch today per employee (simulator's anti-repeat guard). */
-export function todayPunchesByEmployee(): Map<number, { ts: number; terminalId: number | null }> {
-  const rows = queryAll<{ Employee_ID: number; ts: number; terminalId: number | null }>(
-    getDb(),
+export async function todayPunchesByEmployee(): Promise<Map<number, { ts: number; terminalId: number | null }>> {
+  const rows = await queryAll<{ Employee_ID: number; ts: number; terminalId: number | null }>(
+    await getDb(),
     `SELECT l.Employee_ID, l.Timestamp AS ts, l.Terminal_ID AS terminalId
        FROM Attendance_Logs l
        JOIN (SELECT Employee_ID, MAX(Timestamp) AS m
@@ -2494,9 +2522,9 @@ export function todayPunchesByEmployee(): Map<number, { ts: number; terminalId: 
 }
 
 /** Earliest recorded punch for one employee (null = no records yet). */
-export function getEmployeeFirstLog(employeeId: number): number | null {
-  const row = queryOne<{ ts: number | null }>(
-    getDb(),
+export async function getEmployeeFirstLog(employeeId: number): Promise<number | null> {
+  const row = await queryOne<{ ts: number | null }>(
+    await getDb(),
     "SELECT MIN(Timestamp) AS ts FROM Attendance_Logs WHERE Employee_ID = ?",
     employeeId
   );
@@ -2504,13 +2532,13 @@ export function getEmployeeFirstLog(employeeId: number): number | null {
 }
 
 /** One employee's punches inside a window (timesheet builder input). */
-export function getEmployeeLogs(
+export async function getEmployeeLogs(
   employeeId: number,
   fromMs: number,
   toMs: number
-): EmployeePunchRow[] {
-  return queryAll<EmployeePunchRow>(
-    getDb(),
+): Promise<EmployeePunchRow[]> {
+  return await queryAll<EmployeePunchRow>(
+    await getDb(),
     `SELECT l.Log_ID, l.Timestamp, l.Direction, l.Verify_Result, l.ERP_Sync_Status,
             t.Location_Name, t.Branch_Name
        FROM Attendance_Logs l
@@ -2530,30 +2558,30 @@ export function getEmployeeLogs(
 /** Feed window — the newest N punches rendered by the live scan feed. */
 const FEED_LIMIT = 40;
 
-export function getDashboard(): { metrics: DashboardMetrics; summary: AttendanceSummary; feed: FeedEntry[] } {
-  const db = getDb();
+export async function getDashboard(): Promise<{ metrics: DashboardMetrics; summary: AttendanceSummary; feed: FeedEntry[] }> {
+  const db = await getDb();
   const dayStart = startOfTodayMs();
 
-  const terminalsTotal = queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals")?.c ?? 0;
+  const terminalsTotal = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals"))?.c ?? 0;
   const terminalsOnline =
-    queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals WHERE Status = 'Online'")?.c ?? 0;
+    (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals WHERE Status = 'Online'"))?.c ?? 0;
   const scansToday =
-    queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE Timestamp >= ?", dayStart)?.c ?? 0;
+    (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE Timestamp >= ?", dayStart))?.c ?? 0;
   const clockedInToday =
-    queryOne<{ c: number }>(
+    (await queryOne<{ c: number }>(
       db,
       `SELECT COUNT(DISTINCT Employee_ID) AS c FROM Attendance_Logs
         WHERE Timestamp >= ? AND Employee_ID IS NOT NULL AND Verify_Result = 'Verified'`,
       dayStart
-    )?.c ?? 0;
+    ))?.c ?? 0;
   const pendingSync =
-    queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Pending'")?.c ?? 0;
+    (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Pending'"))?.c ?? 0;
   const syncedToday =
-    queryOne<{ c: number }>(
+    (await queryOne<{ c: number }>(
       db,
       "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Success' AND Created_At >= ?",
       dayStart
-    )?.c ?? 0;
+    ))?.c ?? 0;
 
   const metrics: DashboardMetrics = {
     clockedInToday,
@@ -2564,7 +2592,7 @@ export function getDashboard(): { metrics: DashboardMetrics; summary: Attendance
     syncedToday,
   };
 
-  const feedRows = queryAll<FeedRow>(
+  const feedRows = await queryAll<FeedRow>(
     db,
     `SELECT l.Log_ID, l.Timestamp, l.ERP_Sync_Status, l.Verify_Result, l.Direction,
             e.Full_Name, e.ERP_User_ID, t.Location_Name, t.IP_Address, t.Branch_Name,
@@ -2614,14 +2642,14 @@ const SHIFT_STARTS: Record<number, number> = {
  * Present (first punch ≤ shift start) vs Late (first punch > shift start);
  * nobody punched → Absent. Buckets always sum to the roster size.
  */
-export function getAttendanceSummary(): AttendanceSummary {
+export async function getAttendanceSummary(): Promise<AttendanceSummary> {
   const dayStart = startOfTodayMs();
-  const rows = queryAll<{
+  const rows = await queryAll<{
     Employee_ID: number;
     Shift_ID: number | null;
     firstPunch: number | null;
   }>(
-    getDb(),
+    await getDb(),
     `SELECT e.Employee_ID, e.Shift_ID,
             (SELECT MIN(l.Timestamp) FROM Attendance_Logs l
               WHERE l.Employee_ID = e.Employee_ID
@@ -2675,15 +2703,15 @@ const minutesFrom = (timestamp: number, baseline: number) =>
  * no_show = enrolled with no verified punch (from 08:00) ·
  * missing_punch = an unpairable IN/OUT sequence.
  */
-export function getExceptions(type: ExceptionType | null): ExceptionsResponse {
-  const db = getDb();
+export async function getExceptions(type: ExceptionType | null): Promise<ExceptionsResponse> {
+  const db = await getDb();
   const dayStart = startOfTodayMs();
   const now = Date.now();
   const at08 = dayStart + 8 * HOUR_MS;
   const at17 = dayStart + 17 * HOUR_MS;
   const at18 = dayStart + 18 * HOUR_MS;
 
-  const punches = queryAll<TodayPunch>(
+  const punches = await queryAll<TodayPunch>(
     db,
     `SELECT l.Employee_ID, l.Timestamp, l.Direction,
             e.ERP_User_ID, e.Full_Name, e.Department, t.Branch_Name
@@ -2753,7 +2781,7 @@ export function getExceptions(type: ExceptionType | null): ExceptionsResponse {
   // No show: enrolled employees with no verified punch today (from 08:00).
   if (now >= at08) {
     const attended = byEmployee;
-    const roster = queryAll<{
+    const roster = await queryAll<{
       Employee_ID: number;
       ERP_User_ID: string;
       Full_Name: string;
@@ -2827,14 +2855,14 @@ interface JoinedPunch {
  * Day-grouped attendance rows with pagination + filter metadata.
  * Worked time = sum of completed IN → OUT pairs (breaks excluded).
  */
-export function listAttendanceRecords(
+export async function listAttendanceRecords(
   opts: AttendanceRecordsQuery
-): { rows: AttendanceRecord[]; total: number; page: number; pageSize: number; pages: number } {
-  const db = getDb();
+): Promise<{ rows: AttendanceRecord[]; total: number; page: number; pageSize: number; pages: number }> {
+  const db = await getDb();
   const page = Math.max(1, Math.floor(opts.page ?? 1));
   const pageSize = Math.max(1, Math.floor(opts.pageSize ?? 25));
 
-  const rows = queryAll<JoinedPunch>(
+  const rows = await queryAll<JoinedPunch>(
     db,
     `SELECT e.Employee_ID, e.ERP_User_ID, e.Full_Name, e.Department, e.Position, e.Shift_ID,
             l.Log_ID, l.Timestamp, l.Direction
@@ -2921,9 +2949,9 @@ export function listAttendanceRecords(
 /* ------------------------------------------------------------------ */
 
 /** Oldest Pending records waiting in the offline buffer (max 200). */
-export function getPendingLogs(limit: number): ErpLogRow[] {
-  return queryAll<ErpLogRow>(
-    getDb(),
+export async function getPendingLogs(limit: number): Promise<ErpLogRow[]> {
+  return await queryAll<ErpLogRow>(
+    await getDb(),
     `SELECT l.Log_ID, l.Timestamp, l.Direction, l.Verify_Method,
             e.ERP_User_ID, e.Full_Name,
             t.Terminal_MAC, t.IP_Address, t.Location_Name, t.Branch_Name
@@ -2938,7 +2966,7 @@ export function getPendingLogs(limit: number): ErpLogRow[] {
 }
 
 /** Pack the given log ids into the exact JSON envelope pushed to the ERP. */
-export function buildErpPayload(logIds: number[], batchRef: string): ErpBatchPayload {
+export async function buildErpPayload(logIds: number[], batchRef: string): Promise<ErpBatchPayload> {
   if (logIds.length === 0) {
     return {
       batch_ref: batchRef,
@@ -2949,8 +2977,8 @@ export function buildErpPayload(logIds: number[], batchRef: string): ErpBatchPay
     };
   }
 
-  const rows = queryAll<ErpLogRow>(
-    getDb(),
+  const rows = await queryAll<ErpLogRow>(
+    await getDb(),
     `SELECT l.Log_ID, l.Timestamp, l.Direction, l.Verify_Method,
             e.ERP_User_ID, e.Full_Name,
             t.Terminal_MAC, t.IP_Address, t.Location_Name, t.Branch_Name
@@ -2986,27 +3014,27 @@ export function buildErpPayload(logIds: number[], batchRef: string): ErpBatchPay
 }
 
 /** Mark a batch delivered — ERP answered 200. */
-export function markLogsSynced(logIds: number[]): void {
+export async function markLogsSynced(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
-  exec(
-    getDb(),
+  await exec(
+    await getDb(),
     `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Success' WHERE Log_ID IN (${placeholders(logIds.length)})`,
     ...logIds
   );
 }
 
 /** Quarantine a batch — ERP rejected the records (4xx). */
-export function markLogsFailed(logIds: number[]): void {
+export async function markLogsFailed(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
-  exec(
-    getDb(),
+  await exec(
+    await getDb(),
     `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Failed' WHERE Log_ID IN (${placeholders(logIds.length)})`,
     ...logIds
   );
 }
 
-export function countSyncBatches(): number {
-  return queryOne<{ c: number }>(getDb(), "SELECT COUNT(*) AS c FROM Erp_Sync_Batches")?.c ?? 0;
+export async function countSyncBatches(): Promise<number> {
+  return (await queryOne<{ c: number }>(await getDb(), "SELECT COUNT(*) AS c FROM Erp_Sync_Batches"))?.c ?? 0;
 }
 
 export interface SyncBatchInput {
@@ -3020,9 +3048,9 @@ export interface SyncBatchInput {
 }
 
 /** Record one push attempt (payload retained verbatim for diagnostics). */
-export function insertSyncBatch(input: SyncBatchInput): SyncBatchRow {
-  const db = getDb();
-  exec(
+export async function insertSyncBatch(input: SyncBatchInput): Promise<SyncBatchRow> {
+  const db = await getDb();
+  const { lastId } = await run(
     db,
     `INSERT INTO Erp_Sync_Batches
        (Created_At, Record_Count, Status, Response_Code, Error_Message, Duration_MS, Trigger_Source, Payload_JSON)
@@ -3036,42 +3064,43 @@ export function insertSyncBatch(input: SyncBatchInput): SyncBatchRow {
     input.trigger,
     JSON.stringify(input.payload)
   );
-  const row = queryOne<SyncBatchRow>(
+  const row = await queryOne<SyncBatchRow>(
     db,
-    "SELECT * FROM Erp_Sync_Batches WHERE Batch_ID = (SELECT last_insert_rowid())"
+    "SELECT * FROM Erp_Sync_Batches WHERE Batch_ID = ?",
+    lastId
   );
   if (!row) throw new Error("Failed to record the ERP sync batch");
   return row;
 }
 
 /** Snapshot behind /sync + the dashboard's sync panels. */
-export function getSyncOverview(): Pick<ErpSyncGetResponse, "stats" | "batches" | "backlog"> {
-  const db = getDb();
+export async function getSyncOverview(): Promise<Pick<ErpSyncGetResponse, "stats" | "batches" | "backlog">> {
+  const db = await getDb();
   const dayStart = startOfTodayMs();
 
   const stats: SyncStats = {
     pendingLogs:
-      queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Pending'")?.c ?? 0,
+      (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Pending'"))?.c ?? 0,
     syncedToday:
-      queryOne<{ c: number }>(
+      (await queryOne<{ c: number }>(
         db,
         "SELECT COUNT(*) AS c FROM Attendance_Logs WHERE ERP_Sync_Status = 'Success' AND Created_At >= ?",
         dayStart
-      )?.c ?? 0,
+      ))?.c ?? 0,
     successBatches:
-      queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Erp_Sync_Batches WHERE Status = 'Success'")?.c ?? 0,
+      (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Erp_Sync_Batches WHERE Status = 'Success'"))?.c ?? 0,
     failedBatches:
-      queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Erp_Sync_Batches WHERE Status = 'Failed'")?.c ?? 0,
+      (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Erp_Sync_Batches WHERE Status = 'Failed'"))?.c ?? 0,
     lastBatchAt:
-      queryOne<{ v: number | null }>(db, "SELECT MAX(Created_At) AS v FROM Erp_Sync_Batches")?.v ?? null,
+      (await queryOne<{ v: number | null }>(db, "SELECT MAX(Created_At) AS v FROM Erp_Sync_Batches"))?.v ?? null,
     lastSuccessAt:
-      queryOne<{ v: number | null }>(
+      (await queryOne<{ v: number | null }>(
         db,
         "SELECT MAX(Created_At) AS v FROM Erp_Sync_Batches WHERE Status = 'Success'"
-      )?.v ?? null,
+      ))?.v ?? null,
   };
 
-  const batchRows = queryAll<SyncBatchRow>(
+  const batchRows = await queryAll<SyncBatchRow>(
     db,
     "SELECT * FROM Erp_Sync_Batches ORDER BY Batch_ID DESC LIMIT 25"
   );
@@ -3095,7 +3124,7 @@ export function getSyncOverview(): Pick<ErpSyncGetResponse, "stats" | "batches" 
     };
   });
 
-  const backlogRows = queryAll<{
+  const backlogRows = await queryAll<{
     Log_ID: number;
     Timestamp: number;
     Full_Name: string | null;
@@ -3199,8 +3228,8 @@ interface GeoActivityJoinedRow {
  * Phase 9 reporting surface needs: date range, branch, verdict and employee.
  * Read-only — this never writes and never touches the ERP sync state.
  */
-export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityResult {
-  const db = getDb();
+export async function listGeofenceActivity(filters: GeoActivityFilters): Promise<GeoActivityResult> {
+  const db = await getDb();
   const page = Math.max(1, Math.floor(filters.page ?? 1));
   const pageSize = Math.max(1, Math.min(200, Math.floor(filters.pageSize ?? 50)));
 
@@ -3224,7 +3253,7 @@ export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityRe
     where += " AND l.Verify_Result = 'Denied'";
   }
 
-  const rows = queryAll<GeoActivityJoinedRow>(
+  const rows = await queryAll<GeoActivityJoinedRow>(
     db,
     `SELECT l.Log_ID, l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result, l.ERP_Sync_Status,
             l.Verify_Method, l.Branch_Name, l.Latitude, l.Longitude,
@@ -3259,7 +3288,7 @@ export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityRe
 
   const branches = [
     ...new Set(
-      queryAll<{ b: string | null }>(
+      (await queryAll<{ b: string | null }>(
         db,
         `SELECT DISTINCT l.Branch_Name AS b
            FROM Attendance_Logs l
@@ -3268,7 +3297,7 @@ export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityRe
           ORDER BY b ASC`,
         from,
         to
-      )
+      ))
         .map((b) => b.b)
         .filter((b): b is string => typeof b === "string" && b.length > 0)
     ),
@@ -3281,14 +3310,14 @@ export function listGeofenceActivity(filters: GeoActivityFilters): GeoActivityRe
 
   const totalGeofence = total;
   const nonGeofence =
-    queryOne<{ c: number }>(
+    (await queryOne<{ c: number }>(
       db,
       `SELECT COUNT(*) AS c
          FROM Attendance_Logs
         WHERE Timestamp >= ? AND Timestamp < ? AND Verify_Method <> 'Geofence'`,
       from,
       to
-    )?.c ?? 0;
+    ))?.c ?? 0;
   const totalBiometric = nonGeofence;
 
   return {

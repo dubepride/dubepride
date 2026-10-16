@@ -157,7 +157,7 @@ function DeviceForm({
             : { id: device?.id, mac, ip, location: name, branch, status, ...clockingPayload(clocking) }
         ),
       });
-      const json = (await res.json().catch(() => null)) as { ok?: boolean; id?: number; error?: string } | null;
+      const json = ((await res.json()).catch(() => null)) as { ok?: boolean; id?: number; error?: string } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
 
       const payload = clockingPayload(clocking);
@@ -332,7 +332,7 @@ function RemoveConfirm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: device.id }),
       });
-      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      const json = ((await res.json()).catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       onRemoved(device.id);
       onClose();

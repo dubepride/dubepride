@@ -174,7 +174,7 @@ export default function TimesheetExport({ employee, onClose }: Props) {
           `/api/employees/${encodeURIComponent(employee.id)}/timesheet?${params.toString()}`,
           { cache: "no-store" }
         );
-        const json = (await res.json().catch(() => null)) as
+        const json = ((await res.json()).catch(() => null)) as
           | (EmployeeTimesheetExport & { error?: string })
           | null;
         if (!res.ok || !json?.days) {
