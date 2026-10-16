@@ -29,7 +29,7 @@ export async function GET(): Promise<Response> {
   const guard = await requireAdmin();
   if (guard) return guard;
 
-  const payload: ShiftsResponse = { shifts: listShifts(), generatedAt: Date.now() };
+  const payload: ShiftsResponse = { shifts: await listShifts(), generatedAt: Date.now() };
   return Response.json(payload, { headers: NO_STORE });
 }
 
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!DAYS_RE.test(days)) return bad("Assigned days must be a comma list (e.g. Mon,Tue,Wed).");
 
   try {
-    const id = createShift({ name, startTime, endTime, days });
+    const id = await createShift({ name, startTime, endTime, days });
     return Response.json({ ok: true, id }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not create the shift.";
@@ -101,7 +101,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
   }
 
   try {
-    updateShift(id, patch);
+    await updateShift(id, patch);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not update the shift.";
@@ -123,6 +123,6 @@ export async function DELETE(request: NextRequest): Promise<Response> {
   const id = Number(body.id);
   if (!Number.isInteger(id) || id <= 0) return bad("A numeric shift id is required.");
 
-  deleteShift(id);
+  await deleteShift(id);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }

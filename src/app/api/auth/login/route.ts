@@ -54,7 +54,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const normalizedEmail = (email && email.trim()) || DEFAULT_ADMIN_EMAIL;
-  const account = findAccountByEmail(normalizedEmail);
+  const account = await findAccountByEmail(normalizedEmail);
   if (!account || !verifyPassword(password, account.Password_Hash)) {
     registerLoginFailure();
     return Response.json(
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Valid credentials — clear the lockout window and issue the cookie.
   resetLoginThrottle();
-  const resolved = resolveAccount(account);
+  const resolved = await resolveAccount(account);
   const { token, expiresAt } = createSessionToken({
     accountId: resolved.accountId,
     name: resolved.name,

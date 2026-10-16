@@ -57,26 +57,26 @@ const randInt = (min: number, max: number) => Math.floor(min + Math.random() * (
 /* 1. Terminal simulator                                               */
 /* ------------------------------------------------------------------ */
 
-function startSimulator() {
+async function startSimulator() {
   const minMs = Number(process.env.SIMULATOR_MIN_MS ?? 2_500);
   const maxMs = Number(process.env.SIMULATOR_MAX_MS ?? 5_500);
 
-  const tick = () => {
+  const tick = async () => {
     try {
       // Never let the demo flatline: if everything dropped, bring one back.
-      let terminal = randomTerminal();
+      let terminal = await randomTerminal();
       if (!terminal) {
-        const any = allTerminalRows();
+        const any = await allTerminalRows();
         if (any.length > 0) {
-          setTerminalStatus(any[0].Terminal_ID, "Online");
+          await setTerminalStatus(any[0].Terminal_ID, "Online");
           terminal = any[0];
         }
       }
 
-      pingOnlineTerminals();
+      await pingOnlineTerminals();
 
       if (terminal) {
-        const enrolled = allEmployees().filter((e): e is EmployeeRow => e.Fingerprint_Enrolled === 1);
+        const enrolled = (await allEmployees()).filter((e): e is EmployeeRow => e.Fingerprint_Enrolled === 1);
         if (enrolled.length > 0) {
           const unknown = Math.random() < 0.06; // 6%: ID never enrolled here
 
@@ -85,7 +85,7 @@ function startSimulator() {
           //  • anyone who already punched today keeps the branch they
           //    started the day at instead of teleporting across sites.
           const MIN_GAP_MS = 4 * 60_000;
-          const recent = todayPunchesByEmployee();
+          const recent = await todayPunchesByEmployee();
           const eligible = enrolled.filter(
             (e) => Date.now() - (recent.get(e.Employee_ID)?.ts ?? 0) >= MIN_GAP_MS
           );
@@ -95,11 +95,11 @@ function startSimulator() {
             const prior = employee ? recent.get(employee.Employee_ID) : undefined;
             const priorTerm =
               prior?.terminalId != null
-                ? allTerminalRows().find((t) => t.Terminal_ID === prior.terminalId)
+                ? (await allTerminalRows()).find((t) => t.Terminal_ID === prior.terminalId)
                 : undefined;
             const active = priorTerm ?? terminal;
 
-            insertPunch({
+            await insertPunch({
               // Unknown refs resolve to Employee_ID = NULL → "Unregistered ID"
               // in the live feed, mirroring how real hardware pushes stale IDs.
               employeeRef: unknown
@@ -120,13 +120,13 @@ function startSimulator() {
 
       // ~10% chance per tick: flap a terminal Offline/Online (keep ≥1 online).
       if (Math.random() < 0.1) {
-        const rows = allTerminalRows();
+        const rows = await allTerminalRows();
         const online = rows.filter((t) => t.Status === "Online");
         const offline = rows.filter((t) => t.Status === "Offline");
         if (offline.length > 0 && Math.random() < 0.55) {
-          setTerminalStatus(pick(offline).Terminal_ID, "Online");
+          await setTerminalStatus(pick(offline).Terminal_ID, "Online");
         } else if (online.length > 1) {
-          setTerminalStatus(pick(online).Terminal_ID, "Offline");
+          await setTerminalStatus(pick(online).Terminal_ID, "Offline");
         }
       }
     } catch (err) {
@@ -144,14 +144,14 @@ function startSimulator() {
 /* 2. Background ERP retry loop                                         */
 /* ------------------------------------------------------------------ */
 
-function startAutoSync() {
+async function startAutoSync() {
   const INTERVAL_MS = 20_000;
   const g = globalThis as GlobalWithFlags;
 
   const tick = async () => {
     try {
       // Cheap pre-check: don't spin up a batch when the buffer is empty.
-      if (getSyncOverview().stats.pendingLogs > 0) {
+      if ((await getSyncOverview()).stats.pendingLogs > 0) {
         await runErpSync("Auto");
       }
     } catch (err) {
@@ -175,13 +175,13 @@ function startAutoSync() {
  * Idempotent bootstrap called from instrumentation.register().
  * Safe to invoke multiple times (dev HMR, multiple module graphs, …).
  */
-export function startMockServices(): void {
+export async function startMockServices(): Promise<void> {
   const g = globalThis as GlobalWithFlags;
   if (g.__taMockStarted) return;
 
   // Initialise schema + seed data up-front so the first dashboard request
   // never races an empty database.
-  getDb();
+  await getDb();
 
   const enabled = (process.env.SIMULATOR_ENABLED ?? "true").toLowerCase() !== "false";
   if (enabled) {

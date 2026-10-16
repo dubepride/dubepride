@@ -44,17 +44,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     return bad("Invalid JSON body.");
   }
 
-  const roster = allEmployees();
+  const roster = await allEmployees();
   if (roster.length === 0) return bad("The roster is empty — nothing to punch.", 409);
 
   // ── Employee ──────────────────────────────────────────────────────
   const refRaw = body.employeeRef;
   const ref = refRaw === undefined || refRaw === null || refRaw === "" ? null : String(refRaw);
-  const employee = ref ? resolveEmployee(getDb(), ref) : roster[0];
+  const employee = ref ? await resolveEmployee(await getDb(), ref) : roster[0];
   if (!employee) return bad(`No employee matches "${ref}".`);
 
   // ── Terminal ──────────────────────────────────────────────────────
-  const terminals = allTerminalRows();
+  const terminals = await allTerminalRows();
   let terminalId: number | null = null;
   if (body.terminalId !== undefined && body.terminalId !== null) {
     const n = Number(body.terminalId);
@@ -74,10 +74,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (d !== "IN" && d !== "OUT") return bad('direction must be "IN" or "OUT".');
     direction = d;
   } else {
-    direction = inferDirection(employee.Employee_ID, timestamp);
+    direction = await inferDirection(employee.Employee_ID, timestamp);
   }
 
-  insertPunch({
+  await insertPunch({
     employeeRef: employee.ERP_User_ID,
     timestamp,
     terminalId,

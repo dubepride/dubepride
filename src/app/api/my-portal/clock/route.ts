@@ -41,15 +41,15 @@ export async function POST(_request: NextRequest): Promise<Response> {
     return bad("No roster employee is linked to this account — ask a manager to link one.");
   }
 
-  const employee = resolveEmployee(getDb(), String(account.employeeId));
+  const employee = await resolveEmployee(await getDb(), String(account.employeeId));
   if (!employee) {
     return bad("The linked roster employee no longer exists.", 409);
   }
 
   const timestamp = Date.now();
-  const direction = inferDirection(employee.Employee_ID, timestamp);
+  const direction = await inferDirection(employee.Employee_ID, timestamp);
 
-  insertPunch({
+  await insertPunch({
     employeeRef: String(employee.Employee_ID),
     timestamp,
     terminalId: null,

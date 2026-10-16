@@ -73,7 +73,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const now = Date.now();
 
   // ── Sites ───────────────────────────────────────────────────────────
-  const fences = org ? listConfiguredBranches() : listMobileFences();
+  const fences = org ? await listConfiguredBranches() : await listMobileFences();
   const sites: MapOverviewSite[] = fences.map((fence) => ({
     id: fence.id,
     branch: fence.branch,
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   // ── Recent GPS punches (identity-scoped for non-admins) ─────────────
   let punches: MapOverviewPunch[] = [];
   if (org || account.employeeId != null) {
-    const activity = listGeofenceActivity({
+    const activity = await listGeofenceActivity({
       fromMs: now - windowMs,
       toMs: now + 60_000,
       employeeId: org ? undefined : account.employeeId ?? undefined,

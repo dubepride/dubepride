@@ -19,7 +19,7 @@ export async function GET(): Promise<Response> {
   const guard = await requireAdmin();
   if (guard) return guard;
 
-  const terminals: TerminalDto[] = listTerminals().map((t) => ({
+  const terminals: TerminalDto[] = (await listTerminals()).map((t) => ({
     id: t.Terminal_ID,
     mac: t.Terminal_MAC,
     ip: t.IP_Address,
@@ -57,7 +57,7 @@ export async function POST(req: Request): Promise<Response> {
     const problem = validateClockingConfig(clocking);
     if (problem) return Response.json({ ok: false, error: problem }, { status: 400 });
 
-    const id = createTerminal({
+    const id = await createTerminal({
       mac,
       ip: body?.ip ?? null,
       location: body?.location ?? null,
@@ -89,7 +89,7 @@ export async function PUT(req: Request): Promise<Response> {
     const problem = validateClockingConfig(clocking);
     if (problem) return Response.json({ ok: false, error: problem }, { status: 400 });
 
-    updateTerminal(id, {
+    await updateTerminal(id, {
       mac: body.mac !== undefined ? String(body.mac) : undefined,
       ip: body.ip !== undefined ? body.ip : undefined,
       location: body.location !== undefined ? body.location : undefined,
@@ -116,7 +116,7 @@ export async function DELETE(req: Request): Promise<Response> {
     if (!Number.isFinite(id)) {
       return Response.json({ ok: false, error: "Invalid id" }, { status: 400 });
     }
-    deleteTerminal(id);
+    await deleteTerminal(id);
     return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
     return Response.json(

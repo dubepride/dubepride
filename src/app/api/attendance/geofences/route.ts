@@ -26,7 +26,7 @@ export async function GET(): Promise<Response> {
   const guard = await requirePermission("can_remote_clock");
   if (guard) return guard;
 
-  const sites: GeoFenceSite[] = listMobileFences().map((fence) => ({
+  const sites: GeoFenceSite[] = (await listMobileFences()).map((fence) => ({
     id: fence.id,
     branch: fence.branch,
     method: fence.method,

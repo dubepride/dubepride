@@ -68,7 +68,7 @@ export async function currentAccount(): Promise<ResolvedAccount | null> {
  */
 export async function requirePermission(permission: PermissionKey): Promise<Response | null> {
   const store = await cookies();
-  const account = accountByToken(store.get(SESSION_COOKIE)?.value);
+  const account = await accountByToken(store.get(SESSION_COOKIE)?.value);
   if (!account) return unauthorizedResponse();
   if (account.permissions[permission] !== true) return forbiddenResponse();
   return null;

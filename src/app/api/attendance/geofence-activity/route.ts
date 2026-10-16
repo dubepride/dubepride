@@ -59,7 +59,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const page = Number(sp.get("page") ?? "1");
   const pageSize = Math.min(200, Number(sp.get("pageSize") ?? "50"));
 
-  const result = listGeofenceActivity({
+  const result = await listGeofenceActivity({
     fromMs: Math.min(fromMs, toMs),
     toMs: Math.max(fromMs, toMs),
     branch: branch || undefined,

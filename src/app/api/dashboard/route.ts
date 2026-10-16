@@ -13,7 +13,7 @@ export async function GET(): Promise<Response> {
   const guard = await requireAdmin();
   if (guard) return guard;
 
-  const { metrics, summary, feed } = getDashboard();
+  const { metrics, summary, feed } = await getDashboard();
   const payload: DashboardResponse = { metrics, summary, feed, generatedAt: Date.now() };
   return Response.json(payload, {
     headers: { "Cache-Control": "no-store" },

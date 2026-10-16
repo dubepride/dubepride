@@ -28,7 +28,7 @@ export async function GET(): Promise<Response> {
   const guard = await requirePermission("can_manage_access_levels");
   if (guard) return guard;
 
-  const payload: AccessLevelsResponse = { levels: listAccessLevels(), generatedAt: Date.now() };
+  const payload: AccessLevelsResponse = { levels: await listAccessLevels(), generatedAt: Date.now() };
   return Response.json(payload, { headers: NO_STORE });
 }
 
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const id = createAccessLevel(name);
+    const id = await createAccessLevel(name);
     return Response.json({ ok: true, id }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not add the access level.";

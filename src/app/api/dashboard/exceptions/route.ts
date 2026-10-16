@@ -50,6 +50,6 @@ export async function GET(request: NextRequest): Promise<Response> {
     }
   }
 
-  const payload: ExceptionsResponse = getExceptions(type);
+  const payload: ExceptionsResponse = await getExceptions(type);
   return Response.json(payload, { headers: NO_STORE });
 }

@@ -64,8 +64,8 @@ export async function PATCH(
   try {
     // Rename first (keeps Employees/Terminals in sync), then apply the
     // Phase 15 clocking method + geofence — both are independent edits.
-    if (name) renameBranch(branchId, name);
-    if (hasClocking) setBranchClocking(branchId, clocking);
+    if (name) await renameBranch(branchId, name);
+    if (hasClocking) await setBranchClocking(branchId, clocking);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not update the branch.";
@@ -85,7 +85,7 @@ export async function DELETE(
   const branchId = await branchIdOf(ctx);
   if (!Number.isInteger(branchId) || branchId <= 0) return bad("A numeric branch id is required.");
 
-  const removed = deleteBranch(branchId);
+  const removed = await deleteBranch(branchId);
   if (!removed) return bad("That branch no longer exists.", 404);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }

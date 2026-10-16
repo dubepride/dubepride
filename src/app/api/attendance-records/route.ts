@@ -51,7 +51,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const page = Number(sp.get("page") ?? "1");
   const pageSize = Math.min(200, Number(sp.get("pageSize") ?? "25"));
 
-  const result = listAttendanceRecords({
+  const result = await listAttendanceRecords({
     fromMs: Math.min(fromMs, toMs),
     toMs: Math.max(fromMs, toMs),
     department: department || undefined,
@@ -61,10 +61,10 @@ export async function GET(request: NextRequest): Promise<Response> {
   });
 
   // Filter metadata — distinct roster departments + the shift catalogue.
-  const departments = [...new Set(listEmployees("").map((e) => e.Department).filter(Boolean))].sort(
+  const departments = [...new Set((await listEmployees("")).map((e) => e.Department).filter(Boolean))].sort(
     (a, b) => a.localeCompare(b)
   );
-  const shifts = listShifts().map((s) => ({ id: s.Shift_ID, name: s.Name }));
+  const shifts = (await listShifts()).map((s) => ({ id: s.Shift_ID, name: s.Name }));
 
   const payload: AttendanceRecordsResponse = {
     ...result,

@@ -66,7 +66,7 @@ export async function PATCH(
   if ("employeeId" in body) patch.employeeId = numOrNull(body.employeeId);
   if ("password" in body) patch.password = str(body.password);
 
-  const result = updateSystemAccount(accountId, patch);
+  const result = await updateSystemAccount(accountId, patch);
   if (!result.ok) return bad(result.reason ?? "Could not update the account.", 409);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }
@@ -81,7 +81,7 @@ export async function DELETE(
   const accountId = Number((await ctx.params).id);
   if (!Number.isInteger(accountId) || accountId <= 0) return bad("A numeric account id is required.");
 
-  const result = deleteSystemAccount(accountId);
+  const result = await deleteSystemAccount(accountId);
   if (!result.ok) return bad(result.reason ?? "Could not delete the account.", 409);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }

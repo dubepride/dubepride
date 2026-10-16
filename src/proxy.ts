@@ -98,9 +98,9 @@ function fallbackLanding(permissions: Record<string, boolean>): string | null {
   return null;
 }
 
-export function proxy(request: NextRequest): NextResponse {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
-  const account = accountByToken(request.cookies.get(SESSION_COOKIE)?.value);
+  const account = await accountByToken(request.cookies.get(SESSION_COOKIE)?.value);
 
   // ── Already signed in? /login → their landing page ──────────────
   if (pathname === "/login") {

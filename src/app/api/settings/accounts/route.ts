@@ -38,10 +38,10 @@ export async function GET(): Promise<Response> {
   if (guard) return guard;
 
   const payload: SystemAccountsResponse = {
-    accounts: listSystemAccounts(),
+    accounts: await listSystemAccounts(),
     // The Matrix tab's level list is the canonical catalogue.
-    levels: listAccessLevels().map((l) => ({ id: l.id, name: l.name })),
-    branches: listBranches().map((b) => ({ id: b.id, name: b.name })),
+    levels: (await listAccessLevels()).map((l) => ({ id: l.id, name: l.name })),
+    branches: (await listBranches()).map((b) => ({ id: b.id, name: b.name })),
     generatedAt: Date.now(),
   };
   return Response.json(payload, { headers: NO_STORE });
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   };
 
   try {
-    const id = createSystemAccount({
+    const id = await createSystemAccount({
       firstName: String(body.firstName ?? ""),
       surname: String(body.surname ?? ""),
       email: String(body.email ?? ""),

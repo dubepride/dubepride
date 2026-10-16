@@ -174,7 +174,7 @@ export async function runErpSync(
   g.__taErpSyncLock = true;
   try {
     const cfg = erpConfig();
-    const pending = getPendingLogs(500);
+    const pending = await getPendingLogs(500);
 
     if (pending.length === 0) {
       return {
@@ -190,10 +190,10 @@ export async function runErpSync(
 
     const logIds = pending.map((l) => l.Log_ID);
     const batchRef = `TAB-${Date.now().toString(36).toUpperCase()}`;
-    const payload = buildErpPayload(logIds, batchRef);
+    const payload = await buildErpPayload(logIds, batchRef);
 
     const started = Date.now();
-    const result = await deliver(JSON.stringify(payload), cfg, countSyncBatches() + 1);
+    const result = await deliver(JSON.stringify(payload), cfg, await countSyncBatches() + 1);
     const duration = Date.now() - started;
 
     // Records that were marked Failed by an earlier 4xx are excluded above
@@ -204,10 +204,10 @@ export async function runErpSync(
     const permanentReject =
       !result.ok && result.code !== null && result.code >= 400 && result.code < 500;
 
-    if (result.ok) markLogsSynced(logIds);
-    else if (permanentReject) markLogsFailed(logIds);
+    if (result.ok) await markLogsSynced(logIds);
+    else if (permanentReject) await markLogsFailed(logIds);
 
-    const batchRow = insertSyncBatch({
+    const batchRow = await insertSyncBatch({
       recordCount: payload.record_count,
       status: result.ok ? "Success" : "Failed",
       responseCode: result.code,

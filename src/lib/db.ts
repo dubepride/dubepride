@@ -20,8 +20,8 @@
  *
  *  The connection is a process-wide singleton kept on `globalThis` so
  *  dev-HMR module graphs and separately bundled route modules all share
- *  one DatabaseSync handle (WAL mode, foreign keys off — the schema is
- *  maintained by this layer, not by triggers).
+ *  one libSQL client (local file in dev, remote Turso in production —
+ *  see sqlite.ts). The schema is maintained by this layer, not by triggers.
  *
  *  ─────────────────────────────────────────────────────────────────────
  *  The database file lives at data/ta-bridge.db (override with TA_DB_PATH).
@@ -318,13 +318,13 @@ async function migrate(db: Client): Promise<void> {
   `);
 
   // Columns introduced by later phases — upgrade older data files in place.
-  ensureColumn(db, "Terminals", "Branch_Name", "Branch_Name TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "Terminals", "Device_Name", "Device_Name TEXT");
-  ensureColumn(db, "Employees", "Position", "Position TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "Employees", "Shift_ID", "Shift_ID INTEGER");
-  ensureColumn(db, "Employees", "Status", "Status TEXT NOT NULL DEFAULT 'Active'");
-  ensureColumn(db, "Employees", "Branch_Name", "Branch_Name TEXT NOT NULL DEFAULT ''");
-  ensureColumn(db, "Employees", "Fingers_Enrolled", "Fingers_Enrolled TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, "Terminals", "Branch_Name", "Branch_Name TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, "Terminals", "Device_Name", "Device_Name TEXT");
+  await ensureColumn(db, "Employees", "Position", "Position TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, "Employees", "Shift_ID", "Shift_ID INTEGER");
+  await ensureColumn(db, "Employees", "Status", "Status TEXT NOT NULL DEFAULT 'Active'");
+  await ensureColumn(db, "Employees", "Branch_Name", "Branch_Name TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, "Employees", "Fingers_Enrolled", "Fingers_Enrolled TEXT NOT NULL DEFAULT ''");
 
   // Phase 15 — Hands-Free Geofenced Mobile Clocking. The biometric path is
   // the default, so every pre-existing row lands on 'Biometric' (mobile off)
@@ -332,27 +332,27 @@ async function migrate(db: Client): Promise<void> {
   // will accept a GPS punch. These ALTERs are additive — the ADMS push
   // listener and the ERP payload are untouched.
   for (const table of ["Branches", "Terminals"] as const) {
-    ensureColumn(db, table, "Clocking_Method", "Clocking_Method TEXT NOT NULL DEFAULT 'Biometric'");
-    ensureColumn(db, table, "Latitude", "Latitude REAL");
-    ensureColumn(db, table, "Longitude", "Longitude REAL");
-    ensureColumn(db, table, "Geofence_Radius_Meters", "Geofence_Radius_Meters INTEGER");
+    await ensureColumn(db, table, "Clocking_Method", "Clocking_Method TEXT NOT NULL DEFAULT 'Biometric'");
+    await ensureColumn(db, table, "Latitude", "Latitude REAL");
+    await ensureColumn(db, table, "Longitude", "Longitude REAL");
+    await ensureColumn(db, table, "Geofence_Radius_Meters", "Geofence_Radius_Meters INTEGER");
   }
-  ensureColumn(db, "Attendance_Logs", "Latitude", "Latitude REAL");
-  ensureColumn(db, "Attendance_Logs", "Longitude", "Longitude REAL");
-  ensureColumn(db, "Attendance_Logs", "Location_Accuracy_Meters", "Location_Accuracy_Meters INTEGER");
-  ensureColumn(db, "Attendance_Logs", "Geofence_Distance_Meters", "Geofence_Distance_Meters INTEGER");
+  await ensureColumn(db, "Attendance_Logs", "Latitude", "Latitude REAL");
+  await ensureColumn(db, "Attendance_Logs", "Longitude", "Longitude REAL");
+  await ensureColumn(db, "Attendance_Logs", "Location_Accuracy_Meters", "Location_Accuracy_Meters INTEGER");
+  await ensureColumn(db, "Attendance_Logs", "Geofence_Distance_Meters", "Geofence_Distance_Meters INTEGER");
   // Phase 17 — a mobile punch may happen at ANY registered site (an employee
   // travelling between branches clocks in wherever they actually are), so the
   // governing site is recorded on the row itself rather than being inferable
   // only from the employee's roster branch. NULL for terminal/fingerprint
   // punches, whose site is already carried by Terminal_ID.
-  ensureColumn(db, "Attendance_Logs", "Branch_Name", "Branch_Name TEXT");
+  await ensureColumn(db, "Attendance_Logs", "Branch_Name", "Branch_Name TEXT");
 
   // Phase 16 — BIOBRIDGE companion app sign-in. A *device* credential (an ATM
   // PIN, not a password) stored as a digest. NULL means "this employee has no
   // personal PIN yet, so the MOBILE_DEFAULT_PIN deployment value applies".
   // Purely additive — no existing flow reads this column.
-  ensureColumn(db, "Employees", "Mobile_PIN", "Mobile_PIN TEXT");
+  await ensureColumn(db, "Employees", "Mobile_PIN", "Mobile_PIN TEXT");
 }
 
 /* ------------------------------------------------------------------ */
@@ -506,7 +506,7 @@ async function seedRoster(db: Client): Promise<void> {
       e.erp,
       e.name,
       e.enrolled,
-      e.enrolled ? serializeFingers(seedFingers(e.fingers)) : "",
+      e.enrolled ? serializeFingers(await seedFingers(e.fingers)) : "",
       e.department,
       e.position,
       e.branch,
@@ -612,7 +612,7 @@ async function backfillEmployeeMeta(db: Client): Promise<void> {
         `UPDATE Employees SET Fingers_Enrolled = ?
           WHERE ERP_User_ID = ? AND Fingerprint_Enrolled = 1
             AND (Fingers_Enrolled IS NULL OR Fingers_Enrolled = '')`,
-        serializeFingers(seedFingers(e.fingers)),
+        serializeFingers(await seedFingers(e.fingers)),
         e.erp
       );
     }
@@ -826,7 +826,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   { name: "IT Administrator", perms: allPermissions(true) },
   {
     name: "HR Manager",
-    perms: levelWith(
+    perms: await levelWith(
       "can_view_dashboard",
       "can_view_employees",
       "can_add_employee",
@@ -851,7 +851,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   },
   {
     name: "Sales Manager",
-    perms: levelWith(
+    perms: await levelWith(
       "can_view_dashboard",
       "can_view_employees",
       "can_view_reports",
@@ -864,7 +864,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   },
   {
     name: "Worker",
-    perms: levelWith(
+    perms: await levelWith(
       "can_view_my_portal",
       "can_remote_clock",
       "can_view_my_history",
@@ -963,9 +963,9 @@ async function seedSystemAccounts(db: Client): Promise<void> {
       a.surname,
       a.email,
       hashPassword(a.password),
-      levelId(a.level),
-      branchId(a.branch),
-      employeeId(a.employeeErp),
+      await levelId(a.level),
+      await branchId(a.branch),
+      await employeeId(a.employeeErp),
       SEED_CREATED_AT
     );
   }
@@ -1055,9 +1055,9 @@ export async function createBranch(name: string, clocking?: ClockingConfigInput)
     trimmed,
     Date.now(),
     method,
-    coerceCoord(clocking?.latitude),
-    coerceCoord(clocking?.longitude),
-    coerceCoord(clocking?.geofenceRadiusMeters)
+    await coerceCoord(clocking?.latitude),
+    await coerceCoord(clocking?.longitude),
+    await coerceCoord(clocking?.geofenceRadiusMeters)
   );
   return lastId;
 }
@@ -1071,11 +1071,11 @@ export async function setBranchClocking(branchId: number, input: ClockingConfigI
     input.clockingMethod !== undefined
       ? normalizeClockingMethod(input.clockingMethod)
       : normalizeClockingMethod(current.Clocking_Method);
-  const lat = input.latitude !== undefined ? coerceCoord(input.latitude) : current.Latitude;
-  const lng = input.longitude !== undefined ? coerceCoord(input.longitude) : current.Longitude;
+  const lat = input.latitude !== undefined ? await coerceCoord(input.latitude) : current.Latitude;
+  const lng = input.longitude !== undefined ? await coerceCoord(input.longitude) : current.Longitude;
   const radius =
     input.geofenceRadiusMeters !== undefined
-      ? coerceCoord(input.geofenceRadiusMeters)
+      ? await coerceCoord(input.geofenceRadiusMeters)
       : current.Geofence_Radius_Meters;
   await exec(
     db,
@@ -1372,7 +1372,7 @@ export async function updateSystemAccount(
   patch: SystemAccountPatch
 ): Promise<{ ok: boolean; reason?: string }> {
   const db = await getDb();
-  const row = systemAccountById(accountId);
+  const row = await systemAccountById(accountId);
   if (!row) return { ok: false, reason: "That account no longer exists." };
 
   const first = (patch.firstName !== undefined ? String(patch.firstName) : row.First_Name).trim();
@@ -1398,7 +1398,7 @@ export async function updateSystemAccount(
   const branchId = patch.branchId !== undefined ? patch.branchId : row.Branch_ID;
   const employeeId = patch.employeeId !== undefined ? patch.employeeId : row.Employee_ID;
 
-  const refError = checkAccountReferences(db, accessLevelId, branchId, employeeId);
+  const refError = await checkAccountReferences(db, accessLevelId, branchId, employeeId);
   if (refError) return { ok: false, reason: refError };
 
   const password = patch.password ?? "";
@@ -1510,12 +1510,12 @@ export async function resolveAccount(account: SystemAccountRow): Promise<Resolve
  * permission gating and by every API handler for authorization. Returns
  * null when the token is missing/forged/expired OR the account was deleted.
  */
-export function accountByToken(token: string | null | undefined): ResolvedAccount | null {
+export async function accountByToken(token: string | null | undefined): Promise<ResolvedAccount | null> {
   const claims = verifySessionToken(token);
   if (!claims) return null;
   const id = Number(claims.sub);
   if (!Number.isInteger(id) || id <= 0) return null;
-  const account = systemAccountById(id);
+  const account = await systemAccountById(id);
   if (!account) return null;
   return resolveAccount(account);
 }
@@ -1902,7 +1902,7 @@ export async function createShift(input: ShiftInput): Promise<number> {
     input.name.trim(),
     input.startTime,
     input.endTime,
-    spanMinutes(input.startTime, input.endTime),
+    await spanMinutes(input.startTime, input.endTime),
     input.days,
     Date.now()
   );
@@ -1927,7 +1927,7 @@ export async function updateShift(shiftId: number, patch: Partial<ShiftInput>): 
     name,
     start,
     end,
-    spanMinutes(start, end),
+    await spanMinutes(start, end),
     days,
     shiftId
   );
@@ -2079,9 +2079,9 @@ export async function createTerminal({
     status,
     status === "Online" ? Date.now() : null,
     method,
-    coerceCoord(latitude),
-    coerceCoord(longitude),
-    coerceCoord(geofenceRadiusMeters)
+    await coerceCoord(latitude),
+    await coerceCoord(longitude),
+    await coerceCoord(geofenceRadiusMeters)
   );
   return lastId;
 }
@@ -2133,15 +2133,15 @@ export async function updateTerminal(
   }
   if (patch.latitude !== undefined) {
     updates.push("Latitude = ?");
-    params.push(coerceCoord(patch.latitude));
+    params.push(await coerceCoord(patch.latitude));
   }
   if (patch.longitude !== undefined) {
     updates.push("Longitude = ?");
-    params.push(coerceCoord(patch.longitude));
+    params.push(await coerceCoord(patch.longitude));
   }
   if (patch.geofenceRadiusMeters !== undefined) {
     updates.push("Geofence_Radius_Meters = ?");
-    params.push(coerceCoord(patch.geofenceRadiusMeters));
+    params.push(await coerceCoord(patch.geofenceRadiusMeters));
   }
   if (updates.length === 0) return;
   params.push(terminalId);
@@ -2183,7 +2183,7 @@ export async function resolveGeofenceLocation(opts: {
 }): Promise<GeofenceLocation | null> {
   const mac = opts.terminalMac?.trim();
   if (mac) {
-    const t = findTerminal(await getDb(), { mac });
+    const t = await findTerminal(await getDb(), { mac });
     if (t) {
       return {
         kind: "terminal",
@@ -2198,7 +2198,7 @@ export async function resolveGeofenceLocation(opts: {
     }
   }
 
-  const branch = branchByName(opts.branchName) ?? branchByName(opts.employeeBranch);
+  const branch = await branchByName(opts.branchName) ?? await branchByName(opts.employeeBranch);
   if (branch) {
     return {
       kind: "branch",
@@ -2261,9 +2261,9 @@ export async function listConfiguredBranches(): Promise<MobileFence[]> {
   const rows = await queryAll<BranchRow>(await getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
   const out: MobileFence[] = [];
   for (const row of rows) {
-    const latitude = finiteOrNull(row.Latitude);
-    const longitude = finiteOrNull(row.Longitude);
-    const radiusMeters = finiteOrNull(row.Geofence_Radius_Meters);
+    const latitude = await finiteOrNull(row.Latitude);
+    const longitude = await finiteOrNull(row.Longitude);
+    const radiusMeters = await finiteOrNull(row.Geofence_Radius_Meters);
     if (latitude === null || longitude === null || radiusMeters === null) continue;
     if (radiusMeters <= 0) continue;
 
@@ -2290,8 +2290,8 @@ export async function listConfiguredBranches(): Promise<MobileFence[]> {
  * enabling "clock in anywhere" never silently opens a fingerprint-only plant
  * to GPS punches.
  */
-export function listMobileFences(): MobileFence[] {
-  return listConfiguredBranches().filter((fence) => methodAllowsMobile(fence.method));
+export async function listMobileFences(): Promise<MobileFence[]> {
+  return (await listConfiguredBranches()).filter((fence) => methodAllowsMobile(fence.method));
 }
 
 /** Rank a set of sites by distance from the fix, nearest first, stable on ties. */
@@ -2318,8 +2318,8 @@ function rankFences(
  * nearest first. Ties fall back to branch order so the answer is stable
  * across calls — a flapping verdict would reset the dwell.
  */
-export function rankMobileFences(latitude: number, longitude: number): MobileFenceMatch[] {
-  return rankFences(listMobileFences(), latitude, longitude);
+export async function rankMobileFences(latitude: number, longitude: number): Promise<MobileFenceMatch[]> {
+  return rankFences(await listMobileFences(), latitude, longitude);
 }
 
 /**
@@ -2327,11 +2327,11 @@ export function rankMobileFences(latitude: number, longitude: number): MobileFen
  * is outside every registered site. Overlapping fences resolve to the nearest
  * centre.
  */
-export function findMobileFenceAt(
+export async function findMobileFenceAt(
   latitude: number,
   longitude: number
-): MobileFenceMatch | null {
-  return rankMobileFences(latitude, longitude).find((match) => match.withinGeofence) ?? null;
+): Promise<MobileFenceMatch | null> {
+  return (await rankMobileFences(latitude, longitude)).find((match) => match.withinGeofence) ?? null;
 }
 
 /**
@@ -2343,14 +2343,14 @@ export function findMobileFenceAt(
  * which sounds like a GPS fault rather than a policy. The correct answer is
  * "this site requires the terminal", so the endpoint can say exactly that.
  */
-export function findTerminalOnlyFenceAt(
+export async function findTerminalOnlyFenceAt(
   latitude: number,
   longitude: number
-): MobileFenceMatch | null {
-  const terminalOnly = listConfiguredBranches().filter(
+): Promise<MobileFenceMatch | null> {
+  const terminalOnly = (await listConfiguredBranches()).filter(
     (fence) => !methodAllowsMobile(fence.method)
   );
-  return rankFences(terminalOnly, latitude, longitude).find((match) => match.withinGeofence) ?? null;
+  return (await rankFences(terminalOnly, latitude, longitude)).find((match) => match.withinGeofence) ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2385,8 +2385,8 @@ export async function employeeMobilePinHash(employeeId: number): Promise<string 
 }
 
 /** True when the employee has a personal PIN on file. */
-export function hasPersonalMobilePin(employeeId: number): boolean {
-  return employeeMobilePinHash(employeeId) !== null;
+export async function hasPersonalMobilePin(employeeId: number): Promise<boolean> {
+  return await employeeMobilePinHash(employeeId) !== null;
 }
 
 /** Set (or clear, with null / "") an employee's personal mobile PIN. */
@@ -2404,10 +2404,10 @@ export async function setEmployeeMobilePin(employeeId: number, pin: string | nul
  * Verify a companion-app PIN against the employee's personal digest, falling
  * back to the deployment default when they have none. Empty PINs never pass.
  */
-export function verifyEmployeeMobilePin(employee: EmployeeRow, pin: string): boolean {
+export async function verifyEmployeeMobilePin(employee: EmployeeRow, pin: string): Promise<boolean> {
   const submitted = pin.trim();
   if (!submitted) return false;
-  const stored = employeeMobilePinHash(employee.Employee_ID);
+  const stored = await employeeMobilePinHash(employee.Employee_ID);
   return stored ? verifyPassword(submitted, stored) : submitted === mobileDefaultPin();
 }
 
@@ -2476,7 +2476,7 @@ export async function insertPunch(input: PunchInput): Promise<number> {
   const db = await getDb();
   const employee = input.employeeRef ? await resolveEmployee(db, input.employeeRef) : null;
   const employeeId = employee?.Employee_ID ?? null;
-  const direction = input.direction ?? inferDirection(employeeId, input.timestamp);
+  const direction = input.direction ?? await inferDirection(employeeId, input.timestamp);
 
   const { lastId } = await run(
     db,
@@ -2625,7 +2625,7 @@ export async function getDashboard(): Promise<{ metrics: DashboardMetrics; summa
     registered: r.Full_Name !== null,
   }));
 
-  return { metrics, summary: getAttendanceSummary(), feed };
+  return { metrics, summary: await getAttendanceSummary(), feed };
 }
 
 /** Shift start times after midnight, in milliseconds (used by getAttendanceSummary). */
@@ -2883,7 +2883,7 @@ export async function listAttendanceRecords(
     else groups.set(key, { head: r, punches: [r] });
   }
 
-  const shiftNames = new Map(listShifts().map((s) => [s.Shift_ID, s.Name]));
+  const shiftNames = new Map((await listShifts()).map((s) => [s.Shift_ID, s.Name]));
 
   const records: AttendanceRecord[] = [];
   for (const [key, group] of groups) {
@@ -2985,7 +2985,7 @@ export async function buildErpPayload(logIds: number[], batchRef: string): Promi
        FROM Attendance_Logs l
        LEFT JOIN Employees e ON e.Employee_ID = l.Employee_ID
        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
-      WHERE l.Log_ID IN (${placeholders(logIds.length)})
+      WHERE l.Log_ID IN (${await placeholders(logIds.length)})
       ORDER BY l.Log_ID ASC`,
     ...logIds
   );
@@ -3018,7 +3018,7 @@ export async function markLogsSynced(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
   await exec(
     await getDb(),
-    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Success' WHERE Log_ID IN (${placeholders(logIds.length)})`,
+    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Success' WHERE Log_ID IN (${await placeholders(logIds.length)})`,
     ...logIds
   );
 }
@@ -3028,7 +3028,7 @@ export async function markLogsFailed(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
   await exec(
     await getDb(),
-    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Failed' WHERE Log_ID IN (${placeholders(logIds.length)})`,
+    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Failed' WHERE Log_ID IN (${await placeholders(logIds.length)})`,
     ...logIds
   );
 }

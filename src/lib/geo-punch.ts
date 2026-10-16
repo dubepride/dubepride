@@ -141,7 +141,7 @@ function bareError(message: string, status: number): GeoPunchOutcome {
  * only reads the DB (sites/terminals) and, on a decision, writes exactly one
  * Attendance_Logs row through insertPunch().
  */
-export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
+export async function performGeoPunch(input: GeoPunchInput): Promise<GeoPunchOutcome> {
   const { employee, latitude, longitude } = input;
   const accuracyMeters = input.accuracyMeters ?? null;
   const terminalRef = input.terminalRef?.trim() || null;
@@ -168,16 +168,16 @@ export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
 
   if (terminalRef) {
     detectedBy = "terminal";
-    location = resolveGeofenceLocation({ terminalMac: terminalRef });
+    location = await resolveGeofenceLocation({ terminalMac: terminalRef });
     if (!location) return bareError(`No device matches "${terminalRef}".`, 404);
   } else if (branchRef) {
     detectedBy = "branchRef";
-    location = resolveGeofenceLocation({ branchName: branchRef });
+    location = await resolveGeofenceLocation({ branchName: branchRef });
     if (!location) return bareError(`No branch named "${branchRef}".`, 404);
   } else {
-    const ranked = rankMobileFences(latitude, longitude);
+    const ranked = await rankMobileFences(latitude, longitude);
     if (ranked.length === 0) {
-      const terminalOnly = findTerminalOnlyFenceAt(latitude, longitude);
+      const terminalOnly = await findTerminalOnlyFenceAt(latitude, longitude);
       if (terminalOnly) {
         return refusal(
           "BIOMETRIC_ONLY",
@@ -193,7 +193,7 @@ export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
     }
     const hit = ranked.find((match) => match.withinGeofence) ?? null;
     if (hit === null) {
-      const terminalOnly = findTerminalOnlyFenceAt(latitude, longitude);
+      const terminalOnly = await findTerminalOnlyFenceAt(latitude, longitude);
       if (terminalOnly) {
         return refusal(
           "BIOMETRIC_ONLY",
@@ -260,7 +260,7 @@ export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
   const withinGeofence = distanceMeters <= radiusMeters;
 
   const timestamp = input.timestamp ?? Date.now();
-  const direction = input.direction ?? inferDirection(employee.Employee_ID, timestamp);
+  const direction = input.direction ?? await inferDirection(employee.Employee_ID, timestamp);
 
   const rawPayload = JSON.stringify({
     channel: "geofence-mobile",
@@ -297,7 +297,7 @@ export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
 
   // ── 5a. Inside the radius → a normal Pending punch for the ERP ────────
   if (withinGeofence) {
-    const logId = insertPunch({
+    const logId = await insertPunch({
       employeeRef: employee.ERP_User_ID,
       timestamp,
       terminalId: location.kind === "terminal" ? location.id : null,
@@ -334,7 +334,7 @@ export function performGeoPunch(input: GeoPunchInput): GeoPunchOutcome {
   }
 
   // ── 5b. Outside the radius → auditable exception (never queued) ───────
-  const logId = insertPunch({
+  const logId = await insertPunch({
     employeeRef: employee.ERP_User_ID,
     timestamp,
     terminalId: location.kind === "terminal" ? location.id : null,

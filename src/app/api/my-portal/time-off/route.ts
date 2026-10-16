@@ -32,7 +32,7 @@ export async function GET(): Promise<Response> {
 
   const payload: MyPortalTimeOffResponse = {
     ok: true,
-    requests: listTimeOffRequests(account.employeeId),
+    requests: await listTimeOffRequests(account.employeeId),
     message: "",
   };
   return Response.json(payload, { headers: NO_STORE });
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   let requestRow;
   try {
-    requestRow = createTimeOffRequest({
+    requestRow = await createTimeOffRequest({
       accountId: account.accountId,
       employeeId: account.employeeId,
       type: String(body.type ?? ""),
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const payload: MyPortalTimeOffResponse = {
     ok: true,
-    requests: listTimeOffRequests(account.employeeId),
+    requests: await listTimeOffRequests(account.employeeId),
     message: `Request saved — starting ${requestRow.Start_Date}.`,
   };
   return Response.json(payload, { headers: NO_STORE });

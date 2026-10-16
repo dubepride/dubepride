@@ -90,8 +90,8 @@ export async function GET(request: NextRequest): Promise<Response> {
   const toMs = toDay + DAY_MS - 1; // inclusive end of `to` day
 
   const employees: TimesheetReportEmployee[] = [];
-  for (const row of listEmployees(q)) {
-    const logs = getEmployeeLogs(row.Employee_ID, fromDay, toMs);
+  for (const row of await listEmployees(q)) {
+    const logs = await getEmployeeLogs(row.Employee_ID, fromDay, toMs);
 
     // Bucket by local day so buildDay gets exactly one day's punches.
     const byDay = new Map<string, EmployeePunchRow[]>();

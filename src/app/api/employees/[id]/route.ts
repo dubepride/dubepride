@@ -32,7 +32,7 @@ export async function GET(
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const employee = resolveEmployee(getDb(), id);
+  const employee = await resolveEmployee(await getDb(), id);
   if (!employee) {
     return Response.json(
       { ok: false, error: `No employee matches "${id}".` },
@@ -44,7 +44,7 @@ export async function GET(
   const fromMs = startOfWeekMs(now) - 7 * WEEK_MS; // 8 weeks incl. current
   const toMs = now;
 
-  const logs = getEmployeeLogs(employee.Employee_ID, fromMs, toMs);
+  const logs = await getEmployeeLogs(employee.Employee_ID, fromMs, toMs);
   const weeks = buildTimesheet(logs, { fromMs, toMs, now });
 
   // Window aggregates (derived from the same grouped data the UI renders).

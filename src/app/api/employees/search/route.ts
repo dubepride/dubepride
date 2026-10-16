@@ -20,7 +20,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const q = request.nextUrl.searchParams.get("q") ?? "";
 
-  const results: EmployeeSearchResult[] = searchEmployees(q, 10).map((r) => ({
+  const results: EmployeeSearchResult[] = (await searchEmployees(q, 10)).map((r) => ({
     id: r.Employee_ID,
     erpUserId: r.ERP_User_ID,
     fullName: r.Full_Name,

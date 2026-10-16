@@ -42,7 +42,7 @@ export async function GET(
   const levelId = await levelIdOf(ctx);
   if (!Number.isInteger(levelId) || levelId <= 0) return respond("A numeric level id is required.", 404);
 
-  const level = accessLevelById(levelId);
+  const level = await accessLevelById(levelId);
   if (!level) return respond("That access level no longer exists.", 404);
   return Response.json({ level }, { headers: NO_STORE });
 }
@@ -77,7 +77,7 @@ export async function PATCH(
   }
 
   try {
-    updateAccessLevel(levelId, patch);
+    await updateAccessLevel(levelId, patch);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not update the access level.";
@@ -97,7 +97,7 @@ export async function DELETE(
   const levelId = await levelIdOf(ctx);
   if (!Number.isInteger(levelId) || levelId <= 0) return respond("A numeric level id is required.");
 
-  const result = deleteAccessLevel(levelId);
+  const result = await deleteAccessLevel(levelId);
   if (!result.ok) return respond(result.reason ?? "Could not delete the access level.", 409);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }

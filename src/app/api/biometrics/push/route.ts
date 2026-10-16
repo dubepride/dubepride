@@ -43,12 +43,6 @@ import {
   resolveEmployee,
   touchTerminal,
 } from "@/lib/db";
-import type { SQLInputValue } from "@/lib/db";
-import { DatabaseSync } from "node:sqlite";
-
-function exec(db: DatabaseSync, sql: string, ...params: SQLInputValue[]) {
-  db.prepare(sql).run(...params);
-}
 import type { PunchDirection, VerifyResult } from "@/lib/types";
 
 /** Devices expect a tiny plain-text acknowledgement, not JSON. */
@@ -212,16 +206,12 @@ export async function POST(request: NextRequest) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const clientIp = forwarded || request.headers.get("x-real-ip") || null;
 
-  const db = getDb();
-  const terminal = findTerminal(db, { mac: serial, ip: clientIp });
+  const db = await getDb();
+  const terminal = await findTerminal(db, { mac: serial, ip: clientIp });
   if (terminal) {
-    exec(
-      db,
-      "UPDATE Terminals SET Status = 'Online', Last_Ping = ? WHERE Terminal_ID = ?",
-      Date.now(),
-      terminal.Terminal_ID
-    );
-  } // keep-alive stamp
+    // Keep-alive stamp — same path as the GET handshake below.
+    await touchTerminal(db, terminal.Terminal_ID);
+  }
 
   // ── 3. Parse transactions ───────────────────────────────────────────
   const events = parseEvents(body, url.searchParams);
@@ -233,8 +223,8 @@ export async function POST(request: NextRequest) {
   // ── 4. Persist each event as Pending for the ERP sync engine ────────
   let received = 0;
   for (const ev of events) {
-    const employee = ev.employeeRef ? resolveEmployee(db, ev.employeeRef) : undefined;
-    insertPunch({
+    const employee = ev.employeeRef ? await resolveEmployee(db, ev.employeeRef) : undefined;
+    await insertPunch({
       employeeRef: ev.employeeRef, // unknown IDs land as Employee_ID = NULL
       timestamp: ev.timestamp,
       terminalId: terminal?.Terminal_ID ?? null,
@@ -262,9 +252,9 @@ export async function GET(request: NextRequest) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const clientIp = forwarded || request.headers.get("x-real-ip") || null;
 
-  const db = getDb();
-  const terminal = findTerminal(db, { mac: serial, ip: clientIp });
-  if (terminal) touchTerminal(db, terminal.Terminal_ID);
+  const db = await getDb();
+  const terminal = await findTerminal(db, { mac: serial, ip: clientIp });
+  if (terminal) await touchTerminal(db, terminal.Terminal_ID);
 
   // ── WIRE HERE LATER ─────────────────────────────────────────────────
   // The handshake response can carry a command queue for the device, e.g.

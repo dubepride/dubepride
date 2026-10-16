@@ -36,7 +36,7 @@ export async function GET(): Promise<Response> {
   const guard = await requirePermission("can_manage_branches");
   if (guard) return guard;
 
-  const payload: BranchesResponse = { branches: listBranches(), generatedAt: Date.now() };
+  const payload: BranchesResponse = { branches: await listBranches(), generatedAt: Date.now() };
   return Response.json(payload, { headers: NO_STORE });
 }
 
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const id = createBranch(name, clocking);
+    const id = await createBranch(name, clocking);
     return Response.json({ ok: true, id }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not add the branch.";

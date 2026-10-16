@@ -20,7 +20,7 @@ export async function GET(): Promise<Response> {
   const guard = await requireAdmin();
   if (guard) return guard;
 
-  const people: WhosInPerson[] = listWhoIsIn().map((r) => ({
+  const people: WhosInPerson[] = (await listWhoIsIn()).map((r) => ({
     employeeId: r.Employee_ID,
     erpUserId: r.ERP_User_ID,
     fullName: r.Full_Name,

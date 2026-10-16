@@ -24,13 +24,13 @@ export async function GET(): Promise<Response> {
   if (account.permissions.can_view_my_history !== true) return forbiddenResponse();
 
   const employee =
-    account.employeeId != null ? resolveEmployee(getDb(), String(account.employeeId)) : null;
+    account.employeeId != null ? await resolveEmployee(await getDb(), String(account.employeeId)) : null;
 
   const payload: MyPortalHistoryResponse = {
     ok: true,
     employeeId: employee?.Employee_ID ?? null,
     employeeName: employee?.Full_Name ?? "No linked employee",
-    rows: employee ? getEmployeeRecentPunches(employee.Employee_ID, 30) : [],
+    rows: employee ? await getEmployeeRecentPunches(employee.Employee_ID, 30) : [],
     generatedAt: Date.now(),
   };
   return Response.json(payload, { headers: NO_STORE });

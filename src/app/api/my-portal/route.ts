@@ -25,9 +25,9 @@ export async function GET(): Promise<Response> {
   if (account.permissions.can_view_my_portal !== true) return forbiddenResponse();
 
   const employee =
-    account.employeeId != null ? resolveEmployee(getDb(), String(account.employeeId)) : null;
+    account.employeeId != null ? await resolveEmployee(await getDb(), String(account.employeeId)) : null;
 
-  const status = employee ? employeeDayStatus(employee.Employee_ID) : undefined;
+  const status = employee ? await employeeDayStatus(employee.Employee_ID) : undefined;
 
   const payload: MyPortalResponse = {
     ok: true,

@@ -88,7 +88,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const q = request.nextUrl.searchParams.get("q") ?? "";
 
-  const employees: EmployeeDirectoryEntry[] = listEmployees(q).map((r) => {
+  const employees: EmployeeDirectoryEntry[] = (await listEmployees(q)).map((r) => {
     const assigned = (r.Branch_Name ?? "").trim();
     return {
       id: r.Employee_ID,
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!value.fullName) return bad("Full name is required.");
 
   try {
-    const id = createEmployee({
+    const id = await createEmployee({
       erpUserId: value.erpUserId,
       fullName: value.fullName,
       department: value.department ?? "",
@@ -171,7 +171,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
   if (error) return bad(error);
 
   try {
-    updateEmployee(id, value);
+    await updateEmployee(id, value);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not update the employee.";
@@ -193,6 +193,6 @@ export async function DELETE(request: NextRequest): Promise<Response> {
   const id = Number(body.id);
   if (!Number.isInteger(id) || id <= 0) return bad("A numeric employee id is required.");
 
-  deleteEmployee(id);
+  await deleteEmployee(id);
   return Response.json({ ok: true }, { headers: NO_STORE });
 }

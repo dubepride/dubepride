@@ -92,8 +92,8 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // ── 3. Identity ─────────────────────────────────────────────────────
   // One failure message for "no such employee" and "wrong PIN" alike.
-  const employee = resolveEmployee(getDb(), employeeRef);
-  if (!employee || !verifyEmployeeMobilePin(employee, pin)) {
+  const employee = await resolveEmployee(await getDb(), employeeRef);
+  if (!employee || !await verifyEmployeeMobilePin(employee, pin)) {
     return json({ ok: false, error: "Invalid employee ID or PIN." }, 401);
   }
 
@@ -107,11 +107,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   // ── 4. Every site this phone may clock in at ─────────────────────────
   // Mobile-capable AND geo-ready, across the whole Branches table — this is
   // what makes "clock in wherever you are" work without a rebuild.
-  const fences = listMobileFences();
+  const fences = await listMobileFences();
 
   // The roster branch is display-only now: it feeds the "Home site" row and
   // the offline-queue badge. It gates nothing.
-  const home = resolveGeofenceLocation({ employeeBranch: employee.Branch_Name });
+  const home = await resolveGeofenceLocation({ employeeBranch: employee.Branch_Name });
   const homeConfigured = home
     ? isFiniteCoordinate(home.latitude, home.longitude) && isValidRadius(home.radiusMeters)
     : false;

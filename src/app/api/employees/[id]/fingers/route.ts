@@ -36,7 +36,7 @@ export async function POST(
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const employee = resolveEmployee(getDb(), id);
+  const employee = await resolveEmployee(await getDb(), id);
   if (!employee) {
     return bad(`No employee matches "${id}".`, 404);
   }
@@ -62,7 +62,7 @@ export async function POST(
   const stored = parseFingers(fingers.join(","));
 
   try {
-    updateEmployee(employee.Employee_ID, { fingers: stored });
+    await updateEmployee(employee.Employee_ID, { fingers: stored });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not save the finger set.";
     return bad(message, 500);

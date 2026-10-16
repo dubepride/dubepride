@@ -76,7 +76,7 @@ export async function GET(
   if (guard) return guard;
 
   const { id } = await ctx.params;
-  const employee = resolveEmployee(getDb(), id);
+  const employee = await resolveEmployee(await getDb(), id);
   if (!employee) {
     return bad(`No employee matches "${id}".`, 404);
   }
@@ -90,7 +90,7 @@ export async function GET(
   let toDay: number;
 
   if (all) {
-    const earliest = getEmployeeFirstLog(employee.Employee_ID);
+    const earliest = await getEmployeeFirstLog(employee.Employee_ID);
     fromDay = localMidnight(earliest ?? now - 29 * DAY_MS);
     toDay = localMidnight(now);
     const span = Math.round((toDay - fromDay) / DAY_MS) + 1;
@@ -122,7 +122,7 @@ export async function GET(
   const toMs = toDay + DAY_MS - 1; // inclusive end of the `to` day
   const spanDays = Math.round((toDay - fromDay) / DAY_MS) + 1;
 
-  const logs = getEmployeeLogs(employee.Employee_ID, fromDay, toMs);
+  const logs = await getEmployeeLogs(employee.Employee_ID, fromDay, toMs);
   const days = buildExportDays(logs, fromDay, toMs, now);
 
   const payload: EmployeeTimesheetExport = {

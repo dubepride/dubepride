@@ -118,7 +118,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const ref = rawRef === null || rawRef === undefined ? "" : String(rawRef).trim();
   if (!ref) return json({ ok: false, error: "employeeRef is required." }, 400);
 
-  const employee = resolveEmployee(getDb(), ref);
+  const employee = await resolveEmployee(await getDb(), ref);
   if (!employee) return json({ ok: false, error: `No employee matches "${ref}".` }, 404);
 
   // ── 2. Coordinates ──────────────────────────────────────────────────
@@ -138,7 +138,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // ── 4. Run the shared geofence policy + write the row ────────────────
-  const outcome = performGeoPunch({
+  const outcome = await performGeoPunch({
     employee,
     latitude,
     longitude,

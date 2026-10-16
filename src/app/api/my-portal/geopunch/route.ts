@@ -86,7 +86,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return json({ ok: false, error: "Invalid JSON body." }, 400);
   }
 
-  const employee = resolveEmployee(getDb(), String(account.employeeId));
+  const employee = await resolveEmployee(await getDb(), String(account.employeeId));
   if (!employee) {
     return json({ ok: false, error: "The linked roster employee no longer exists." }, 409);
   }
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const direction = parseDirection(body.direction);
   if (direction === "!bad") return json({ ok: false, error: 'direction must be "IN" or "OUT".' }, 400);
 
-  const outcome = performGeoPunch({
+  const outcome = await performGeoPunch({
     employee,
     latitude,
     longitude,

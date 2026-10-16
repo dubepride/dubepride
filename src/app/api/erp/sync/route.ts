@@ -31,7 +31,7 @@ export async function GET(): Promise<Response> {
   if (guard) return guard;
 
   const cfg = erpConfig();
-  const overview = getSyncOverview();
+  const overview = await getSyncOverview();
 
   const payload: ErpSyncGetResponse = {
     ...overview,
