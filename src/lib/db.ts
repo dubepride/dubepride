@@ -477,64 +477,62 @@ const SEED_SHIFTS: SeedShift[] = [
 async function seedShifts(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Shifts"))?.c ?? 0;
   if (count > 0) return;
-  for (const s of SEED_SHIFTS) {
-    await exec(
-      db,
-      `INSERT INTO Shifts (Shift_ID, Name, Start_Time, End_Time, Duration_Minutes, Days, Created_At)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      s.id,
-      s.name,
-      s.start,
-      s.end,
-      s.duration,
-      s.days,
-      SEED_CREATED_AT
-    );
-  }
+  await batch(
+    db,
+    SEED_SHIFTS.map((s) => ({
+      sql: `INSERT INTO Shifts (Shift_ID, Name, Start_Time, End_Time, Duration_Minutes, Days, Created_At)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [s.id, s.name, s.start, s.end, s.duration, s.days, SEED_CREATED_AT],
+    }))
+  );
 }
 
 async function seedRoster(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Employees"))?.c ?? 0;
   if (count > 0) return;
-  for (const e of SEED_EMPLOYEES) {
-    await exec(
-      db,
-      `INSERT INTO Employees
+  await batch(
+    db,
+    SEED_EMPLOYEES.map((e) => ({
+      sql: `INSERT INTO Employees
          (ERP_User_ID, Full_Name, Fingerprint_Enrolled, Fingers_Enrolled,
           Department, Position, Branch_Name, Shift_ID, Status, Created_At)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Active', ?)`,
-      e.erp,
-      e.name,
-      e.enrolled,
-      e.enrolled ? serializeFingers(await seedFingers(e.fingers)) : "",
-      e.department,
-      e.position,
-      e.branch,
-      e.shiftId,
-      SEED_CREATED_AT
-    );
-  }
+      args: [
+        e.erp,
+        e.name,
+        e.enrolled,
+        e.enrolled ? serializeFingers(seedFingers(e.fingers)) : "",
+        e.department,
+        e.position,
+        e.branch,
+        e.shiftId,
+        SEED_CREATED_AT,
+      ],
+    }))
+  );
 }
 
 async function seedTerminals(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Terminals"))?.c ?? 0;
   if (count > 0) return;
   const now = Date.now();
-  for (const t of BRANCH_TERMINALS) {
-    await exec(
-      db,
-      `INSERT INTO Terminals
+  await batch(
+    db,
+    BRANCH_TERMINALS.map((t) => ({
+      sql: `INSERT INTO Terminals
          (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping, Clocking_Method)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      t.mac,
-      t.ip,
-      t.location,
-      t.branch,
-      t.status,
-      t.status === "Online" ? now : null,
-      t.clocking ?? "Biometric"
-    );
-  }
+      args: [
+        t.mac,
+        t.ip,
+        t.location,
+        t.branch,
+        t.status,
+        t.status === "Online" ? now : null,
+        t.clocking ?? "Biometric",
+      ],
+    }))
+  );
 }
 
 /**
@@ -612,7 +610,7 @@ async function backfillEmployeeMeta(db: Client): Promise<void> {
         `UPDATE Employees SET Fingers_Enrolled = ?
           WHERE ERP_User_ID = ? AND Fingerprint_Enrolled = 1
             AND (Fingers_Enrolled IS NULL OR Fingers_Enrolled = '')`,
-        serializeFingers(await seedFingers(e.fingers)),
+        serializeFingers(seedFingers(e.fingers)),
         e.erp
       );
     }
@@ -649,9 +647,13 @@ async function seedAttendanceHistory(db: Client): Promise<void> {
 
   const HOUR = 3_600_000;
   const MINUTE = 60_000;
-  const insert = async (
+  // Collect every row, then write them in ONE round trip. Sequential inserts
+  // would be ~200 network round trips against a remote (Turso) database — and
+  // a fire-and-forget insert could be cut off when a serverless function ends.
+  const statements: SqlStatement[] = [];
+  const insert = (
     employeeId: number,
-    ts: number,
+    timestamp: number,
     terminalId: number,
     direction: PunchDirection,
     method: string,
@@ -659,20 +661,21 @@ async function seedAttendanceHistory(db: Client): Promise<void> {
     ip: string,
     mac: string
   ) => {
-    await exec(
-      db,
-      `INSERT INTO Attendance_Logs
+    statements.push({
+      sql: `INSERT INTO Attendance_Logs
          (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload, Created_At)
        VALUES (?, ?, ?, ?, 'Verified', ?, ?, ?, ?)`,
-      employeeId,
-      ts,
-      terminalId,
-      sync,
-      direction,
-      method,
-      `ID=${employeeId}&Time=${formatPunchTime(ts)}&Status=0&Verify=1&IP=${ip}&MAC=${mac}`,
-      ts
-    );
+      args: [
+        employeeId,
+        timestamp,
+        terminalId,
+        sync,
+        direction,
+        method,
+        `ID=${employeeId}&Time=${formatPunchTime(timestamp)}&Status=0&Verify=1&IP=${ip}&MAC=${mac}`,
+        timestamp,
+      ],
+    });
   };
 
   const today = startOfTodayMs();
@@ -701,6 +704,10 @@ async function seedAttendanceHistory(db: Client): Promise<void> {
         insert(emp.Employee_ID, outMs, term.Terminal_ID, "OUT", method, sync, term.IP_Address, term.Terminal_MAC);
       }
     }
+  }
+
+  if (statements.length > 0) {
+    await batch(db, statements);
   }
 }
 
@@ -762,23 +769,21 @@ export function verifyPassword(password: string, hash: string): boolean {
 async function seedBranches(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches"))?.c ?? 0;
   if (count > 0) return;
+  const statements: SqlStatement[] = [];
   for (const name of SEED_BRANCH_NAMES) {
     const geo = SEED_BRANCH_GEOFENCES[name];
     if (geo) {
-      await exec(
-        db,
-        `INSERT INTO Branches
+      statements.push({
+        sql: `INSERT INTO Branches
            (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        name,
-        SEED_CREATED_AT,
-        geo.method,
-        geo.lat,
-        geo.lng,
-        geo.radius
-      );
+        args: [name, SEED_CREATED_AT, geo.method, geo.lat, geo.lng, geo.radius],
+      });
     } else {
-      await exec(db, "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)", name, SEED_CREATED_AT);
+      statements.push({
+        sql: "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)",
+        args: [name, SEED_CREATED_AT],
+      });
     }
   }
   // Real field sites — geofenced so a phone can clock in on site. Idempotent:
@@ -790,18 +795,15 @@ async function seedBranches(db: Client): Promise<void> {
       name
     );
     if (existing) continue;
-    await exec(
-      db,
-      `INSERT INTO Branches
+    statements.push({
+      sql: `INSERT INTO Branches
          (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      name,
-      SEED_CREATED_AT,
-      "Both",
-      geo.lat,
-      geo.lng,
-      geo.radius
-    );
+      args: [name, SEED_CREATED_AT, "Both", geo.lat, geo.lng, geo.radius],
+    });
+  }
+  if (statements.length > 0) {
+    await batch(db, statements);
   }
 }
 
@@ -826,7 +828,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   { name: "IT Administrator", perms: allPermissions(true) },
   {
     name: "HR Manager",
-    perms: await levelWith(
+    perms: levelWith(
       "can_view_dashboard",
       "can_view_employees",
       "can_add_employee",
@@ -851,7 +853,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   },
   {
     name: "Sales Manager",
-    perms: await levelWith(
+    perms: levelWith(
       "can_view_dashboard",
       "can_view_employees",
       "can_view_reports",
@@ -864,7 +866,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
   },
   {
     name: "Worker",
-    perms: await levelWith(
+    perms: levelWith(
       "can_view_my_portal",
       "can_remote_clock",
       "can_view_my_history",
@@ -876,15 +878,13 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
 async function seedAccessLevels(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Access_Levels"))?.c ?? 0;
   if (count > 0) return;
-  for (const lvl of SEED_ACCESS_LEVELS) {
-    await exec(
-      db,
-      "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
-      lvl.name,
-      serializePermissions(lvl.perms),
-      SEED_CREATED_AT
-    );
-  }
+  await batch(
+    db,
+    SEED_ACCESS_LEVELS.map((lvl) => ({
+      sql: "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
+      args: [lvl.name, serializePermissions(lvl.perms), SEED_CREATED_AT],
+    }))
+  );
 }
 
 interface SeedAccount {
@@ -953,22 +953,25 @@ async function seedSystemAccounts(db: Client): Promise<void> {
   const employeeId = async (erp: string | null): Promise<number | null> =>
     erp ? ((await queryOne<{ id: number }>(db, "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = ?", erp))?.id ?? null) : null;
 
+  const statements: SqlStatement[] = [];
   for (const a of SEED_ACCOUNTS) {
-    await exec(
-      db,
-      `INSERT INTO System_Accounts
+    statements.push({
+      sql: `INSERT INTO System_Accounts
          (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      a.first,
-      a.surname,
-      a.email,
-      hashPassword(a.password),
-      await levelId(a.level),
-      await branchId(a.branch),
-      await employeeId(a.employeeErp),
-      SEED_CREATED_AT
-    );
+      args: [
+        a.first,
+        a.surname,
+        a.email,
+        hashPassword(a.password),
+        await levelId(a.level),
+        await branchId(a.branch),
+        await employeeId(a.employeeErp),
+        SEED_CREATED_AT,
+      ],
+    });
   }
+  await batch(db, statements);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1055,9 +1058,9 @@ export async function createBranch(name: string, clocking?: ClockingConfigInput)
     trimmed,
     Date.now(),
     method,
-    await coerceCoord(clocking?.latitude),
-    await coerceCoord(clocking?.longitude),
-    await coerceCoord(clocking?.geofenceRadiusMeters)
+    coerceCoord(clocking?.latitude),
+    coerceCoord(clocking?.longitude),
+    coerceCoord(clocking?.geofenceRadiusMeters)
   );
   return lastId;
 }
@@ -1071,11 +1074,11 @@ export async function setBranchClocking(branchId: number, input: ClockingConfigI
     input.clockingMethod !== undefined
       ? normalizeClockingMethod(input.clockingMethod)
       : normalizeClockingMethod(current.Clocking_Method);
-  const lat = input.latitude !== undefined ? await coerceCoord(input.latitude) : current.Latitude;
-  const lng = input.longitude !== undefined ? await coerceCoord(input.longitude) : current.Longitude;
+  const lat = input.latitude !== undefined ? coerceCoord(input.latitude) : current.Latitude;
+  const lng = input.longitude !== undefined ? coerceCoord(input.longitude) : current.Longitude;
   const radius =
     input.geofenceRadiusMeters !== undefined
-      ? await coerceCoord(input.geofenceRadiusMeters)
+      ? coerceCoord(input.geofenceRadiusMeters)
       : current.Geofence_Radius_Meters;
   await exec(
     db,
@@ -1902,7 +1905,7 @@ export async function createShift(input: ShiftInput): Promise<number> {
     input.name.trim(),
     input.startTime,
     input.endTime,
-    await spanMinutes(input.startTime, input.endTime),
+    spanMinutes(input.startTime, input.endTime),
     input.days,
     Date.now()
   );
@@ -1927,7 +1930,7 @@ export async function updateShift(shiftId: number, patch: Partial<ShiftInput>): 
     name,
     start,
     end,
-    await spanMinutes(start, end),
+    spanMinutes(start, end),
     days,
     shiftId
   );
@@ -2079,9 +2082,9 @@ export async function createTerminal({
     status,
     status === "Online" ? Date.now() : null,
     method,
-    await coerceCoord(latitude),
-    await coerceCoord(longitude),
-    await coerceCoord(geofenceRadiusMeters)
+    coerceCoord(latitude),
+    coerceCoord(longitude),
+    coerceCoord(geofenceRadiusMeters)
   );
   return lastId;
 }
@@ -2133,15 +2136,15 @@ export async function updateTerminal(
   }
   if (patch.latitude !== undefined) {
     updates.push("Latitude = ?");
-    params.push(await coerceCoord(patch.latitude));
+    params.push(coerceCoord(patch.latitude));
   }
   if (patch.longitude !== undefined) {
     updates.push("Longitude = ?");
-    params.push(await coerceCoord(patch.longitude));
+    params.push(coerceCoord(patch.longitude));
   }
   if (patch.geofenceRadiusMeters !== undefined) {
     updates.push("Geofence_Radius_Meters = ?");
-    params.push(await coerceCoord(patch.geofenceRadiusMeters));
+    params.push(coerceCoord(patch.geofenceRadiusMeters));
   }
   if (updates.length === 0) return;
   params.push(terminalId);
@@ -2261,9 +2264,9 @@ export async function listConfiguredBranches(): Promise<MobileFence[]> {
   const rows = await queryAll<BranchRow>(await getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
   const out: MobileFence[] = [];
   for (const row of rows) {
-    const latitude = await finiteOrNull(row.Latitude);
-    const longitude = await finiteOrNull(row.Longitude);
-    const radiusMeters = await finiteOrNull(row.Geofence_Radius_Meters);
+    const latitude = finiteOrNull(row.Latitude);
+    const longitude = finiteOrNull(row.Longitude);
+    const radiusMeters = finiteOrNull(row.Geofence_Radius_Meters);
     if (latitude === null || longitude === null || radiusMeters === null) continue;
     if (radiusMeters <= 0) continue;
 
@@ -2350,7 +2353,7 @@ export async function findTerminalOnlyFenceAt(
   const terminalOnly = (await listConfiguredBranches()).filter(
     (fence) => !methodAllowsMobile(fence.method)
   );
-  return (await rankFences(terminalOnly, latitude, longitude)).find((match) => match.withinGeofence) ?? null;
+  return rankFences(terminalOnly, latitude, longitude).find((match) => match.withinGeofence) ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2985,7 +2988,7 @@ export async function buildErpPayload(logIds: number[], batchRef: string): Promi
        FROM Attendance_Logs l
        LEFT JOIN Employees e ON e.Employee_ID = l.Employee_ID
        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
-      WHERE l.Log_ID IN (${await placeholders(logIds.length)})
+      WHERE l.Log_ID IN (${placeholders(logIds.length)})
       ORDER BY l.Log_ID ASC`,
     ...logIds
   );
@@ -3018,7 +3021,7 @@ export async function markLogsSynced(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
   await exec(
     await getDb(),
-    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Success' WHERE Log_ID IN (${await placeholders(logIds.length)})`,
+    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Success' WHERE Log_ID IN (${placeholders(logIds.length)})`,
     ...logIds
   );
 }
@@ -3028,7 +3031,7 @@ export async function markLogsFailed(logIds: number[]): Promise<void> {
   if (logIds.length === 0) return;
   await exec(
     await getDb(),
-    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Failed' WHERE Log_ID IN (${await placeholders(logIds.length)})`,
+    `UPDATE Attendance_Logs SET ERP_Sync_Status = 'Failed' WHERE Log_ID IN (${placeholders(logIds.length)})`,
     ...logIds
   );
 }
