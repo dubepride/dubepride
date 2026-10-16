@@ -278,9 +278,10 @@ turso db show biobridge --url          # → TURSO_DATABASE_URL
 turso db tokens create biobridge       # → TURSO_AUTH_TOKEN
 ```
 
-The schema and demo seed are created automatically on first use — the exact
-same bootstrap as a local run (see `src/lib/sqlite.ts` + `bootstrap()` in
-`src/lib/db.ts`).
+The schema is created automatically on first use — the exact same bootstrap as a
+local run (see `src/lib/sqlite.ts` + `bootstrap()` in `src/lib/db.ts`). A fresh
+install seeds the **13 real field-site branches** (with GPS geofences); the
+demo branches are not seeded.
 
 ### 2. Set the environment variables
 
@@ -290,10 +291,19 @@ same bootstrap as a local run (see `src/lib/sqlite.ts` + `bootstrap()` in
 | `TURSO_AUTH_TOKEN` | Database token |
 | `CRON_SECRET` | Guards `/api/cron/erp-sync` (long random string) |
 | `SESSION_SECRET` | HMAC key for session cookies — **set this** |
+| `BIOBRIDGE_ADMIN_PASSWORD` | Password for the seeded admin — **set this** |
 | `SIMULATOR_ENABLED` | `false` in production (real devices push instead) |
 | `ERP_API_URL` / `ERP_API_KEY` / `ERP_MOCK_MODE` | Point at the real ERP |
 
 Leave `TURSO_*` empty and the app falls back to the local SQLite file.
+
+**Seeded logins.** On first use the app creates the admin account
+(`admin@biobridge.example`). Set `BIOBRIDGE_ADMIN_PASSWORD` to choose its
+password; if you don't, a **random one-time password** is generated and printed
+to the server log (the published dev default is never seeded on a serverless
+host). The demo hr/sales/worker logins are seeded on a normal host but skipped
+on serverless — set `BIOBRIDGE_SEED_DEMO_ACCOUNTS=true` to force them, or
+`false` to never seed them. Change the admin password after your first login.
 
 ### 3. Deploy
 

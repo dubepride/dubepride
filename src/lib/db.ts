@@ -36,6 +36,7 @@ import type { Client } from "@libsql/client";
 import {
   executeBatch,
   getReadyClient,
+  isServerlessRuntime,
   setBootstrap,
   type SqlStatement,
   type SqlValue,
@@ -715,14 +716,11 @@ async function seedAttendanceHistory(db: Client): Promise<void> {
 /* Phase 13/14 — relational settings & access control                  */
 /* ------------------------------------------------------------------ */
 
-/** The 17 fixed branch sites — seeds the global Branches list. */
-const SEED_BRANCH_NAMES = Array.from({ length: 17 }, (_, i) => `Branch ${i + 1}`);
-
 /**
- * The real field sites, seeded alongside the demo branches on a fresh install.
- * All ship as "Both" (biometric + mobile geofence) so a phone can clock in on
- * site. Capacity/radius defaults to 150 m; the tightest site (Junkshop) uses
- * 100 m because its neighbours are close together.
+ * The real field sites — the only branches a fresh install seeds. All ship as
+ * "Both" (biometric + mobile geofence) so a phone can clock in on site. Radius
+ * defaults to 150 m; the tightest site (Junkshop) uses 100 m because its
+ * neighbours are close together.
  */
 const SEED_REAL_BRANCHES: Record<
   string,
@@ -743,19 +741,6 @@ const SEED_REAL_BRANCHES: Record<
   "Gweru EazyTools": { lat: -19.4484, lng: 29.8103, radius: 150 },
 };
 
-/**
- * Demo geofences (Phase 15) written only on a fresh install. Branch 5 hosts
- * the un-enrolled field officer (ERP-1014), so it ships as "Geofence Only";
- * Branch 1 demonstrates the hybrid channel. Coordinates are Harare CBD.
- */
-const SEED_BRANCH_GEOFENCES: Record<
-  string,
-  { method: ClockingMethod; lat: number; lng: number; radius: number }
-> = {
-  "Branch 1": { method: "Both", lat: -17.8292, lng: 31.0522, radius: 120 },
-  "Branch 5": { method: "Geofence", lat: -17.8223, lng: 31.0438, radius: 250 },
-};
-
 /** Deterministic password digest for demo accounts (sha256, static salt). */
 export function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(`${password}::biobridge-salt`).digest("hex");
@@ -769,25 +754,10 @@ export function verifyPassword(password: string, hash: string): boolean {
 async function seedBranches(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches"))?.c ?? 0;
   if (count > 0) return;
+  // Only the real field sites are seeded, each geofenced ("Both") so a phone can
+  // clock in on site. Idempotent: a branch of the same name is left untouched
+  // (never duplicated).
   const statements: SqlStatement[] = [];
-  for (const name of SEED_BRANCH_NAMES) {
-    const geo = SEED_BRANCH_GEOFENCES[name];
-    if (geo) {
-      statements.push({
-        sql: `INSERT INTO Branches
-           (Branch_Name, Created_At, Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [name, SEED_CREATED_AT, geo.method, geo.lat, geo.lng, geo.radius],
-      });
-    } else {
-      statements.push({
-        sql: "INSERT INTO Branches (Branch_Name, Created_At) VALUES (?, ?)",
-        args: [name, SEED_CREATED_AT],
-      });
-    }
-  }
-  // Real field sites — geofenced so a phone can clock in on site. Idempotent:
-  // a branch of the same name is left untouched (never duplicated).
   for (const [name, geo] of Object.entries(SEED_REAL_BRANCHES)) {
     const existing = await queryOne<{ id: number }>(
       db,
@@ -899,20 +869,27 @@ interface SeedAccount {
 }
 
 /**
- * The demo directory. `admin@biobridge.example / biobridge-admin` keeps the
- * app's long-standing default login working (empty email → this account),
- * while the worker account demonstrates the "My Portal only" view.
+ * The seeded logins.
+ *
+ * `SEED_ADMIN` always exists so a fresh install is usable. Its password comes
+ * from BIOBRIDGE_ADMIN_PASSWORD on any public deployment; otherwise (a normal
+ * host) the long-standing default keeps local dev working, and on a serverless
+ * runtime a one-time random password is generated and logged instead — see
+ * `seedSystemAccounts`. The three demo accounts are seeded on a normal host and
+ * skipped on serverless, unless BIOBRIDGE_SEED_DEMO_ACCOUNTS=true.
  */
-const SEED_ACCOUNTS: SeedAccount[] = [
-  {
-    first: "Bridge",
-    surname: "Admin",
-    email: "admin@biobridge.example",
-    password: "biobridge-admin",
-    level: "IT Administrator",
-    branch: "Branch 1",
-    employeeErp: "ERP-1001", // Amara — the admin's My Portal demo profile
-  },
+const SEED_ADMIN: SeedAccount = {
+  first: "Bridge",
+  surname: "Admin",
+  email: "admin@biobridge.example",
+  // Overridden by BIOBRIDGE_ADMIN_PASSWORD (or a random value) on serverless.
+  password: "biobridge-admin",
+  level: "IT Administrator",
+  branch: "Branch 1",
+  employeeErp: "ERP-1001", // Amara — the admin's My Portal demo profile
+};
+
+const SEED_DEMO_ACCOUNTS: SeedAccount[] = [
   {
     first: "Grace",
     surname: "Mwangi",
@@ -942,6 +919,49 @@ const SEED_ACCOUNTS: SeedAccount[] = [
   },
 ];
 
+/** A random, URL-safe bootstrap password. */
+function randomPassword(): string {
+  return crypto.randomBytes(12).toString("base64url");
+}
+
+/** Demo logins: explicit flag wins, else on for a normal host and off serverless. */
+function includeDemoAccounts(): boolean {
+  const flag = (process.env.BIOBRIDGE_SEED_DEMO_ACCOUNTS ?? "").trim().toLowerCase();
+  if (flag === "true" || flag === "1") return true;
+  if (flag === "false" || flag === "0") return false;
+  return !isServerlessRuntime();
+}
+
+/** The accounts to seed, with the admin password resolved for this runtime. */
+function seededAccounts(): SeedAccount[] {
+  const accounts: SeedAccount[] = [];
+  const envPassword = (process.env.BIOBRIDGE_ADMIN_PASSWORD ?? "").trim();
+  if (envPassword) {
+    accounts.push({ ...SEED_ADMIN, password: envPassword });
+  } else if (isServerlessRuntime()) {
+    // Never ship the published default on a public URL.
+    const password = randomPassword();
+    accounts.push({ ...SEED_ADMIN, password });
+    console.warn(
+      [
+        "",
+        "=".repeat(72),
+        "[seed] BIOBRIDGE_ADMIN_PASSWORD is not set.",
+        "[seed] The admin account was created with a ONE-TIME RANDOM password:",
+        `[seed]     ${SEED_ADMIN.email}  /  ${password}`,
+        "[seed] Sign in, change it, or set BIOBRIDGE_ADMIN_PASSWORD before the",
+        "[seed] first run to choose your own.",
+        "=".repeat(72),
+        "",
+      ].join("\n")
+    );
+  } else {
+    accounts.push(SEED_ADMIN); // local dev keeps the long-standing default
+  }
+  if (includeDemoAccounts()) accounts.push(...SEED_DEMO_ACCOUNTS);
+  return accounts;
+}
+
 async function seedSystemAccounts(db: Client): Promise<void> {
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM System_Accounts"))?.c ?? 0;
   if (count > 0) return;
@@ -954,7 +974,7 @@ async function seedSystemAccounts(db: Client): Promise<void> {
     erp ? ((await queryOne<{ id: number }>(db, "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = ?", erp))?.id ?? null) : null;
 
   const statements: SqlStatement[] = [];
-  for (const a of SEED_ACCOUNTS) {
+  for (const a of seededAccounts()) {
     statements.push({
       sql: `INSERT INTO System_Accounts
          (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
