@@ -36,6 +36,9 @@
  */
 
 import type { NextRequest } from "next/server";
+import { after } from "next/server";
+import { runErpSync } from "@/lib/erp";
+import { isBackgroundServicesRunning } from "@/lib/mock-generator";
 import {
   findTerminal,
   getDb,
@@ -240,6 +243,22 @@ export async function POST(request: NextRequest) {
   // ── 5. ACK ──────────────────────────────────────────────────────────
   // Returning 200 makes the device mark the batch as delivered; without
   // it the firmware retransmits for hours (that IS the offline buffer).
+  //
+  // When no in-process retry loop is running (serverless, or a long-lived
+  // host that disabled the simulator), schedule an ERP drain to run AFTER the
+  // response is sent: the device gets its ACK immediately and the Pending rows
+  // are pushed to the ERP a moment later. runErpSync has a process-wide lock,
+  // and errors are swallowed — the buffer is never lost.
+  if (!isBackgroundServicesRunning()) {
+    after(async () => {
+      try {
+        await runErpSync("Auto");
+      } catch (err) {
+        console.error("[push] post-ack ERP sync failed:", err);
+      }
+    });
+  }
+
   return ack(`OK: received=${received}`);
 }
 

@@ -15,6 +15,9 @@
  *    • POST /api/auth/logout       — clearing the cookie must always work
  *    • /api/biometrics/push        — hardware ADMS ingress; fingerprint
  *                                    terminals cannot hold a session cookie
+ *    • /api/cron/erp-sync          — scheduled ERP drain; the platform
+ *                                    scheduler presents CRON_SECRET, not a
+ *                                    session (the route enforces it itself)
  *    • static assets               — _next/*, images, favicons (via matcher)
  *
  *  AUTHENTICATED:
@@ -51,6 +54,10 @@ const PUBLIC_PREFIXES = [
   // Phase 16 — companion app sign-in (Employee ID + PIN → identity + the
   // geofence to satisfy). Same shared-key rule as the punch ingress.
   "/api/mobile/login",
+  // Serverless hosting — the scheduled ERP drain. A platform scheduler (Vercel
+  // Cron / cron-job.org) has no session cookie, so this route authenticates
+  // itself against the CRON_SECRET instead. See the route header.
+  "/api/cron/erp-sync",
 ];
 
 /**

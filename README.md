@@ -233,6 +233,7 @@ src/
 │       ├── employees/search/route.ts # Dashboard type-ahead
 │       ├── employees/[id]/route.ts   # Profile + grouped timesheet
 │       ├── erp/sync/route.ts         # Sync engine endpoint
+│       ├── cron/erp-sync/route.ts    # Scheduled ERP drain (CRON_SECRET-guarded)
 │       ├── dashboard/route.ts
 │       ├── mobile/login/route.ts     # Companion-app sign-in (ID + PIN)
 │       ├── attendance/geopunch/route.ts        # GPS punch (device channel)
@@ -244,7 +245,8 @@ src/
 ├── components/                     # Clock, feed, search, timesheet, consoles…
 │   └── MapCanvas · MapOverlay · GeofenceClock · GeofenceMapEditor · GeofenceActivity
 ├── lib/
-│   ├── db.ts                       # SQLite schema, migrations, seeds, queries
+│   ├── sqlite.ts                   # The DB connection (local file / remote Turso)
+│   ├── db.ts                       # Schema, migrations, seeds, queries (async)
 │   ├── session.ts                  # HMAC session cookies (used by proxy too)
 │   ├── auth.ts                     # requireAdmin() guard for API routes
 │   ├── geofence.ts                 # Pure fence helpers (haversine, radius, method)
@@ -258,3 +260,63 @@ src/
 │   ├── format.ts / types.ts
 └── instrumentation.ts              # Boots background services on server start
 ```
+
+## Deploying (serverless: Vercel / Netlify / Cloudflare)
+
+The database layer talks to SQLite through **libSQL** (`@libsql/client`), so the
+same code runs against a local file in development and a **Turso** database in
+production — no query changes. Function filesystems on serverless hosts are
+ephemeral, so a local `.db` file would be wiped on every deploy and cold start;
+Turso keeps it durable. On a long-lived Node host you can keep using the file.
+
+### 1. Create the database (free)
+
+```bash
+# https://turso.tech — sign up, then:
+turso db create biobridge
+turso db show biobridge --url          # → TURSO_DATABASE_URL
+turso db tokens create biobridge       # → TURSO_AUTH_TOKEN
+```
+
+The schema and demo seed are created automatically on first use — the exact
+same bootstrap as a local run (see `src/lib/sqlite.ts` + `bootstrap()` in
+`src/lib/db.ts`).
+
+### 2. Set the environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `TURSO_DATABASE_URL` | `libsql://…turso.io` — switches the app to remote mode |
+| `TURSO_AUTH_TOKEN` | Database token |
+| `CRON_SECRET` | Guards `/api/cron/erp-sync` (long random string) |
+| `SESSION_SECRET` | HMAC key for session cookies — **set this** |
+| `SIMULATOR_ENABLED` | `false` in production (real devices push instead) |
+| `ERP_API_URL` / `ERP_API_KEY` / `ERP_MOCK_MODE` | Point at the real ERP |
+
+Leave `TURSO_*` empty and the app falls back to the local SQLite file.
+
+### 3. Deploy
+
+Push the repo to GitHub and import it on Vercel (or Netlify / Cloudflare
+Pages). No build tweaks are needed — `next build` / `next start` as usual.
+
+### 4. Scheduled ERP draining
+
+Serverless functions have no long-lived process, so the in-process retry loop
+is skipped there (detected automatically via `VERCEL` / `NETLIFY` / `CF_PAGES`,
+or force it with `BIOBRIDGE_SERVERLESS=1`). Draining is instead driven by:
+
+1. **On every device push** — `/api/biometrics/push` schedules `runErpSync()`
+   with `after()`: the terminal gets its ACK immediately, the Pending rows are
+   pushed to the ERP a moment later.
+2. **Scheduled calls** — `GET/POST /api/cron/erp-sync` (guarded by
+   `CRON_SECRET`). `vercel.json` registers a **daily** cron (the only cadence
+   Vercel Hobby allows); for near-real-time draining add a free external
+   scheduler (e.g. cron-job.org) hitting that URL every minute with the header
+   `Authorization: Bearer <CRON_SECRET>`.
+
+```bash
+# manual check
+curl -H "Authorization: Bearer $CRON_SECRET" https://<app>/api/cron/erp-sync
+```
+

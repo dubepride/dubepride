@@ -57,6 +57,27 @@ export function isRemoteDatabase(): boolean {
   return Boolean(remoteUrl());
 }
 
+/**
+ * True when the app is running on a serverless/edge platform whose functions
+ * are short-lived and may be suspended at any moment.
+ *
+ * Used to keep the in-process background services (terminal simulator and the
+ * 20-second ERP retry loop) from being armed on such platforms: a timer that
+ * outlives the response is unreliable there, so ERP draining is driven by
+ * `after()` on each device push plus scheduled invocations of the cron route
+ * instead.
+ */
+export function isServerlessRuntime(): boolean {
+  return Boolean(
+    process.env.VERCEL ||
+      process.env.NETLIFY ||
+      process.env.CF_PAGES ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.FUNCTIONS_WORKER_RUNTIME || // Azure Functions
+      process.env.BIOBRIDGE_SERVERLESS === "1"
+  );
+}
+
 function remoteUrl(): string | null {
   const url = (
     process.env.TURSO_DATABASE_URL ??

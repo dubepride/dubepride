@@ -193,3 +193,13 @@ export async function startMockServices(): Promise<void> {
   startAutoSync();
   g.__taMockStarted = true;
 }
+
+/**
+ * True when the in-process background services (simulator + auto-sync loop)
+ * were armed for this process. Serverless runtimes never arm them, so callers
+ * can use this to decide whether they must trigger ERP draining themselves
+ * (see the `after()` kick in /api/biometrics/push).
+ */
+export function isBackgroundServicesRunning(): boolean {
+  return Boolean((globalThis as GlobalWithFlags).__taMockStarted);
+}
