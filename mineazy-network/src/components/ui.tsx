@@ -142,7 +142,9 @@ const STATE_CHIP: Record<HealthState, string> = {
   ONLINE: "chip--neon",
   OFFLINE: "chip--danger",
   LINK_DOWN: "chip--danger",
-  NO_INTERNET: "chip--danger",
+  // Link is up but the internet beyond it is not: purple, never red. A red
+  // badge here would claim the device itself had failed.
+  NO_INTERNET: "chip--purple",
   DEGRADED: "chip--warn",
   STALE: "chip--warn",
   NO_TRAFFIC: "chip--warn",
@@ -159,11 +161,13 @@ export function StateBadge({ state, title }: { state: string; title?: string }) 
         className={`status-dot ${
           key === "ONLINE"
             ? "status-dot--on"
-            : key === "OFFLINE" || key === "LINK_DOWN" || key === "NO_INTERNET"
+            : key === "OFFLINE" || key === "LINK_DOWN"
               ? "status-dot--off"
-              : key === "DEGRADED" || key === "STALE" || key === "NO_TRAFFIC"
-                ? "status-dot--warn"
-                : "status-dot--idle"
+              : key === "NO_INTERNET"
+                ? "status-dot--purple"
+                : key === "DEGRADED" || key === "STALE" || key === "NO_TRAFFIC"
+                  ? "status-dot--warn"
+                  : "status-dot--idle"
         }`}
       />
       {humanise(state)}

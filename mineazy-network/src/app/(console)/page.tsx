@@ -72,7 +72,8 @@ const STATE_TONE: Record<HealthState, string> = {
   ONLINE: "bg-neon",
   OFFLINE: "bg-red-500",
   LINK_DOWN: "bg-red-500",
-  NO_INTERNET: "bg-red-500",
+  // Purple: the device and its cable are fine, the internet beyond it is not.
+  NO_INTERNET: "bg-violet",
   DEGRADED: "bg-amber-400",
   STALE: "bg-amber-400",
   NO_TRAFFIC: "bg-amber-400",

@@ -32,6 +32,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Icon } from "@/components/Icon";
+import { MapNodeMeasurer } from "@/components/MapNodeMeasurer";
 import { useApi } from "@/components/useApi";
 import { apiGet } from "@/components/api";
 import { Chip, ErrorNote, KeyValue, Loading, Notice, PageHeader, Panel, StateBadge } from "@/components/ui";
@@ -74,18 +75,58 @@ type MapNodeData = {
  */
 type MapNodeType = Node<MapNodeData, "mapNode">;
 
+/**
+ * The CSS class that carries a device's state colour.
+ *
+ * React Flow hides a node until it has been measured, so the class lives on
+ * the inner card, not on the wrapper. Keeping the mapping in one place means
+ * the node, its badge and the minimap cannot drift apart.
+ */
+function nodeStateClass(state: HealthState): string {
+  switch (state) {
+    case "OFFLINE":
+      return "map-node--offline";
+    case "LINK_DOWN":
+      return "map-node--link_down";
+    case "NO_INTERNET":
+      // Purple: the link is up, the internet is not. Not a device failure.
+      return "map-node--no_internet";
+    case "DEGRADED":
+      return "map-node--degraded";
+    case "STALE":
+      return "map-node--stale";
+    case "NO_TRAFFIC":
+      return "map-node--no_traffic";
+    default:
+      return "";
+  }
+}
+
+/** The dot colour for a state, used by the minimap. */
+function stateHex(state: HealthState): string {
+  switch (state) {
+    case "OFFLINE":
+    case "LINK_DOWN":
+      return "#ff5252";
+    case "NO_INTERNET":
+      return "#9b6dff";
+    case "DEGRADED":
+    case "STALE":
+    case "NO_TRAFFIC":
+      return "#ffc400";
+    case "ONLINE":
+      return "#00e676";
+    default:
+      return "#a0aec0";
+  }
+}
+
 function MapNode({ data }: NodeProps<MapNodeType>) {
   return (
     <div
-      className={`map-node ${
-        data.selected ? "map-node--selected" : ""
-      } ${
-        data.state === "OFFLINE" || data.state === "LINK_DOWN" || data.state === "NO_INTERNET"
-          ? "map-node--offline"
-          : data.state === "DEGRADED" || data.state === "STALE" || data.state === "NO_TRAFFIC"
-            ? "map-node--degraded"
-            : ""
-      }`}
+      className={`map-node ${data.selected ? "map-node--selected" : ""} ${nodeStateClass(
+        data.state
+      )}`}
       title={data.reason}
     >
       {/*
@@ -361,14 +402,16 @@ export default function MapPage() {
             >
               <Background color="rgba(74, 20, 140, 0.25)" gap={24} />
               <Controls />
+              {/*
+                React Flow measures nodes with a ResizeObserver, and browsers
+                stop delivering those notifications to a page that is not
+                visible. Without this the canvas stays blank in a background
+                tab: the nodes never get a box, so they stay hidden and the
+                edges have no anchors. See MapNodeMeasurer for the details.
+              */}
+              <MapNodeMeasurer />
               <MiniMap
-                nodeColor={(n) => {
-                  const s = n.data?.state;
-                  if (s === "OFFLINE" || s === "LINK_DOWN") return "#ff5252";
-                  if (s === "DEGRADED" || s === "NO_INTERNET") return "#ffc400";
-                  if (s === "ONLINE") return "#00e676";
-                  return "#a0aec0";
-                }}
+                nodeColor={(n) => stateHex(n.data?.state as HealthState)}
               />
             </ReactFlow>
           </div>
@@ -383,6 +426,12 @@ export default function MapPage() {
                   <div className="text-xs text-muted">{humanise(selected.category)}</div>
                 </div>
                 <StateBadge state={selected.state} />
+                {selected.state === "NO_INTERNET" ? (
+                  <Notice tone="warn" title="Physical link active. External internet connectivity checks are failing.">
+                    This device is still reachable on the local network. Only its path to the
+                    internet is failing, so local links stay green.
+                  </Notice>
+                ) : null}
                 <KeyValue
                   items={[
                     { label: "IP", value: selected.ip || "—" },
@@ -439,13 +488,16 @@ export default function MapPage() {
           <Panel title="Legend">
             <div className="flex flex-wrap gap-1.5">
               <Chip tone="neon">Online</Chip>
-              <Chip tone="danger">Down / link down</Chip>
+              <Chip tone="purple">Link up · no internet</Chip>
+              <Chip tone="danger">Offline / link down</Chip>
               <Chip tone="warn">Degraded / stale / no traffic</Chip>
               <Chip tone="muted">Unknown / unmonitored</Chip>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-muted">
-              Edges animate when a link is down. Rates are shown only when measured counters exist
-              (no cumulative counters are displayed as speed).
+              Purple means the device and its cable are healthy but external internet checks are
+              failing — never that the device itself failed. Edges animate when a link is down.
+              Rates are shown only when measured counters exist (no cumulative counters are
+              displayed as speed).
             </p>
             {snapshot.lastObservationAt ? (
               <p className="mt-2 text-xs text-muted">

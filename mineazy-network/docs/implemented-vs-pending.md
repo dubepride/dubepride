@@ -341,11 +341,24 @@ production build.
       nodes hidden, and the viewport transform unchanged at
       `translate(224.59px, 25.4732px) scale(0.659754)` — that is, `fitView`
       ran and the graph was not reset by the poll.
+- [x] **The map renders in a hidden tab.** Opening `/map` in a background tab
+      (and reloading an already-hidden one) now yields 11 nodes, 10 edges,
+      **0 hidden**, with the viewport fitted at
+      `translate(368.97px, 51px) scale(0.536774)` while
+      `document.visibilityState === "hidden"`. Before
+      `MapNodeMeasurer.tsx`, the same tab produced 0 measured nodes, 0 edges
+      and viewport `translate(0px, 0px) scale(1)`.
 - [x] **The map survives a fault.** With the uplink cut, the nine affected
       nodes changed state and were restyled `map-node--offline`, the broken
       link was redrawn at `stroke: rgb(255, 82, 82); stroke-width: 2.6`, and
       the canvas stayed fully visible. After *Clear all faults* the same
       eleven nodes returned to `ONLINE` and the canvas stayed visible.
+- [x] **Internet failure is purple, not red.** With *Take the internet away*
+      the Starlink terminal and the edge router became `NO_INTERNET` and were
+      drawn with border `rgba(155, 109, 255, 0.9)` (purple), while all nine
+      LAN devices stayed `ONLINE` and all ten edges stayed green. Selecting
+      the router showed the exact message *"Physical link active. External
+      internet connectivity checks are failing."*
 - [x] **The upstream trace works from the canvas.** Clicking *CCTV Recorder*
       produced the path
       `Starlink Terminal → Edge Router (wan0) → Admin Switch (GigabitEthernet1/0/1) → White House Switch (GigabitEthernet1/0/1) → CCTV Recorder (eth0)`
@@ -372,21 +385,36 @@ production build.
 
 * The React Flow attribution is **visible**, as the licence requires. It is
   styled subtly rather than removed; hiding it is a paid feature.
-* **The Live Map keeps React Flow's node measurements alive across polls.**
-  This sounds like a detail; it is not. React Flow measures each node's box
-  with a `ResizeObserver` and stores the result on its *internal* node. That
-  measurement is copied back onto the object the page handed in **only when
-  that object keeps its identity**. A naive implementation that rebuilds the
-  whole node array on every poll therefore wipes every measurement, the nodes
-  fall back to `visibility: hidden`, the `ResizeObserver` never fires again
-  (the element is already observed and its size never changed), `fitView`
-  never runs and the canvas stays **permanently blank** — with the nodes
-  present in the DOM but invisible.
+* **The Live Map keeps React Flow's node measurements alive across polls — and
+  in hidden tabs.** This sounds like a detail; it is not. React Flow measures
+  each node's box with a `ResizeObserver` and stores the result on its
+  *internal* node. That measurement is copied back onto the object the page
+  handed in **only when that object keeps its identity**. A naive
+  implementation that rebuilds the whole node array on every poll therefore
+  wipes every measurement, the nodes fall back to `visibility: hidden`, the
+  `ResizeObserver` never fires again (the element is already observed and its
+  size never changed), `fitView` never runs and the canvas stays
+  **permanently blank** — with the nodes present in the DOM but invisible.
   `src/app/(console)/map/page.tsx` therefore merges each snapshot into the
   previous graph: a node whose position and payload are unchanged keeps its
   previous object, and a node that really changed carries the last known
-  `measured` box onto the new object. This was found by watching the canvas
-  in a real browser, not by reading the docs.
+  `measured` box onto the new object. A second, independent failure mode is a
+  **hidden tab**: Chrome stops delivering `ResizeObserver` notifications to
+  pages that are not visible, so a `/map` tab opened or reloaded in the
+  background never measured its nodes at all.
+  `src/components/MapNodeMeasurer.tsx` repairs that by calling
+  `updateNodeInternals` directly from a store subscriber (not via
+  `requestAnimationFrame`, which hidden tabs pause). Both bugs were found by
+  watching the canvas in a real browser, not by reading the docs.
+* **Purple means "link up, internet not reachable", not "failed".**
+  `NO_INTERNET` is a distinct health state and it is rendered purple
+  everywhere — the node border, the `StateBadge` chip and dot, the minimap and
+  the Overview bar. Red is reserved for confirmed failures of the device or
+  its link (`OFFLINE`, `LINK_DOWN`). Selecting a purple device shows the
+  spec's explanation: *"Physical link active. External internet connectivity
+  checks are failing."* This matters because the two cases demand completely
+  different fixes, and colouring an ISP outage red would send an operator to
+  the wrong cabinet.
 * The demo controls and the simulated estate exist only when
   `MINEAZY_DEMO=1`. In a normal install the demo API returns `403` and the
   panel is not rendered.

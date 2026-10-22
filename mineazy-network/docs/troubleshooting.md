@@ -397,20 +397,34 @@ a height to render the graph"*. The console's `Panel` component supports a
 Check the node elements in the browser's inspector. If they carry
 `visibility: hidden` and the viewport transform is stuck at
 `translate(0px, 0px) scale(1)`, React Flow has lost its **node
-measurements**.
+measurements**. There are two independent ways to lose them, and this
+codebase now defends against both:
 
-React Flow measures each node's box with a `ResizeObserver` and keeps the
-result on its internal node. That measurement only survives if the page
-hands React Flow the **same node objects** on the next render. Rebuilding the
-whole node array from scratch on every poll throws the measurements away;
-the nodes fall back to `visibility: hidden`, the `ResizeObserver` does not
-fire again (the element is already observed and its size never changed),
-`fitView` never runs and the canvas stays blank — permanently.
+1. **Identity churn.** React Flow measures each node's box with a
+   `ResizeObserver` and keeps the result on its *internal* node. That
+   measurement only survives if the page hands React Flow the **same node
+   objects** on the next render. Rebuilding the whole node array on every
+   poll throws the measurements away. The Live Map therefore merges each
+   polled snapshot into the previous graph
+   (`src/app/(console)/map/page.tsx`): a node whose position and payload are
+   unchanged keeps its previous object, and a node that really changed
+   carries the last known `measured` box across.
+2. **Hidden tabs.** Chrome stops delivering `ResizeObserver` notifications to
+   a page that is not visible. Opening `/map` in a background tab — or
+   reloading a tab that is not focused — meant the nodes were never measured
+   at all: blank canvas, zero edges, viewport at `scale(1)`.
+   `src/components/MapNodeMeasurer.tsx` closes this hole. It lives *inside*
+   `<ReactFlow>` (so it shares the store), and on every change to the node
+   list it finds nodes that still lack `measured`/`handleBounds` and calls
+   `state.updateNodeInternals(...)` directly. It deliberately avoids
+   `useUpdateNodeInternals()`, which defers to `requestAnimationFrame` — that
+   is paused in a hidden tab. `offsetWidth` and `getBoundingClientRect()` are
+   layout-based, so they return real numbers even while the tab is hidden,
+   and the queued `fitView` then resolves inside the same store action.
 
-The Live Map merges each polled snapshot into the previous graph instead of
-replacing it (`src/app/(console)/map/page.tsx`). If you extend the map,
-keep that property: reuse the previous node object when nothing changed, and
-carry the last known `measured` box onto a node that really did change.
+If the canvas is still blank, check the browser console for a
+"parent container needs a width and a height" warning first — the canvas
+wrapper must be `h-full w-full` inside a panel with a fixed height.
 
 ### The React Flow attribution is visible
 

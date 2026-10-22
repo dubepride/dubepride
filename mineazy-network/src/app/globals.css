@@ -21,6 +21,8 @@
   --color-neon: #00e676;
   --color-danger: #ff5252;
   --color-warn: #ffc400;
+  /* Purple = the physical link is up but external internet is not reachable. */
+  --color-violet: #9b6dff;
 
   --animate-rise: rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-feed-in: feed-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -152,6 +154,10 @@ body {
 .status-dot--warn {
   background: #ffc400;
   box-shadow: 0 0 8px rgba(255, 196, 0, 0.7);
+}
+.status-dot--purple {
+  background: #9b6dff;
+  box-shadow: 0 0 8px rgba(155, 109, 255, 0.85);
 }
 .status-dot--idle {
   background: #a0aec0;
@@ -525,14 +531,24 @@ textarea.field {
     0 0 0 1px rgba(0, 230, 118, 0.4),
     0 0 26px rgba(0, 230, 118, 0.25);
 }
-.map-node--offline {
+/*
+ * Node colour is the WHOLE-state colour, and the states are kept visually
+ * distinct. Red means a confirmed failure of this device or its link; purple
+ * means the device itself is fine but the internet beyond it is not; amber is
+ * a performance or freshness problem; grey is "we do not know".
+ */
+.map-node--offline,
+.map-node--link_down {
   border-color: rgba(255, 82, 82, 0.8);
   box-shadow: 0 0 22px rgba(255, 82, 82, 0.25);
 }
+.map-node--no_internet {
+  border-color: rgba(155, 109, 255, 0.9);
+  box-shadow: 0 0 22px rgba(155, 109, 255, 0.3);
+}
 .map-node--degraded,
-.map-node--no_internet,
-.map-node--link_down,
-.map-node--stale {
+.map-node--stale,
+.map-node--no_traffic {
   border-color: rgba(255, 196, 0, 0.75);
   box-shadow: 0 0 20px rgba(255, 196, 0, 0.18);
 }
