@@ -29,12 +29,20 @@
  *    MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='public' \
  *      node scripts/connect-network.mjs --dry-run
  *
+ *    # Also tell it what "the internet" means for your site
+ *    MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='public' \
+ *      node scripts/connect-network.mjs \
+ *      --gateway=192.168.1.1 --internet=1.1.1.1,https://example.com/health
+ *
  *  OPTIONS
  *
  *    --url=<url>          console base URL           (default http://localhost:3100)
  *    --user=<name>        login name                 (default admin)
  *    --credential=<name>  SNMP credential label      (default "default")
  *    --categories=a,b     device categories to switch (default infrastructure)
+ *    --gateway=<ip>       the site's default gateway (monitor.gatewayTargets)
+ *    --internet=a,b       reachability targets       (monitor.internetTargets);
+ *                         an http(s):// value becomes an HTTP probe
  *    --dry-run            print the plan, write nothing
  *
  *  Every write goes through the public HTTP API, so RBAC, validation and the
@@ -191,7 +199,37 @@ if (existing) {
   console.log(`  + created SNMPv${snmp.version} credential "${CREDENTIAL_NAME}"\n`);
 }
 
-// 4. Point every infrastructure device at SNMP and bind it to that credential.
+// 4. What "the internet" means for this site. The defaults are 1.1.1.1 and
+//    9.9.9.9, which a locked-down site often drops — and then every router
+//    honestly reports NO_INTERNET while the internet works fine.
+const gateway = args.get("gateway");
+const internet = args.get("internet");
+const settingsPatch = {};
+
+if (gateway) {
+  settingsPatch["monitor.gatewayTargets"] = [
+    { name: "Default gateway", host: gateway, type: "icmp" },
+  ];
+}
+if (internet) {
+  const hosts = internet.split(",").map((h) => h.trim()).filter(Boolean);
+  if (hosts.length === 0) die("--internet needs at least one host.");
+  settingsPatch["monitor.internetTargets"] = hosts.map((host) => {
+    const isHttp = /^https?:\/\//i.test(host);
+    return { name: isHttp ? "Internet HTTPS" : host, host, type: isHttp ? "http" : "icmp" };
+  });
+}
+if (Object.keys(settingsPatch).length > 0) {
+  const names = Object.keys(settingsPatch).join(", ");
+  if (DRY_RUN) {
+    console.log(`  + would set ${names}\n`);
+  } else {
+    await call("PATCH", "/api/settings", { settings: settingsPatch });
+    console.log(`  + set ${names}\n`);
+  }
+}
+
+// 5. Point every infrastructure device at SNMP and bind it to that credential.
 const { devices } = await call("GET", "/api/devices");
 const candidates = devices.filter(
   (device) => CATEGORIES.includes(device.category) && (device.mgmtIp ?? "").trim().length > 0
@@ -276,6 +314,10 @@ console.log(`
          { "localDeviceId": 3, "localPortId": 12,
            "remoteDeviceId": 4, "remotePortId": 7,
            "type": "uplink", "cableId": "A-114" }
+
+  If you did not pass --gateway / --internet, do it now. The defaults are
+  1.1.1.1 and 9.9.9.9; a site that filters ICMP to them reports NO_INTERNET
+  (purple) everywhere while the internet is actually fine.
 
   If a switch now shows OFFLINE, it is very likely the SNMP credential:
   with monitorMethod=snmp there is no ICMP fallback, so a failed SNMP poll

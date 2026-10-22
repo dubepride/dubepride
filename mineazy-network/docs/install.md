@@ -382,6 +382,12 @@ MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='...' \
 # 2. Apply it. Re-running is safe: it only fills in what is missing.
 MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='...' npm run connect
 
+# Also declare what "the internet" means for this site (important: the
+# defaults are 1.1.1.1 / 9.9.9.9, which many sites filter, and then every
+# router reports NO_INTERNET while the internet is fine).
+MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='...' npm run connect \
+  --gateway=192.168.1.1 --internet=1.1.1.1,https://example.com/health
+
 # SNMPv3 instead of v2c:
 MINEAZY_ADMIN_PASSWORD='...' SNMP_VERSION=3 SNMP_USER='mineazy' \
   SNMP_AUTH_KEY='...' SNMP_PRIV_KEY='...' npm run connect
@@ -400,6 +406,8 @@ What it does:
    device that has a management address to `snmp`, enables monitoring and
    binds the credential in the device's Notes as `snmp=<name>`, preserving any
    notes already there.
+5. With `--gateway` / `--internet`, rewrites `monitor.gatewayTargets` and
+   `monitor.internetTargets` — the two settings the console has no form for.
 
 The tagging in step 4 is not cosmetic: the collector uses the credential named
 in a device's Notes and otherwise falls back to the **first** credential in the
