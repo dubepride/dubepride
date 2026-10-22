@@ -14,7 +14,7 @@ There is no cloud service, no telemetry and no account to create.
 
 | Area | What you get |
 | --- | --- |
-| **Live map** | The estate as a graph: every device is its own node, every cable is an edge coloured by its measured state. Rates ride on the edges. |
+| **Live map** | The estate as a graph: every device is its own node with a recognisable illustration of the equipment, every cable is a clickable edge coloured by its measured state, and the physical link state of each cable is shown separately from the health of the path. Search, filter, minimap, and positions you drag are saved. |
 | **Devices** | Individual devices only — never a rolled-up "site health" number. Every device carries its state, the evidence behind it, and its discovery provenance. |
 | **Switches & ports** | Per-port admin/oper state, negotiated speed, duplex, VLAN, error and discard counters, and the measured in/out rate on each interface. |
 | **Fault-path analysis** | From any device, trace the upstream path to the edge. The trace names the broken segment and the blast radius below it. |
@@ -83,7 +83,7 @@ stays `ONLINE`.
 ## Verify it yourself
 
 ```bash
-npm test                 # 151 tests, 42 suites, 0 failures
+npm test                 # 153 tests, 42 suites, 0 failures
 npm run typecheck        # tsc --noEmit — clean
 npm run build            # 39/39 pages, 0 warnings
 npm run demo:scenario    # 31 end-to-end checks, 0 failures
@@ -215,7 +215,7 @@ mineazy-network/
 ├── scripts/
 │   ├── seed-demo.ts         #   build the simulated estate
 │   └── acceptance-scenario.ts #  the end-to-end proof
-├── tests/                   # 151 tests across 11 suites
+├── tests/                   # 153 tests across 11 suites
 ├── docs/                    # install, SNMP, discovery, roles, backup,
 │                            # troubleshooting, implemented-vs-pending
 ├── Dockerfile

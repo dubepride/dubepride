@@ -467,6 +467,30 @@ export interface TopologyEdge {
   outRateBps: number | null;
   verified: boolean;
   confidence: number;
+  /* --- The cable as an object, for the connection inspector ------------- */
+  /** Parent-side interface label ("lan0"), empty when the port is unknown. */
+  sourcePort: string;
+  /** Child-side interface label ("GigabitEthernet1/0/1"), empty when unknown. */
+  targetPort: string;
+  sourcePortId: number | null;
+  targetPortId: number | null;
+  /** Managed-port operational state: true up, false down, null not reported. */
+  sourceLinkUp: boolean | null;
+  targetLinkUp: boolean | null;
+  /**
+   * The physical link, kept separate from the end-to-end path state. A cable
+   * can be physically up while the internet beyond it is unreachable.
+   */
+  physicalState: "up" | "down" | "unknown";
+  connectionType: string;
+  /** The evidence sentence recorded when the link state was decided. */
+  evidence: string;
+  lastObservedAt: number | null;
+  cableDestination: string;
+  inErrors: number | null;
+  outErrors: number | null;
+  inDiscards: number | null;
+  outDiscards: number | null;
 }
 
 export interface TopologySnapshot {

@@ -216,8 +216,8 @@ async function resolveTopologyGraph(): Promise<TopologyGraph> {
 /* Snapshot for the canvas                                             */
 /* ------------------------------------------------------------------ */
 
-const LAYOUT_X_SPACING = 260;
-const LAYOUT_Y_SPACING = 170;
+const LAYOUT_X_SPACING = 300;
+const LAYOUT_Y_SPACING = 180;
 
 /**
  * Build the canvas payload.
@@ -320,6 +320,15 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
       .filter(Boolean)
       .join(" → ");
 
+    const parentLinkUp = portLinkUp(parentPort);
+    const childLinkUp = portLinkUp(childPort);
+    const physicalState: TopologyEdge["physicalState"] =
+      connection.state === "down" || parentLinkUp === false || childLinkUp === false
+        ? "down"
+        : parentLinkUp === true || childLinkUp === true
+          ? "up"
+          : "unknown";
+
     edges.push({
       id: `conn-${connection.id}`,
       connectionId: connection.id,
@@ -334,6 +343,21 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
       outRateBps: parentPort?.outRateBps ?? childPort?.outRateBps ?? null,
       verified: connection.verified,
       confidence: connection.confidence,
+      sourcePort: parentPort ? parentPort.label || parentPort.ifName : "",
+      targetPort: childPort ? childPort.label || childPort.ifName : "",
+      sourcePortId: parentPort?.id ?? null,
+      targetPortId: childPort?.id ?? null,
+      sourceLinkUp: parentLinkUp,
+      targetLinkUp: childLinkUp,
+      physicalState,
+      connectionType: connection.type,
+      evidence: connection.evidence,
+      lastObservedAt: connection.lastObservedAt,
+      cableDestination: connection.cableDestination,
+      inErrors: parentPort?.inErrors ?? childPort?.inErrors ?? null,
+      outErrors: parentPort?.outErrors ?? childPort?.outErrors ?? null,
+      inDiscards: parentPort?.inDiscards ?? childPort?.inDiscards ?? null,
+      outDiscards: parentPort?.outDiscards ?? childPort?.outDiscards ?? null,
     });
   }
 
@@ -346,6 +370,18 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
     lastObservationAt,
     simulated: Array.from(graph.devices.values()).some((node) => node.device.simulated),
   };
+}
+
+/**
+ * The operational state of a port, but only when the device is trusted to
+ * report it. An unmanaged switch's "up" means nothing, so it stays null and
+ * the cable is drawn as "not verified" rather than healthy.
+ */
+function portLinkUp(port: NetworkPort | null): boolean | null {
+  if (!port || !port.managed) return null;
+  if (port.operState === "up") return true;
+  if (port.operState === "down") return false;
+  return null;
 }
 
 async function newestObservationAt(): Promise<number | null> {

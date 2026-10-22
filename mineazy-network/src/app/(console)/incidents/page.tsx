@@ -145,7 +145,15 @@ export default function IncidentsPage() {
                 >
                   Resolve
                 </button>
-                <Link href={`/devices/${incident.deviceId}`} className="btn btn--ghost btn--sm ml-auto">
+                <Link
+                  href={`/map?focus=${incident.deviceId}`}
+                  className="btn btn--ghost btn--sm ml-auto"
+                  title="Open the live map focused on this device and highlight its upstream path"
+                >
+                  <Icon name="map" size={13} />
+                  Show on map
+                </Link>
+                <Link href={`/devices/${incident.deviceId}`} className="btn btn--ghost btn--sm">
                   View device
                   <Icon name="chevron" size={12} />
                 </Link>

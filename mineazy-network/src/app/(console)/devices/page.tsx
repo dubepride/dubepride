@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { DeviceGlyph, stateColour } from "@/components/DeviceGlyph";
 import { useApi } from "@/components/useApi";
 import { apiPost } from "@/components/api";
 import {
@@ -271,9 +272,20 @@ function DevicesScreen() {
                 {data?.devices.map((device) => (
                   <tr key={device.id} className="tbl-row tbl-row--clickable">
                     <td>
-                      <Link href={`/devices/${device.id}`} className="block">
-                        <div className="font-semibold text-white">{device.name}</div>
-                        <div className="text-xs text-muted">{device.hostname || "no hostname"}</div>
+                      <Link href={`/devices/${device.id}`} className="flex items-center gap-2.5">
+                        <span className="shrink-0 text-violet">
+                          <DeviceGlyph
+                            category={device.category}
+                            size={34}
+                            led={stateColour(device.healthState)}
+                          />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-white">{device.name}</span>
+                          <span className="block text-xs text-muted">
+                            {device.hostname || "no hostname"}
+                          </span>
+                        </span>
                       </Link>
                     </td>
                     <td>{humanise(device.category)}</td>

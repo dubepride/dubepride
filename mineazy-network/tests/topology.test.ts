@@ -212,6 +212,49 @@ describe("buildTopologySnapshot", () => {
     assert.match(uplink!.label, /Admin Switch GigabitEthernet1\/0\/1/);
   });
 
+  test("an edge exposes both ports and a confirmed physical link", async () => {
+    const snapshot = await topology.buildTopologySnapshot();
+    const uplink = snapshot.edges.find(
+      (edge) => edge.source === `dev-${ids.router}` && edge.target === `dev-${ids.admin}`
+    );
+    assert.ok(uplink);
+    assert.equal(uplink!.sourcePort, "lan0");
+    assert.equal(uplink!.targetPort, "GigabitEthernet1/0/1");
+    assert.equal(uplink!.sourceLinkUp, true);
+    assert.equal(uplink!.targetLinkUp, true);
+    assert.equal(uplink!.physicalState, "up");
+    assert.equal(uplink!.connectionType, "uplink");
+    // The connection inspector shows these; an absent value must be null,
+    // never a fabricated zero.
+    assert.ok(uplink!.inErrors === null || typeof uplink!.inErrors === "number");
+    assert.equal(typeof uplink!.evidence, "string");
+  });
+
+  test("a managed port that reports down makes the physical link down", async () => {
+    // The connection record still says "up": the port evidence is newer and
+    // more specific, so the cable must not be drawn as healthy.
+    await ports.upsertPort(ids.admin, {
+      ifName: "GigabitEthernet1/0/1",
+      operState: "down",
+      managed: true,
+    });
+
+    const snapshot = await topology.buildTopologySnapshot();
+    const uplink = snapshot.edges.find(
+      (edge) => edge.source === `dev-${ids.router}` && edge.target === `dev-${ids.admin}`
+    );
+    assert.ok(uplink);
+    assert.equal(uplink!.targetLinkUp, false);
+    assert.equal(uplink!.physicalState, "down");
+
+    // Restore the fixture for the tests that follow.
+    await ports.upsertPort(ids.admin, {
+      ifName: "GigabitEthernet1/0/1",
+      operState: "up",
+      managed: true,
+    });
+  });
+
   test("the snapshot is not labelled as simulated for a real estate", async () => {
     const snapshot = await topology.buildTopologySnapshot();
     assert.equal(snapshot.simulated, false);

@@ -19,7 +19,7 @@ output, not an expectation.
 
 ```bash
 npm install
-npm test                 # 151 tests, 42 suites, 0 failures
+npm test                 # 153 tests, 42 suites, 0 failures
 npm run typecheck        # tsc --noEmit, exit code 0
 npm run build            # 39/39 pages generated, 0 warnings
 npm run demo:scenario    # 31 checks passed, 0 failed
@@ -27,13 +27,13 @@ npm run demo:scenario    # 31 checks passed, 0 failed
 
 | Command | Observed result |
 | --- | --- |
-| `npm test` | `tests 151`, `suites 42`, `pass 151`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0` |
+| `npm test` | `tests 153`, `suites 42`, `pass 153`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0` |
 | `npm run typecheck` | No output, exit code `0` |
 | `npm run build` | `✓ Compiled successfully`, `✓ Generating static pages using 7 workers (39/39)`, no warnings, no errors |
 | `npm run demo:scenario` | `passed 31`, `failed 0`, `ACCEPTANCE SCENARIO PASSED — every check succeeded.` |
 | `npm run lint` | No output, exit code `0` — 0 errors, 0 warnings |
 
-### The test suite (11 files, 151 tests)
+### The test suite (11 files, 153 tests)
 
 | File | Tests | What it guards |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ npm run demo:scenario    # 31 checks passed, 0 failed
 | `tests/incidents.test.ts` | 19 | Dedupe keys, correlation, blast radius, acknowledgement, recovery. |
 | `tests/security.test.ts` | 17 | Credential encryption, password hashing, session forgery, the audit trail, the WAL checkpoint. |
 | `tests/discovery.test.ts` | 15 | Authorised ranges only, rate limiting, MAC/FDB + ARP correlation, provenance. |
-| `tests/topology.test.ts` | 15 | Graph construction, upstream path tracing, the broken segment. |
+| `tests/topology.test.ts` | 17 | Graph construction, upstream path tracing, the broken segment, and the per-cable ports + physical link state that the connection inspector reads. |
 | `tests/traffic.test.ts` | 14 | Counter deltas, 32-bit rollover, "unavailable" instead of a fake zero. |
 | `tests/classify.test.ts` | 14 | Device classification and the confidence score. |
 | `tests/rbac.test.ts` | 11 | The three roles and the ten capabilities. |
@@ -237,6 +237,42 @@ database"** action (a `PRAGMA wal_checkpoint(TRUNCATE)`, permission-gated
 and audited), and — in demo mode only — the **demo controls** panel with
 *Cut the uplink*, *Take the internet away* and *Clear all faults*.
 
+### 2.7a The map's visual language
+
+**Fifteen equipment illustrations, one family.** `src/components/DeviceGlyph.tsx`
+draws a distinct SVG for each `DeviceCategory` — internet source, router,
+gateway, managed switch (front panel with two rows of port LEDs), desktop,
+laptop, printer, server, NVR, IP camera, access point, NAS, VoIP phone,
+industrial unit and unknown — all on the same 64×48 grid with the same 2px
+stroke, dark body fill and a single status LED. The outline colour is
+deliberately neutral; the LED carries the state, so an operator recognises
+the *equipment* first and its health second. The same glyph appears in the
+device inventory, so a row and a node describe the same thing.
+
+**Five cable colours, and a separate physical-link marker.**
+
+| Wire | Meaning |
+| --- | --- |
+| Green | Link up, configured checks pass. Animated dashes appear only when measured counters show traffic. |
+| Purple | Link up, external internet unavailable **along that path**. The cable still carries local traffic. |
+| Red | Confirmed failure: a managed port reports the link down, or the endpoint failed its checks. |
+| Amber (long dash) | Degraded: errors, discards, utilisation or latency beyond the threshold. |
+| Grey (dotted) | Not verified. Never drawn as healthy. |
+
+On top of the colour, an `×` is drawn at the midpoint when a managed port
+reports the physical link down, and a small grey ring when no port has
+confirmed it. That keeps "the cable is dead" and "the path beyond the cable
+is dead" from collapsing into one signal. Port labels are **not** drawn on
+the wire; hovering or selecting a cable opens an HTML pill with both ports,
+the physical state and the measured rates, and the *Port labels* control can
+pin them all on for a screenshot.
+
+**The map is a tool, not a picture.** Search (name, IP, category, port or
+location), health and equipment filters, minimap on/off, fit-to-screen, and
+drag-to-position with `POST /api/topology` persisting the coordinates
+(`Layout_X`/`Layout_Y`) and a *Reset layout* action returning to the computed
+tree. Viewers cannot drag, and the write needs `can_edit_inventory`.
+
 ### 2.8 Security
 
 Built: `scrypt` password hashing with a per-user salt; stateless
@@ -359,6 +395,46 @@ production build.
       LAN devices stayed `ONLINE` and all ten edges stayed green. Selecting
       the router showed the exact message *"Physical link active. External
       internet connectivity checks are failing."*
+- [x] **Every device carries a recognisable illustration.** Eleven demo
+      devices produced **nine distinct glyphs** (`internet`, `router`,
+      `switch` ×3, `desktop`, `printer`, `nas`, `nvr`, `laptop`, `camera`) on
+      one shared 64×48 grid. Each glyph has a status LED in the device's
+      state colour; the outline stays neutral so the equipment is recognised
+      before its health is read.
+- [x] **Cables are objects, not labels.** No edge renders permanent text
+      (measured: `0` labels with nothing selected). Selecting the
+      Starlink↔router cable showed `eth0 → wan0`, *physical link up*, 1.0 Gbps,
+      216 Mbps in / 144 Mbps out, error and discard counters, discovery
+      source, confidence, last observation and the evidence sentence.
+- [x] **The physical link is shown separately from path health.** With the
+      uplink cut, exactly **one** cable went red and carried an `×` marker
+      (the cut uplink). The other nine cables stayed **green** while their
+      devices showed `OFFLINE` — the screenshot-accurate version of "a device
+      can be unreachable without its cable being faulty". Before this fix the
+      simulator marked every port of every unreachable device as down, which
+      turned the whole map red and blamed nine cables for one fault.
+- [x] **Path colour is evidence-based.** With the internet removed: one
+      purple cable (the internet-facing segment, both ends `NO_INTERNET`),
+      nine green LAN cables, zero red cables.
+- [x] **Manual positions survive.** `POST /api/topology` with a position moved
+      `dev-11` from the automatic `(-210, 1168)` to `(1234, -321)`; the next
+      `GET /api/topology` returned the saved coordinates. `{reset: true}`
+      returned the device to the computed layout. An invalid payload was
+      refused with `400 No position in the request was valid.` and the write
+      is audited as `layout.update` / `layout.reset`.
+- [x] **The map is filterable.** Searching `camera` left 1 of 11 devices and
+      0 of 10 links on the canvas, with the counts shown; clearing the search
+      restored 11 and 10. Health and equipment-type filters behave the same
+      way and only hide, never mutate, the data.
+- [x] **An alert deep-links to its device.** Every incident row offers
+      *Show on map* → `/map?focus=<deviceId>`, which selects the device,
+      traces its upstream path and fits the camera to it. Verified with the
+      open incident *Link down: Edge Router ↔ Admin Switch*: its link was
+      `/map?focus=2`, and opening it selected the **Edge Router** node, drew
+      its trace (`Starlink Terminal → Edge Router (wan0)`) and moved the
+      camera. The canvas still held all 11 nodes and 10 cables with the
+      other nine devices red, so the fault context was not lost by jumping
+      from the alert.
 - [x] **The upstream trace works from the canvas.** Clicking *CCTV Recorder*
       produced the path
       `Starlink Terminal → Edge Router (wan0) → Admin Switch (GigabitEthernet1/0/1) → White House Switch (GigabitEthernet1/0/1) → CCTV Recorder (eth0)`
@@ -415,6 +491,20 @@ production build.
   checks are failing."* This matters because the two cases demand completely
   different fixes, and colouring an ISP outage red would send an operator to
   the wrong cabinet.
+* **The demo simulator no longer marks every port of an unreachable device as
+  down.** It used to, which turned the whole map red on a single uplink fault
+  and implied nine broken cables. A device behind a cut uplink is *unreachable
+  with live ports*; only the port on the actually-cut cable goes down. Real
+  SNMP hardware draws that distinction for us (a powered-off PC reports its
+  switch port down; an unreachable PC does not), so the simulator now models
+  it too — which is what makes the "green cable, red device" case visible in
+  the demo.
+* **The map's deep link reads `window.location`, not `useSearchParams`.**
+  `useSearchParams()` in a client component forces the route out of the
+  prerendered set (and needs a Suspense boundary in this Next.js version),
+  and `/map` has no other reason to be dynamic. `useState(() => …)` reads
+  `?focus=<deviceId>` once on the client; the value never affects the markup,
+  so it cannot cause a hydration mismatch.
 * The demo controls and the simulated estate exist only when
   `MINEAZY_DEMO=1`. In a normal install the demo API returns `403` and the
   panel is not rendered.
@@ -441,7 +531,7 @@ SNMP/LLDP/CDP/FDB/ARP discovery bounded to authorised ranges, fault-path
 analysis with blast radius, the full console, three-role RBAC, encrypted
 credentials, an audit trail, a standalone collector that runs whether or not
 a browser is open, a Docker deployment and seven documentation guides — all
-proven by **151 automated tests**, a **clean typecheck**, a **clean lint**,
+proven by **153 automated tests**, a **clean typecheck**, a **clean lint**,
 a **warning-free production build**, a **31-check end-to-end acceptance
 scenario** and a browser walkthrough of a real fault → acknowledge → recovery
 cycle.

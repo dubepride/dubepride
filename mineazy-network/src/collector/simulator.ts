@@ -442,6 +442,14 @@ export async function simulateCycle(): Promise<{ devices: number; states: Record
 
   const seenLinks = new Set<number>();
 
+  /**
+   * The ports that a simulated fault has actually cut. Everything else keeps
+   * its real operational state: a device that is merely UNREACHABLE behind a
+   * failed uplink still has live ports, and saying otherwise would be the
+   * classic mistake of blaming every downstream cable for one upstream fault.
+   */
+  const downPortIds = new Set<number>();
+
   for (const device of devices) {
     const connections = await connectionsForDevice(device.id);
     for (const connection of connections) {
@@ -465,6 +473,11 @@ export async function simulateCycle(): Promise<{ devices: number; states: Record
           (other.name === "Admin Switch" && device.name === "White House Switch"));
 
       const down = involvesUplink ? faults.uplinkDown : involvesWhiteHouse ? faults.whiteHouseDown : false;
+
+      if (down) {
+        if (connection.localPortId) downPortIds.add(connection.localPortId);
+        if (connection.remotePortId) downPortIds.add(connection.remotePortId);
+      }
 
       if (connection.state !== (down ? "down" : "up")) {
         await setConnectionState(
@@ -548,7 +561,10 @@ export async function simulateCycle(): Promise<{ devices: number; states: Record
       const base = (device.id * 31 + port.id * 17 + tick) % 1000;
       // The simulated byte rate: 1 MB/s … 181 MB/s, i.e. an in-rate of
       // roughly 5 … 870 Mbps on a 1 Gbps link — 60% in, 40% out.
-      const bytesPerSecond = faults.noTraffic || !active ? 0 : 1_000_000 + base * 180_000;
+      // An unreachable device has no measurable traffic at all; that is
+      // different from a device whose counters read zero.
+      const bytesPerSecond =
+        faults.noTraffic || !reachable || !active ? 0 : 1_000_000 + base * 180_000;
       const elapsedSeconds = Math.max(
         0.001,
         port.lastPolledAt !== null ? (now - port.lastPolledAt) / 1000 : 1
@@ -564,7 +580,9 @@ export async function simulateCycle(): Promise<{ devices: number; states: Record
         portNumber: port.portNumber,
         description: port.description,
         adminState: "up",
-        operState: reachable ? "up" : "down",
+        // Only a cut cable or a powered-off device takes a port down. A
+        // device that is merely unreachable keeps its links up.
+        operState: downPortIds.has(port.id) || offline ? "down" : "up",
         speedBps: port.speedBps,
         duplex: port.duplex,
         vlan: port.vlan,

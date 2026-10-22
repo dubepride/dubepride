@@ -330,11 +330,18 @@ export async function setDeviceLayout(id: number, x: number, y: number): Promise
 
 /** Clear every manual canvas position (reset to the automatic layout). */
 export async function clearDeviceLayouts(): Promise<number> {
-  const res = await run(
-    await getDb(),
+  const db = await getDb();
+  // Count first: the driver's rowsAffected is not a reliable "how many rows
+  // had a position" answer, and this number ends up in the audit log.
+  const row = await queryOne<{ n: number }>(
+    db,
+    "SELECT COUNT(*) AS n FROM Devices WHERE Layout_X IS NOT NULL OR Layout_Y IS NOT NULL"
+  );
+  await run(
+    db,
     "UPDATE Devices SET Layout_X = NULL, Layout_Y = NULL WHERE Layout_X IS NOT NULL OR Layout_Y IS NOT NULL"
   );
-  return res.changes;
+  return Number(row?.n ?? 0);
 }
 
 /** Update the health state + reason shown on the map and in the device list. */
