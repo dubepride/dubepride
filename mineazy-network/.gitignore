@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+next-env.d.ts.bak
+tsconfig.tsbuildinfo
+
+# Local databases, generated secret keys and the collector lock.
+# These contain real inventory and (encrypted) credentials — never commit them.
+data/
+*.db
+*.db-shm
+*.db-wal
+*.key
+collector.lock
+
+# Environment files hold the secrets.
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

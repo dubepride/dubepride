@@ -1,0 +1,22 @@
+# Build context exclusions — keep the image small and never bake secrets in.
+
+node_modules
+.next
+.git
+.gitignore
+data
+tests
+*.log
+typecheck.log
+dev-server.log
+
+# Environment files hold the secrets — they are injected at run time instead.
+.env
+.env.local
+.env.*.local
+
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+docs

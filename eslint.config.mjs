@@ -16,6 +16,11 @@ const eslintConfig = defineConfig([
     // globals) — the Next.js lint config must not walk into it. It is
     // type-checked with `npm run typecheck` from inside mobile/ instead.
     "mobile/**",
+    // Mineazy Network is a self-contained application with its own ESLint
+    // flat config, its own tsconfig and its own test runner. The root
+    // Next.js lint config must not walk into it; it is linted with
+    // `npm run lint` from inside mineazy-network/ instead.
+    "mineazy-network/**",
   ]),
 ]);
 

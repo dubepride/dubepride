@@ -1,0 +1,105 @@
+# =============================================================================
+#  Mineazy Network — Docker Compose
+# =============================================================================
+#
+#  Two services, one image, one shared data volume:
+#
+#    console    the web console (Next.js), published on http://localhost:3100
+#    collector  the monitoring engine (SNMP / probes / incident engine)
+#
+#  Both services mount the same `mineazy-data` volume at /app/data, which
+#  holds the SQLite database, the generated encryption key and the collector
+#  lock file.
+#
+#  ---------------------------------------------------------------------------
+#  IMPORTANT — run exactly ONE collector
+#  ---------------------------------------------------------------------------
+#  Mineazy Network enforces a single-writer rule with a pid-based lock file
+#  (data/collector.lock). That lock works on one machine, where the pids are
+#  comparable. Two containers have SEPARATE pid namespaces, so the pid check
+#  cannot see the other container and the lock will NOT stop a second
+#  collector. Running two collectors would double-count traffic and duplicate
+#  incidents.
+#
+#  The compose file below therefore disables the in-process collector on the
+#  console (MINEAZY_INLINE_COLLECTOR=0) and starts the dedicated collector
+#  service. If you scale the collector service to 2 replicas you must stop
+#  one of them again.
+#
+#  ---------------------------------------------------------------------------
+#  Getting started
+#  ---------------------------------------------------------------------------
+#    cp .env.example .env      # then fill in the secrets
+#    docker compose up -d --build
+#    docker compose logs -f collector
+#
+#  The `.env` file is optional; Compose simply skips it when it is absent.
+# =============================================================================
+
+name: mineazy-network
+
+services:
+  # ---------------------------------------------------------------------------
+  # The console — the browser UI and the JSON API
+  # ---------------------------------------------------------------------------
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mineazy-network:1.0.0
+    container_name: mineazy-console
+    command: ["npm", "run", "start"]
+    env_file:
+      # Optional — Compose 2.24+ syntax. Remove the file if you prefer to
+      # configure the container entirely from the `environment:` block below.
+      - path: .env
+        required: false
+    environment:
+      # The database lives on the shared volume so the collector and the
+      # console always read and write the same file.
+      MINEAZY_DB_PATH: /app/data/mineazy.db
+      MINEAZY_SECRET_KEY_FILE: /app/data/secret.key
+      # The dedicated collector service below does the collecting.
+      MINEAZY_INLINE_COLLECTOR: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+      HOSTNAME: 0.0.0.0
+      PORT: "3100"
+    ports:
+      - "3100:3100"
+    volumes:
+      - mineazy-data:/app/data
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # The collector — SNMP polling, active probes, the incident engine
+  # ---------------------------------------------------------------------------
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mineazy-network:1.0.0
+    container_name: mineazy-collector
+    command: ["npm", "run", "collector"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MINEAZY_DB_PATH: /app/data/mineazy.db
+      MINEAZY_SECRET_KEY_FILE: /app/data/secret.key
+      MINEAZY_INLINE_COLLECTOR: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      # Read/write: the collector writes the observations.
+      - mineazy-data:/app/data
+      # Read-only: the SNMP credential file is an optional way of supplying
+      # credentials to devices that need a file on disk. Create it yourself
+      # and add the devices you want to poll.
+      # - ./snmp-credentials:/etc/mineazy/snmp:ro
+    cap_add:
+      # The ICMP probe uses the platform `ping`, which needs raw sockets.
+      - NET_RAW
+    restart: unless-stopped
+
+volumes:
+  mineazy-data:
+    name: mineazy-data
