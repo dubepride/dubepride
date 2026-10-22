@@ -231,7 +231,8 @@ path and ports) · `Switches & Ports` · `Incidents` · `Traffic` ·
 
 Built: the nine-state chips, the incident timeline, the acknowledge/note/
 assign/resolve controls, the CSV exports, the settings editor, the SNMP
-credential manager (write-only, redacted previews), the user manager, the
+credential API (write-only, redacted previews — there is no form for it in the
+console yet, see §6), the user manager, the
 audit log viewer, the maintenance panel with the **"Checkpoint the
 database"** action (a `PRAGMA wal_checkpoint(TRUNCATE)`, permission-gated
 and audited), and — in demo mode only — the **demo controls** panel with
@@ -459,6 +460,21 @@ production build.
 
 ## 6. Rough edges worth knowing about
 
+* **Two setup steps are API-only: storing an SNMP credential, and changing a
+  device's monitor method.** The credential API is write-only with redacted
+  previews, but the console has no form for it, and the device page is
+  read-only, so a discovered switch cannot be moved from ICMP to SNMP by
+  clicking. `scripts/connect-network.mjs` (`npm run connect`) performs both
+  through the public API, with the same RBAC and audit trail a click would
+  get. This matters more than it sounds: an ICMP-only switch is monitored but
+  contributes **no ports, no LLDP/FDB evidence and no cables**, so the map
+  stays empty until it is switched over. A first-class settings panel is the
+  obvious next UI task.
+* **A device on `monitorMethod = snmp` has no ICMP fallback.** A failed SNMP
+  poll is treated as unreachable, so a wrong credential, a read-only view that
+  hides the interface table, or a filtered UDP/161 makes a perfectly healthy
+  switch go OFFLINE after the failure threshold. The device page carries the
+  reason; it is worth reading before believing the map.
 * The React Flow attribution is **visible**, as the licence requires. It is
   styled subtly rather than removed; hiding it is a paid feature.
 * **The Live Map keeps React Flow's node measurements alive across polls — and

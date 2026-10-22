@@ -115,22 +115,48 @@ management VLAN; not acceptable anywhere else.
 v1 is also selectable for very old equipment. It is not recommended: v1 has no
 concept of a scoped view and transmits the community string in the clear.
 
-### Creating a credential in the console
+### Creating a credential
 
-**Settings → SNMP credentials → Add credential**
+There is **no credential form in the console yet** — the Settings page sends
+you to the API. The setup script stores the credential and switches the
+infrastructure to SNMP in one step:
+
+```bash
+MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='public' npm run connect
+```
+
+Or write it directly:
+
+```bash
+curl -X POST http://localhost:3100/api/credentials \
+  -H 'content-type: application/json' -b cookie.txt \
+  -d '{"name":"core-switch-v3","version":"3","username":"mineazy",
+       "authProtocol":"SHA","authKey":"...","privProtocol":"AES","privKey":"..."}'
+```
 
 | Field | Meaning |
 | --- | --- |
-| Name | A label, e.g. `core-switch-v3`. |
+| Name | A label, e.g. `core-switch-v3`. Referenced from a device's Notes. |
 | Version | `3`, `2c` or `1`. |
 | Username | The v3 security name. |
 | Auth protocol / auth key | The v3 authentication protocol and passphrase. |
 | Privacy protocol / privacy key | The v3 encryption protocol and passphrase. |
 | Community | The v1/v2c community string. |
 
-The credential is **tested before it is saved**. If the device does not
-answer, the console says so and refuses to store a credential that cannot
-work.
+**The credential is stored, not tested.** Nothing contacts the device when the
+credential is saved, so a typo or a read-only view that omits the MIB is
+accepted silently. Confirm the credential against the device first:
+
+```bash
+snmpwalk -v3 -l authPriv -u mineazy -a SHA -A '...' -x AES -X '...' \
+  192.0.2.1 1.3.6.1.2.1.1.1.0
+```
+
+> **A device only uses a credential it is bound to.** Put
+> `snmp=<credential-name>` in its Notes; a device without that tag uses the
+> **first** credential in the table. `npm run connect` tags every device for
+> you.
+
 
 > **The secret is write-only.** Once it is saved, the browser only ever
 > receives a redacted preview (`p•••••••d`) and the flags `hasCommunity` /
@@ -257,8 +283,9 @@ Useful subtrees to check:
 
 If `snmpwalk` works but the console does not, the problem is usually:
 
-1. **A different credential** — the collector uses the credential attached to
-   the device, not the one you just tested.
+1. **A different credential** — a device uses the credential named in its
+   Notes (`snmp=<name>`) and otherwise the **first** credential in the table,
+   so an untagged device can silently poll with the wrong one.
 2. **The device's `Mgmt_IP` is wrong** — the collector polls the address in
    the device record.
 3. **The device is not in the collector's cycle** — see

@@ -363,6 +363,73 @@ demo can never contaminate a real installation.
 
 ---
 
+## 8. Pointing it at your own network
+
+Two steps a real deployment always needs — storing the SNMP credential and
+switching discovered infrastructure from ICMP to SNMP — are API-only in this
+build. `scripts/connect-network.mjs` does both through the public API, so
+RBAC, validation and the audit trail behave exactly as they do for a click.
+
+Start from a database that has never been seeded with demo data (the demo
+estate would otherwise sit alongside your real devices), with `MINEAZY_DEMO`
+unset:
+
+```bash
+# 1. See what it would change. Writes nothing.
+MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='...' \
+  npm run connect -- --dry-run
+
+# 2. Apply it. Re-running is safe: it only fills in what is missing.
+MINEAZY_ADMIN_PASSWORD='...' SNMP_COMMUNITY='...' npm run connect
+
+# SNMPv3 instead of v2c:
+MINEAZY_ADMIN_PASSWORD='...' SNMP_VERSION=3 SNMP_USER='mineazy' \
+  SNMP_AUTH_KEY='...' SNMP_PRIV_KEY='...' npm run connect
+```
+
+On Windows, set the same names with `$env:MINEAZY_ADMIN_PASSWORD = "..."`.
+
+What it does:
+
+1. Signs in and refuses to continue unless the account is an administrator.
+2. Warns if `MINEAZY_DEMO=1` or `collector.mode` is not `real`, because the
+   simulator would overwrite the configuration.
+3. Stores the credential. If one with that name already exists it is reused;
+   the secret is never re-sent.
+4. Switches every `switch`, `router`, `gateway`, `access_point` and `internet`
+   device that has a management address to `snmp`, enables monitoring and
+   binds the credential in the device's Notes as `snmp=<name>`, preserving any
+   notes already there.
+
+The tagging in step 4 is not cosmetic: the collector uses the credential named
+in a device's Notes and otherwise falls back to the **first** credential in the
+table. Tagging keeps a multi-credential estate correct.
+
+Then, in the console:
+
+1. **Discovery → Authorised scan ranges** — add the subnets your equipment
+   lives on, then **Run discovery**. Nothing outside those ranges is probed.
+2. **Settings → Collector mode** — set it to `real`.
+3. Wait one poll interval (60 s by default). Switches that answer SNMP grow
+   ports; links appear as LLDP/CDP/FDB evidence arrives.
+
+Cables discovery cannot infer — an unmanaged switch in the middle, a WAN
+hand-off — are recorded by hand:
+
+```bash
+curl -X POST http://localhost:3100/api/connections \
+  -H 'content-type: application/json' -b cookie.txt \
+  -d '{"localDeviceId":3,"localPortId":12,"remoteDeviceId":4,
+       "remotePortId":7,"type":"uplink","cableId":"A-114"}'
+```
+
+> **A wrong credential looks like an outage.** With `monitorMethod = snmp`
+> there is no ICMP fallback: a failed SNMP poll counts as unreachable, so a
+> healthy switch goes OFFLINE after the failure threshold. The device page
+> names the reason — read it before believing the map.
+
+---
+
 ## Next
 
 * [snmp.md](snmp.md) — enable SNMP on your switches.

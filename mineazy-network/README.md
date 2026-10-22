@@ -112,6 +112,7 @@ observations behind each claim is in
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm test` | The full test suite (`node --test` + `tsx`). |
 | `npm run collector` | The monitoring engine as a standalone process. |
+| `npm run connect` | Point a fresh install at real hardware: stores the SNMP credential and switches infrastructure to SNMP polling. |
 | `npm run demo:seed` | Build/refresh the simulated demo estate. |
 | `npm run demo:scenario` | The end-to-end acceptance scenario (31 checks). |
 
@@ -214,6 +215,7 @@ mineazy-network/
 │   └── instrumentation.ts   # The in-process collector hook
 ├── scripts/
 │   ├── seed-demo.ts         #   build the simulated estate
+│   ├── connect-network.mjs  #   point a real install at your hardware
 │   └── acceptance-scenario.ts #  the end-to-end proof
 ├── tests/                   # 153 tests across 11 suites
 ├── docs/                    # install, SNMP, discovery, roles, backup,
