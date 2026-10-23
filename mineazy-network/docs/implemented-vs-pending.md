@@ -19,7 +19,7 @@ output, not an expectation.
 
 ```bash
 npm install
-npm test                 # 153 tests, 42 suites, 0 failures
+npm test                 # 161 tests, 44 suites, 0 failures
 npm run typecheck        # tsc --noEmit, exit code 0
 npm run build            # 39/39 pages generated, 0 warnings
 npm run demo:scenario    # 31 checks passed, 0 failed
@@ -27,13 +27,13 @@ npm run demo:scenario    # 31 checks passed, 0 failed
 
 | Command | Observed result |
 | --- | --- |
-| `npm test` | `tests 153`, `suites 42`, `pass 153`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0` |
+| `npm test` | `tests 161`, `suites 44`, `pass 161`, `fail 0`, `cancelled 0`, `skipped 0`, `todo 0` |
 | `npm run typecheck` | No output, exit code `0` |
 | `npm run build` | `✓ Compiled successfully`, `✓ Generating static pages using 7 workers (39/39)`, no warnings, no errors |
 | `npm run demo:scenario` | `passed 31`, `failed 0`, `ACCEPTANCE SCENARIO PASSED — every check succeeded.` |
 | `npm run lint` | No output, exit code `0` — 0 errors, 0 warnings |
 
-### The test suite (11 files, 153 tests)
+### The test suite (11 files, 161 tests)
 
 | File | Tests | What it guards |
 | --- | --- | --- |
@@ -547,7 +547,7 @@ SNMP/LLDP/CDP/FDB/ARP discovery bounded to authorised ranges, fault-path
 analysis with blast radius, the full console, three-role RBAC, encrypted
 credentials, an audit trail, a standalone collector that runs whether or not
 a browser is open, a Docker deployment and seven documentation guides — all
-proven by **153 automated tests**, a **clean typecheck**, a **clean lint**,
+proven by **161 automated tests**, a **clean typecheck**, a **clean lint**,
 a **warning-free production build**, a **31-check end-to-end acceptance
 scenario** and a browser walkthrough of a real fault → acknowledge → recovery
 cycle.

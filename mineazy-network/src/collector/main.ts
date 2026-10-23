@@ -50,8 +50,19 @@ export async function runOnce(): Promise<void> {
   await runCollectorCycle(options);
 }
 
-/** Start the collector loop. Returns a function that stops it. */
-export function startCollectorLoop(intervalMs = 30_000): () => void {
+/**
+ * Start the collector loop. Returns a function that stops it.
+ *
+ * `keepAlive` decides whether the loop alone keeps the Node process alive.
+ * The standalone entry point needs it (otherwise the process exits as soon as
+ * the first cycle finishes, because an unref'd timer does not hold the event
+ * loop open). The in-process collector does not: the HTTP server is already
+ * holding the loop open, and an unref'd timer lets the server shut down.
+ */
+export function startCollectorLoop(
+  intervalMs = 30_000,
+  options: { keepAlive?: boolean } = {}
+): () => void {
   let stopped = false;
   const tick = async (): Promise<void> => {
     if (stopped) return;
@@ -65,7 +76,7 @@ export function startCollectorLoop(intervalMs = 30_000): () => void {
 
   void tick();
   const timer = setInterval(() => void tick(), intervalMs);
-  timer.unref?.();
+  if (!options.keepAlive) timer.unref?.();
 
   return () => {
     stopped = true;
@@ -100,7 +111,7 @@ async function main(): Promise<void> {
     source: "collector",
   });
 
-  const stop = startCollectorLoop();
+  const stop = startCollectorLoop(30_000, { keepAlive: true });
 
   const shutdown = (): void => {
     console.log("[collector] stopping.");

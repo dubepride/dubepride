@@ -17,9 +17,12 @@ import {
   parseCidr,
   hostsInBlock,
   isAddressAuthorised,
+  isUnicastHostAddress,
+  usableArpEntries,
   localIpv4Networks,
   listLocalInterfaces,
   MAX_SCAN_HOSTS,
+  type ArpEntry,
   type CidrBlock,
 } from "../src/lib/net/discovery";
 
@@ -108,6 +111,76 @@ describe("scan limits", () => {
   test("a single sweep is capped so one job cannot run away", () => {
     assert.ok(MAX_SCAN_HOSTS > 0);
     assert.ok(MAX_SCAN_HOSTS <= 1_000_000);
+  });
+});
+
+describe("usableArpEntries", () => {
+  const blocks: CidrBlock[] = [parseCidr("192.168.1.0/24")];
+  const entry = (ip: string, mac = "AA:BB:CC:DD:EE:FF"): ArpEntry => ({
+    ip,
+    mac,
+    interface: "192.168.1.53",
+    state: "dynamic",
+  });
+
+  test("unicast hosts inside an authorised range are kept", () => {
+    const kept = usableArpEntries(
+      [entry("192.168.1.1", "74:24:9F:57:D9:91"), entry("192.168.1.50", "B0:83:FE:B8:46:3B")],
+      blocks
+    );
+    assert.deepEqual(
+      kept.map((e) => e.ip),
+      ["192.168.1.1", "192.168.1.50"]
+    );
+  });
+
+  test("the subnet broadcast is dropped even when it carries a group MAC", () => {
+    assert.equal(usableArpEntries([entry("192.168.1.255", "FF:FF:FF:FF:FF:FF")], blocks).length, 0);
+  });
+
+  test("multicast, link-local and loopback chatter is dropped", () => {
+    const kept = usableArpEntries(
+      [
+        entry("224.0.0.22", "01:00:5E:00:00:16"),
+        entry("239.255.255.250"),
+        entry("169.254.10.4"),
+        entry("127.0.0.1"),
+      ],
+      blocks
+    );
+    assert.equal(kept.length, 0);
+  });
+
+  test("an address outside every authorised range is dropped", () => {
+    assert.equal(usableArpEntries([entry("192.168.2.10")], blocks).length, 0);
+    assert.equal(usableArpEntries([entry("8.8.8.8")], blocks).length, 0);
+  });
+
+  test("the same address listed twice becomes one device", () => {
+    assert.equal(usableArpEntries([entry("192.168.1.1"), entry("192.168.1.1")], blocks).length, 1);
+  });
+
+  test("with no authorised ranges nothing is kept", () => {
+    assert.equal(usableArpEntries([entry("192.168.1.1")], []).length, 0);
+  });
+});
+
+describe("isUnicastHostAddress", () => {
+  test("ordinary host addresses are unicast", () => {
+    assert.equal(isUnicastHostAddress("192.168.1.53"), true);
+    assert.equal(isUnicastHostAddress("10.0.0.1"), true);
+    assert.equal(isUnicastHostAddress("172.16.4.9"), true);
+  });
+
+  test("group, loopback, link-local and malformed addresses are not", () => {
+    assert.equal(isUnicastHostAddress("224.0.0.1"), false);
+    assert.equal(isUnicastHostAddress("239.255.255.250"), false);
+    assert.equal(isUnicastHostAddress("255.255.255.255"), false);
+    assert.equal(isUnicastHostAddress("127.0.0.1"), false);
+    assert.equal(isUnicastHostAddress("169.254.1.1"), false);
+    assert.equal(isUnicastHostAddress("0.0.0.0"), false);
+    assert.equal(isUnicastHostAddress("not-an-ip"), false);
+    assert.equal(isUnicastHostAddress("999.1.1.1"), false);
   });
 });
 

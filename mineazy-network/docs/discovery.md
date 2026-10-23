@@ -73,13 +73,31 @@ For every authorised address, in order:
 2. **TCP probe** (only if TCP ports are configured and the ping failed) —
    a connection attempt against the management ports.
 
-A host that answers either way is recorded with the method that worked and
-the round-trip latency.
+A host that answers either way is recorded with the method that worked, the
+round-trip latency, and — when the resolver knows it — a **reverse-DNS
+hostname**. The lookup is best-effort and time-limited: a device with no PTR
+record simply has no name, and a slow resolver can never stall a sweep.
 
-Each hit becomes a device record with `Discovery_Source = 'active_scan'`. The
-device is created with `Monitoring_Enabled` off until somebody decides it
-should be monitored, and its `Health_State` is `UNMONITORED` — not `ONLINE`.
-A host that has been *seen* is not a host that has been *verified*.
+The sweep runs a bounded pool of probes (24 by default) rather than one
+address at a time. That distinction matters: a serial sweep spends a full
+timeout on every silent address, so a `/24` took longer than the 120-second
+sweep limit and was silently cut in half. `discovery.rateLimitPerSecond` still
+paces how fast new probes are dispatched.
+
+Because a ping only yields an address, the sweep merges the neighbour table
+by IP to recover each device's **MAC**, and runs the classifier over the
+hostname and MAC. That is what fills in `Manufacturer` and, where the evidence
+supports it, a category with its confidence.
+
+Each hit becomes a device record with `Discovery_Source = 'active_scan'`.
+New devices are monitored (`Monitoring_Enabled` defaults on) and start in
+`Health_State = 'UNKNOWN'`; they become `ONLINE` only after the collector has
+actually reached them. A host that has been *seen* is not a host that has been
+*verified*.
+
+A sweep never overwrites a device that SNMP or an administrator already
+established: enrichment is limited to rows whose source is `arp`,
+`active_scan` or `unknown`.
 
 ### Tuning the rate limit
 
@@ -131,6 +149,25 @@ Two sources, both read:
 The ARP job on the Discovery screen reads the host table and creates devices
 with `Discovery_Source = 'arp'`. It is a read-only operation — nothing is
 sent.
+
+The neighbour table is **not** an inventory, and the job does not treat it as
+one. An entry becomes a device only when:
+
+* the address is **unicast** — multicast groups, the subnet broadcast,
+  link-local chatter and loopback are dropped;
+* the address is inside an **authorised range**, the same rule the sweep
+  follows;
+* the MAC is a **unicast MAC**, which also removes the subnet broadcast that
+  Windows lists against `FF-FF-FF-FF-FF-FF`.
+
+The summary reports how many entries were read and how many were ignored, so
+the numbers are auditable. The MAC is then classified exactly as the sweep
+does, which gives these rows a `Manufacturer` even though they were never
+pinged.
+
+This matters on a real network: 48 neighbour entries commonly include 8–9
+group addresses. Importing them used to create devices called `255.255.255.255`
+and `224.0.0.22`.
 
 ### How a link becomes an edge
 

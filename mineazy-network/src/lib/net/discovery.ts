@@ -17,6 +17,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { promises as dns } from "node:dns";
 import os from "node:os";
 import { enabledScanTargets, touchScanTarget } from "../repo/discovery";
 import { pingProbe, tcpProbe } from "./probes";
@@ -131,6 +132,48 @@ export function isAddressAuthorised(ip: string, blocks: CidrBlock[]): boolean {
 /** Refuse to expand a range that is implausibly large for an active sweep. */
 export const MAX_SCAN_HOSTS = 65_536;
 
+/**
+ * True when an address can belong to exactly one host.
+ *
+ * A neighbour table is full of entries that are not devices: multicast group
+ * memberships, the subnet broadcast, link-local chatter and loopback. None of
+ * them may become an inventory row.
+ */
+export function isUnicastHostAddress(ip: string): boolean {
+  let value: number;
+  try {
+    value = ipToInt(ip);
+  } catch {
+    return false;
+  }
+  const first = (value >>> 24) & 255;
+  if (first === 0 || first === 127) return false; // "this network", loopback
+  if (first >= 224) return false; // multicast, reserved, 255.255.255.255
+  if (first === 169 && ((value >>> 16) & 255) === 254) return false; // link-local
+  return true;
+}
+
+/**
+ * The part of a neighbour table that may become inventory.
+ *
+ * Reading the neighbour table sends no packets, but it still obeys the same
+ * two rules as the active sweep: the address must be unicast and must sit
+ * inside a range an administrator authorised. Group MACs are dropped too,
+ * which removes the subnet broadcast Windows lists as FF-FF-FF-FF-FF-FF.
+ */
+export function usableArpEntries(entries: ArpEntry[], blocks: CidrBlock[]): ArpEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!isUnicastHostAddress(entry.ip)) return false;
+    if (!isAddressAuthorised(entry.ip, blocks)) return false;
+    const firstOctet = Number.parseInt(entry.mac.slice(0, 2), 16);
+    if (Number.isFinite(firstOctet) && (firstOctet & 1) === 1) return false; // group MAC
+    if (seen.has(entry.ip)) return false;
+    seen.add(entry.ip);
+    return true;
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* The sweeper                                                         */
 /* ------------------------------------------------------------------ */
@@ -149,6 +192,15 @@ export interface ScanHit {
 export interface SweepOptions {
   /** Maximum probes per second across the whole sweep. */
   rateLimitPerSecond: number;
+  /**
+   * Probes kept in flight at once.
+   *
+   * A sweep must not be serial: one unreachable address costs a full timeout,
+   * so a /24 took longer than the sweep's own time limit and was cut in half.
+   * Bounded concurrency keeps the run short while `rateLimitPerSecond` still
+   * caps how fast new probes are dispatched.
+   */
+  concurrency: number;
   /** TCP ports to try when ICMP is filtered (usually the management port). */
   tcpPorts: number[];
   /** Per-probe timeout. */
@@ -173,6 +225,7 @@ export interface SweepResult {
 
 const DEFAULTS: SweepOptions = {
   rateLimitPerSecond: 50,
+  concurrency: 24,
   tcpPorts: [],
   timeoutMs: 1000,
   maxDurationMs: 120_000,
@@ -213,25 +266,41 @@ export async function sweepAuthorisedRanges(options: Partial<SweepOptions> = {})
   }
 
   const minIntervalMs = opts.rateLimitPerSecond > 0 ? 1000 / opts.rateLimitPerSecond : 0;
+  const deadline = started + opts.maxDurationMs;
+  const concurrency = Math.max(1, Math.min(opts.concurrency, scanList.length || 1));
 
-  for (const ip of scanList) {
-    if (opts.shouldStop?.()) {
-      return { hits, addressesScanned: scanned, durationMs: Date.now() - started, truncated: true, refused };
-    }
-    if (Date.now() - started > opts.maxDurationMs) {
-      return { hits, addressesScanned: scanned, durationMs: Date.now() - started, truncated: true, refused };
-    }
+  let cursor = 0;
+  let stopped = false;
+  let nextDispatchAt = started;
 
-    // The authorisation gate — per address, not per range.
+  /** Reserve the next dispatch slot so the sweep never exceeds its rate. */
+  async function waitForDispatchSlot(): Promise<void> {
+    if (minIntervalMs <= 0) return;
+    const now = Date.now();
+    const at = Math.max(now, nextDispatchAt);
+    nextDispatchAt = at + minIntervalMs;
+    if (at > now) await sleep(at - now);
+  }
+
+  /** One probe, including the per-address authorisation gate. */
+  async function probe(ip: string): Promise<void> {
     if (!isAddressAuthorised(ip, blocks)) {
       refused += 1;
-      continue;
+      return;
     }
 
-    const targetStarted = Date.now();
+    await waitForDispatchSlot();
+    if (opts.shouldStop?.() || Date.now() > deadline) {
+      stopped = true;
+      return;
+    }
+
     const ping = await pingProbe(ip, opts.timeoutMs);
     if (ping.ok) {
-      hits.push({ ip, latencyMs: ping.latencyMs, method: "icmp", hostname: null });
+      // Only a host that answered is worth a reverse lookup, so this costs
+      // one resolver query per live device rather than one per address.
+      const hostname = await reverseLookup(ip, opts.timeoutMs);
+      hits.push({ ip, latencyMs: ping.latencyMs, method: "icmp", hostname });
     } else if (opts.tcpPorts.length > 0) {
       for (const port of opts.tcpPorts) {
         const tcp = await tcpProbe(ip, port, opts.timeoutMs);
@@ -244,29 +313,59 @@ export async function sweepAuthorisedRanges(options: Partial<SweepOptions> = {})
 
     scanned += 1;
     opts.onProgress?.(scanned, scanList.length, hits.length);
+  }
 
-    // Rate limit: sleep so the sweep never exceeds the configured rate.
-    const elapsed = Date.now() - targetStarted;
-    if (minIntervalMs > 0 && elapsed < minIntervalMs) {
-      await sleep(minIntervalMs - elapsed);
+  async function worker(): Promise<void> {
+    while (!stopped) {
+      if (opts.shouldStop?.() || Date.now() > deadline) {
+        stopped = true;
+        return;
+      }
+      const index = cursor++;
+      if (index >= scanList.length) return;
+      await probe(scanList[index]);
     }
   }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   for (const target of targets) {
     await touchScanTarget(target.id).catch(() => undefined);
   }
 
+  hits.sort((a, b) => ipToInt(a.ip) - ipToInt(b.ip));
+
+  const processed = scanned + refused;
   return {
     hits,
     addressesScanned: scanned,
     durationMs: Date.now() - started,
-    truncated: addresses.length > scanList.length,
+    truncated: stopped || processed < scanList.length || addresses.length > scanList.length,
     refused,
   };
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Best-effort reverse DNS for a discovered address.
+ *
+ * Many devices have no PTR record, and a broken resolver must never stall a
+ * sweep, so the lookup races a short timeout and every failure is "no name".
+ * A name is evidence, not a requirement.
+ */
+async function reverseLookup(ip: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const name = await Promise.race([
+      dns.reverse(ip).then((names) => names[0] ?? null),
+      sleep(Math.max(250, Math.min(timeoutMs, 1500))).then(() => null),
+    ]);
+    return name ? name.replace(/\.$/, "") : null;
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ */

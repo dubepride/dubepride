@@ -83,7 +83,7 @@ stays `ONLINE`.
 ## Verify it yourself
 
 ```bash
-npm test                 # 153 tests, 42 suites, 0 failures
+npm test                 # 161 tests, 44 suites, 0 failures
 npm run typecheck        # tsc --noEmit — clean
 npm run build            # 39/39 pages, 0 warnings
 npm run demo:scenario    # 31 end-to-end checks, 0 failures
@@ -217,7 +217,7 @@ mineazy-network/
 │   ├── seed-demo.ts         #   build the simulated estate
 │   ├── connect-network.mjs  #   point a real install at your hardware
 │   └── acceptance-scenario.ts #  the end-to-end proof
-├── tests/                   # 153 tests across 11 suites
+├── tests/                   # 161 tests across 11 suites
 ├── docs/                    # install, SNMP, discovery, roles, backup,
 │                            # troubleshooting, implemented-vs-pending
 ├── Dockerfile

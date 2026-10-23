@@ -12,7 +12,8 @@
  */
 
 import { listScanTargets, listJobs, startJob, finishJob } from "@/lib/repo/discovery";
-import { sweepAuthorisedRanges, readArpTable, localIpv4Networks, listLocalInterfaces } from "@/lib/net/discovery";
+import { sweepAuthorisedRanges, readArpTable, localIpv4Networks, listLocalInterfaces, parseCidr, usableArpEntries } from "@/lib/net/discovery";
+import { classifyDevice, vendorFromMac } from "@/lib/net/classify";
 import { upsertDiscoveredDevice, deviceByIp } from "@/lib/repo/devices";
 import { recordEvent } from "@/lib/repo/events";
 import { recordAudit } from "@/lib/repo/audit";
@@ -59,19 +60,29 @@ export async function POST(request: Request): Promise<Response> {
   try {
     if (kind === "arp") {
       const arp = await readArpTable();
+      // The neighbour table is not an inventory. Multicast, broadcast and
+      // link-local entries — and anything outside the authorised ranges —
+      // are dropped before a device row can be created from them.
+      const entries = usableArpEntries(
+        arp,
+        enabled.map((target) => parseCidr(target.cidr))
+      );
       let created = 0;
-      for (const entry of arp) {
-        const existing = await deviceByIp(entry.ip);
-        if (existing) continue;
+      for (const entry of entries) {
+        const vendor = vendorFromMac(entry.mac);
+        const classification = classifyDevice({ mac: entry.mac });
         const { created: isNew } = await upsertDiscoveredDevice({
           ip: entry.ip,
           mac: entry.mac,
+          manufacturer: vendor ?? undefined,
+          category: classification.category,
           source: "arp",
-          confidence: "unknown",
+          confidence: classification.confidence,
         });
         if (isNew) created += 1;
       }
-      const summary = `${arp.length} neighbour entr${arp.length === 1 ? "y" : "ies"} read, ${created} new device(s).`;
+      const ignored = arp.length - entries.length;
+      const summary = `${arp.length} neighbour entr${arp.length === 1 ? "y" : "ies"} read, ${entries.length} usable (${ignored} ignored), ${created} new device(s).`;
       await finishJob(jobId, "completed", summary);
       await recordEvent({
         type: "discovery_completed",
@@ -100,21 +111,41 @@ export async function POST(request: Request): Promise<Response> {
       maxDurationMs: 120_000,
     });
 
+    // A sweep only carries an address. The neighbour table supplies the MAC,
+    // which is what the classifier needs for a vendor, so merge the two.
+    const macByIp = new Map(
+      usableArpEntries(await readArpTable(), enabled.map((target) => parseCidr(target.cidr))).map(
+        (entry) => [entry.ip, entry.mac] as const
+      )
+    );
+
     let created = 0;
+    let updated = 0;
     for (const hit of result.hits) {
       const existing = await deviceByIp(hit.ip);
-      if (existing) continue;
+      // A scan must never overwrite what SNMP or an administrator established.
+      if (existing && !["arp", "active_scan", "unknown"].includes(existing.discoverySource)) {
+        continue;
+      }
+
+      const mac = macByIp.get(hit.ip) ?? existing?.mac ?? "";
+      const classification = classifyDevice({ hostname: hit.hostname, mac });
       const { created: isNew } = await upsertDiscoveredDevice({
         ip: hit.ip,
+        mac,
+        hostname: hit.hostname ?? undefined,
+        manufacturer: vendorFromMac(mac) ?? undefined,
+        category: classification.category,
+        confidence: classification.confidence,
         source: "active_scan",
-        confidence: "unknown",
       });
       if (isNew) created += 1;
+      else updated += 1;
     }
 
     const summary =
       `${result.addressesScanned} address(es) scanned, ${result.hits.length} responded, ` +
-      `${created} new device(s) added` +
+      `${created} new device(s), ${updated} updated` +
       (result.truncated ? " (the sweep was truncated by the safety limit)" : "") +
       (result.refused > 0 ? `, ${result.refused} address(es) refused as unauthorised` : "") +
       ".";
