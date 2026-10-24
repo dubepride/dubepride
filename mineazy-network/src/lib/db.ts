@@ -49,7 +49,7 @@ export async function batch(db: Client, statements: SqlStatement[]): Promise<voi
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_SETTINGS: Record<string, string> = {
-  "site.name": "Mineazy Network",
+  "site.name": "Automap",
   "site.description": "",
   "monitor.staleAfterSeconds": "300",
   "monitor.defaultPollSeconds": "60",

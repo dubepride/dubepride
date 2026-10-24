@@ -284,6 +284,31 @@ function VoipGlyph({ led }: { led: string }) {
   );
 }
 
+function PhoneGlyph({ led }: { led: string }) {
+  // A handset: tall body, earpiece slot, home indicator.
+  return (
+    <>
+      <rect x={20} y={4} width={24} height={42} rx={5} fill={BODY} />
+      <rect x={23.5} y={9} width={17} height={30} rx={2} fill={INSET} stroke="none" />
+      <path d="M29 6.5h6" opacity={0.6} />
+      <path d="M30 42h4" opacity={0.6} />
+      <Led cx={41} cy={39} colour={led} r={1.3} />
+    </>
+  );
+}
+
+function TabletGlyph({ led }: { led: string }) {
+  // A tablet: wider body, no earpiece slot.
+  return (
+    <>
+      <rect x={9} y={8} width={46} height={36} rx={4} fill={BODY} />
+      <rect x={13.5} y={12.5} width={37} height={27} rx={2} fill={INSET} stroke="none" />
+      <circle cx={52} cy={26} r={1.4} fill="currentColor" opacity={0.4} stroke="none" />
+      <Led cx={15.5} cy={39.5} colour={led} r={1.3} />
+    </>
+  );
+}
+
 function IndustrialGlyph({ led }: { led: string }) {
   return (
     <>
@@ -344,6 +369,8 @@ const GLYPHS: Record<DeviceCategory, (props: { led: string }) => React.ReactElem
   access_point: AccessPointGlyph,
   nas: NasGlyph,
   voip_phone: VoipGlyph,
+  phone: PhoneGlyph,
+  tablet: TabletGlyph,
   industrial: IndustrialGlyph,
   unknown: UnknownGlyph,
 };

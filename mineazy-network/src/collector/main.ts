@@ -24,6 +24,7 @@ import { recordEvent } from "../lib/repo/events";
 import { acquireLock, releaseLock } from "./lock";
 import { runCollectorCycle, type CollectorOptions } from "./worker";
 import { seedSimulatedTopology, simulateCycle } from "./simulator";
+import { runAutoDiscovery } from "../lib/net/auto-discover";
 
 /** How the collector is configured right now. */
 export async function currentOptions(): Promise<CollectorOptions> {
@@ -32,6 +33,42 @@ export async function currentOptions(): Promise<CollectorOptions> {
     snmpRetries: await getNumberSetting("monitor.snmpRetries", 1),
     mode: ((await getSetting("collector.mode", "real")) as CollectorOptions["mode"]) ?? "real",
   };
+}
+
+/**
+ * How often the collector re-maps the network.
+ *
+ * Monitoring runs every 30 seconds; a discovery sweep is far more expensive
+ * (one packet per address), so it runs on its own, slower clock. The first
+ * pass happens immediately, which is what makes the map fill itself in as soon
+ * as the console is connected.
+ */
+const AUTO_DISCOVERY_INTERVAL_MS = 10 * 60_000;
+let lastAutoDiscoveryAt = 0;
+let autoDiscoveryRunning = false;
+
+/** Run the automatic discovery pass when its interval has elapsed. */
+async function maybeAutoDiscover(): Promise<void> {
+  if (autoDiscoveryRunning) return;
+  if (Date.now() - lastAutoDiscoveryAt < AUTO_DISCOVERY_INTERVAL_MS) return;
+
+  autoDiscoveryRunning = true;
+  lastAutoDiscoveryAt = Date.now();
+  try {
+    const result = await runAutoDiscovery();
+    console.log(
+      `[collector] auto-discovery: ${result.addressesScanned} address(es), ` +
+        `${result.responded} responded, ${result.created} new, ${result.updated} updated, ` +
+        `${result.inferred.linked} link(s) inferred` +
+        (result.arpOnly ? " (neighbour table only — no scan range registered)" : "") +
+        "."
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[collector] auto-discovery failed: ${message}`);
+  } finally {
+    autoDiscoveryRunning = false;
+  }
 }
 
 /** Run one cycle according to the current mode. */
@@ -48,6 +85,7 @@ export async function runOnce(): Promise<void> {
   }
 
   await runCollectorCycle(options);
+  await maybeAutoDiscover();
 }
 
 /**
@@ -94,7 +132,7 @@ async function main(): Promise<void> {
   }
 
   const options = await currentOptions();
-  console.log("[collector] Mineazy Network collector starting.");
+  console.log("[collector] Automap collector starting.");
   console.log(`[collector] mode = ${options.mode}`);
   if (options.mode === "simulated") {
     console.log("[collector] SIMULATED MODE — the data on screen is generated, not measured.");

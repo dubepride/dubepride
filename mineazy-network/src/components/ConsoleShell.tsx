@@ -142,7 +142,7 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
         aria-label="Toggle navigation"
       >
         <Icon name="grid" size={14} />
-        Mineazy
+        Automap
       </button>
 
       <nav
@@ -154,9 +154,9 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
             <Icon name="map" size={18} />
           </span>
           <span className="leading-tight">
-            <span className="block text-sm font-extrabold tracking-[0.2em] text-white">MINEAZY</span>
+            <span className="block text-sm font-extrabold tracking-[0.2em] text-white">AUTOMAP</span>
             <span className="block text-[0.6rem] font-semibold tracking-[0.3em] text-neon uppercase">
-              Network
+              Live topology
             </span>
           </span>
         </Link>

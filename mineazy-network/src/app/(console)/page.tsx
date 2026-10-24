@@ -143,7 +143,7 @@ export default function OverviewPage() {
       {data.demoMode ? (
         <div className="mb-4">
           <Notice tone="warn" title="Demo mode — this data is simulated">
-            Mineazy Network is running with <code className="font-mono">MINEAZY_DEMO=1</code>. Every
+            Automap is running with <code className="font-mono">MINEAZY_DEMO=1</code>. Every
             device, port, counter and incident below comes from the built-in simulator. No real
             hardware is being polled.
           </Notice>
@@ -503,3 +503,4 @@ export default function OverviewPage() {
     </>
   );
 }
+

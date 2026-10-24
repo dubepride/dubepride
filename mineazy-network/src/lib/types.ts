@@ -79,6 +79,8 @@ export type DeviceCategory =
   | "switch"
   | "desktop"
   | "laptop"
+  | "phone"
+  | "tablet"
   | "printer"
   | "server"
   | "nvr"
@@ -96,6 +98,8 @@ export const DEVICE_CATEGORIES: readonly DeviceCategory[] = [
   "switch",
   "desktop",
   "laptop",
+  "phone",
+  "tablet",
   "printer",
   "server",
   "nvr",
@@ -382,6 +386,8 @@ export interface Device {
   failureThreshold: number;
   discoverySource: DiscoverySource;
   classificationConfidence: Confidence;
+  /** Why the device was put in that category, in plain words. */
+  classificationEvidence: string;
   healthState: HealthState;
   healthReason: string;
   firstDiscoveredAt: number | null;
@@ -451,6 +457,15 @@ export interface TopologyNode {
   childCount: number;
   x: number;
   y: number;
+  /* --- Inventory detail, so the node is readable without opening it ------ */
+  manufacturer: string;
+  model: string;
+  mac: string;
+  /** Sum of the measured port rates on this device, bits/second. */
+  inRateBps: number | null;
+  outRateBps: number | null;
+  /** Number of managed ports the device exposes (0 when none are known). */
+  portCount: number;
 }
 
 export interface TopologyEdge {
@@ -491,6 +506,11 @@ export interface TopologyEdge {
   outErrors: number | null;
   inDiscards: number | null;
   outDiscards: number | null;
+  /**
+   * Where the rates came from: a switch port's counters, or the device's own
+   * aggregate counters when the cable has no managed port behind it.
+   */
+  rateSource: "port" | "device" | null;
 }
 
 export interface TopologySnapshot {

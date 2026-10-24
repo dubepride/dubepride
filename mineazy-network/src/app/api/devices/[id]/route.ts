@@ -44,6 +44,8 @@ const CATEGORIES: readonly DeviceCategory[] = [
   "switch",
   "desktop",
   "laptop",
+  "phone",
+  "tablet",
   "printer",
   "server",
   "nvr",

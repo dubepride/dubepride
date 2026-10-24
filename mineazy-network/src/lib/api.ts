@@ -19,14 +19,29 @@
 import { cookies } from "next/headers";
 import { accountByToken } from "./repo/users";
 import { SESSION_COOKIE } from "./session";
-import type { PermissionKey } from "./rbac";
+import { permissionsForRole, type PermissionKey } from "./rbac";
 import type { User } from "./types";
+
+const NO_AUTH = process.env.MINEAZY_NO_AUTH === "1" || process.env.MINEAZY_NO_AUTH === "true";
+
+const FAKE_ACCOUNT: SessionAccount = {
+  id: 0,
+  username: "local",
+  email: "local@mineazy.local",
+  displayName: "Local Operator",
+  role: "administrator",
+  active: true,
+  createdAt: Date.now(),
+  lastLoginAt: Date.now(),
+  permissions: permissionsForRole("administrator"),
+};
 
 /** The signed-in account plus its resolved capability map. */
 export type SessionAccount = User & { permissions: Record<PermissionKey, boolean> };
 
 /** The account for the request, or null when the caller is not signed in. */
 export async function currentAccount(): Promise<SessionAccount | null> {
+  if (NO_AUTH) return FAKE_ACCOUNT;
   const store = await cookies();
   return accountByToken(store.get(SESSION_COOKIE)?.value);
 }
@@ -60,6 +75,7 @@ export function forbidden(message = "Your role does not allow this action."): Re
 export async function requirePermission(
   permission: PermissionKey
 ): Promise<{ account: SessionAccount; response: null } | { account: null; response: Response }> {
+  if (NO_AUTH) return { account: FAKE_ACCOUNT, response: null };
   const account = await currentAccount();
   if (!account) return { account: null, response: unauthorized() };
   if (account.permissions[permission] !== true) {

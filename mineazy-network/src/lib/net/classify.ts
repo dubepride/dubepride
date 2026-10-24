@@ -63,18 +63,26 @@ export interface Classification {
 const OUI_VENDORS: Record<string, string> = {
   "00:00:0c": "Cisco",
   "00:00:ab": "Marvell",
+  "00:01:6c": "Hewlett Packard",
   "00:1b:21": "Huawei",
   "00:1e:0f": "Cisco-Linksys",
+  "00:23:68": "Cisco",
   "00:26:08": "Ruijie",
   "00:26:5a": "MikroTik",
   "00:50:56": "VMware",
   "00:60:35": "Merit",
+  "04:ee:cd": "Huawei",
   "08:00:27": "Oracle VirtualBox",
   "18:b4:30": "Nest Labs",
   "1c:1b:0d": "Giga-Byte",
+  "1c:1b:b5": "TP-Link",
+  "1e:29:70": "Xiaomi",
   "24:4b:fe": "Ubiquiti Networks",
+  "2c:27:d7": "Hewlett Packard",
   "34:85:18": "Raspberry Pi Foundation",
+  "3c:1b:f8": "Huawei",
   "40:23:cd": "Tp-Link",
+  "40:ae:30": "Huawei",
   "44:d9:e7": "Ubiquiti Networks",
   "48:8f:5a": "Ubiquiti Networks",
   "50:c7:bf": "TP-Link",
@@ -82,19 +90,27 @@ const OUI_VENDORS: Record<string, string> = {
   "60:32:b1": "Liteon",
   "64:6d:ad": "Hewlett Packard",
   "68:d5:90": "Cameo",
+  "70:1c:e7": "Shenzhen",
   "70:56:81": "Apple",
+  "70:b5:e8": "NXP Semiconductors",
+  "74:24:9f": "Tenda",
   "74:83:c2": "Raspberry Pi Trading",
+  "76:64:31": "Samsung",
   "78:11:dc": "Ubiquiti Networks",
   "80:2a:a8": "Ubiquiti Networks",
   "84:7b:eb": "Livescribe",
+  "84:94:59": "AMPAK Technology",
   "8c:85:90": "Apple",
   "90:9c:92": "Chengdu",
+  "90:b7:90": "Asustek",
   "94:3c:c6": "Apple",
   "98:5c:ed": "Apple",
+  "9e:02:3a": "Intel",
   "a0:36:9f": "TP-Link",
   "a4:2b:b0": "Apple",
   "a4:cf:12": "Espressif",
   "ac:84:c6": "TP-Link",
+  "b0:83:fe": "Hewlett Packard",
   "b0:be:76": "TP-Link",
   "b4:fb:e4": "Ubiquiti Networks",
   "c0:25:e9": "TP-Link",
@@ -103,13 +119,18 @@ const OUI_VENDORS: Record<string, string> = {
   "cc:32:e5": "Xiaomi",
   "d4:6a:a8": "Hewlett Packard",
   "d8:5d:4c": "TP-Link",
+  "dc:4a:9e": "Intel",
   "dc:a6:32": "Raspberry Pi Trading",
+  "e0:ca:3c": "TP-Link",
   "e4:5f:01": "Raspberry Pi Trading",
+  "e8:a0:ed": "Liteon Technology",
   "e8:db:84": "Espressif",
   "ec:fa:bc": "Alps Electric",
   "f0:9f:c2": "Ubiquiti Networks",
   "f4:f2:6d": "TP-Link",
   "f8:0f:6d": "Huawei",
+  "f8:ed:fc": "QNAP",
+  "fc:06:8c": "Shenzhen Foscam",
   "fc:ec:da": "Ubiquiti Networks",
 };
 
@@ -211,12 +232,12 @@ const RULES: Rule[] = [
   },
   {
     category: "nvr",
-    patterns: [/\bnvr\b/i, /\bdvr\b/i, /\brecorder\b/i],
+    patterns: [/\bnvr\b/i, /\bdvr\b/i, /\brecorder\b/i, /\bhikvision\b/i, /\bdahua\b/i, /\breolink\b/i, /\bamcrest\b/i],
     confidence: "probable",
   },
   {
     category: "camera",
-    patterns: [/\bcamera\b/i, /\bcctv\b/i, /\bipcam\b/i, /\bdome\b/i, /\bbullet\s?cam\b/i],
+    patterns: [/\bcamera\b/i, /\bcctv\b/i, /\bipcam\b/i, /\bdome\b/i, /\bbullet\s?cam\b/i, /\bfoscam\b/i, /\banpviz\b/i],
     confidence: "probable",
   },
   {
@@ -230,8 +251,28 @@ const RULES: Rule[] = [
     confidence: "probable",
   },
   {
+    category: "tablet",
+    patterns: [/\bipad\b/i, /\btablet\b/i, /\bgalaxy[ _-]?tab\b/i, /\bpixel[ _-]?tab\b/i],
+    confidence: "probable",
+  },
+  {
+    category: "phone",
+    patterns: [
+      /\biphone\b/i,
+      /\bgalaxy[ _-]?(s|a|note|fold|flip)\d*/i,
+      /\bpixel\b/i,
+      /\boneplus\b/i,
+      /\bredmi\b/i,
+      /\bxiaomi\b/i,
+      /\bmoto\s?[a-z]\b/i,
+      /\bandroid\b/i,
+      /\bphone\b/i,
+    ],
+    confidence: "probable",
+  },
+  {
     category: "voip_phone",
-    patterns: [/\bvoip\b/i, /\bpolycom\b/i, /\bcisco\s?ip\s?phone\b/i, /\bphone\b/i, /\bSIP\b/],
+    patterns: [/\bvoip\b/i, /\bpolycom\b/i, /\bcisco\s?ip\s?phone\b/i, /\bSIP\b/],
     confidence: "probable",
   },
   {
@@ -388,6 +429,38 @@ function matchesVendor(category: DeviceCategory, vendor: string): boolean {
 }
 
 /**
+ * A readable provisional name for a device that has no hostname.
+ *
+ * "74:24:9F:57:D9:91" tells nobody anything. The label is built from what was
+ * actually observed — the category, the vendor read from the OUI, and the last
+ * two octets of the MAC so two similar devices stay apart. When nothing at all
+ * is known the address is used, which is at least true.
+ */
+export function suggestedName(input: {
+  category?: DeviceCategory | null;
+  manufacturer?: string | null;
+  hostname?: string | null;
+  mac?: string | null;
+  ip?: string | null;
+}): string | undefined {
+  const hostname = input.hostname?.trim();
+  if (hostname) return hostname;
+
+  const hex = (input.mac ?? "").replace(/[^0-9a-fA-F]/g, "");
+  const tail = hex.length >= 12 ? hex.slice(-4).toUpperCase() : "";
+  const vendor = input.manufacturer?.trim();
+  const category = input.category ?? "unknown";
+
+  if (category !== "unknown") {
+    const label = CATEGORY_LABELS[category];
+    const suffix = tail ? ` ${tail}` : input.ip ? ` ${input.ip}` : "";
+    return `${label}${vendor ? ` (${vendor})` : ""}${suffix}`;
+  }
+  if (vendor) return tail ? `${vendor} ${tail}` : `${vendor} device`;
+  return input.ip ? `Device ${input.ip}` : undefined;
+}
+
+/**
  * A short, honest description of a category for the UI.
  */
 export const CATEGORY_LABELS: Record<DeviceCategory, string> = {
@@ -397,6 +470,8 @@ export const CATEGORY_LABELS: Record<DeviceCategory, string> = {
   switch: "Switch",
   desktop: "Desktop",
   laptop: "Laptop",
+  phone: "Phone",
+  tablet: "Tablet",
   printer: "Printer",
   server: "Server",
   nvr: "Network video recorder",

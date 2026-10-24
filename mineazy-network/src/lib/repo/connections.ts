@@ -131,12 +131,19 @@ export async function upsertConnection(input: ConnectionInput): Promise<{ id: nu
   const existing = await queryOne<ConnectionRow>(
     db,
     `SELECT * FROM Connections
-      WHERE (Local_Device_ID = ? AND (Local_Port_ID IS ?))
-         OR (Local_Device_ID = ? AND (Local_Port_ID IS ?))`,
+      WHERE (Local_Device_ID = ? AND (Local_Port_ID IS ?) AND Remote_Device_ID = ? AND (Remote_Port_ID IS ?))
+         OR (Local_Device_ID = ? AND (Local_Port_ID IS ?) AND Remote_Device_ID = ? AND (Remote_Port_ID IS ?))`,
+    // Both orientations of the same pair of endpoints, and only that pair.
+    // Matching on a single endpoint (the earlier query) made every new link to
+    // a hub overwrite the hub's first link instead of being created.
     input.remoteDeviceId,
     input.remotePortId ?? null,
     input.localDeviceId,
-    input.localPortId ?? null
+    input.localPortId ?? null,
+    input.localDeviceId,
+    input.localPortId ?? null,
+    input.remoteDeviceId,
+    input.remotePortId ?? null
   );
 
   const now = Date.now();

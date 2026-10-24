@@ -381,10 +381,37 @@ export interface ArpEntry {
 }
 
 /**
+ * The host's default gateway, read from the routing table.
+ *
+ * This is not a probe: the operating system already knows which address it
+ * sends off-subnet traffic to, and that address is the closest thing to the
+ * network's origin device. Returns null when the route cannot be read.
+ */
+export async function detectDefaultGateway(): Promise<string | null> {
+  const isWindows = process.platform === "win32";
+  const command = isWindows ? "route" : "ip";
+  const args = isWindows ? ["print", "-4", "0.0.0.0"] : ["route", "show", "default"];
+
+  const output = await new Promise<string>((resolve) => {
+    execFile(command, args, { timeout: 5000, windowsHide: true }, (error, stdout, stderr) => {
+      resolve(error ? "" : `${stdout ?? ""}\n${stderr ?? ""}`);
+    });
+  });
+  if (!output.trim()) return null;
+
+  const pattern = isWindows
+    ? /^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\d{1,3}(?:\.\d{1,3}){3})/m
+    : /default\s+via\s+(\d{1,3}(?:\.\d{1,3}){3})/;
+  const match = pattern.exec(output);
+  if (!match) return null;
+  return isUnicastHostAddress(match[1]) ? match[1] : null;
+}
+
+/**
  * Read the host's ARP / neighbour cache.
  *
  * Windows uses `arp -a`, Linux uses `ip neigh`. Both are read-only
- * commands — nothing is sent to the network.
+ * commands - nothing is sent to the network.
  */
 export async function readArpTable(): Promise<ArpEntry[]> {
   const isWindows = process.platform === "win32";

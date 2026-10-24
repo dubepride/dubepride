@@ -219,6 +219,21 @@ async function resolveTopologyGraph(): Promise<TopologyGraph> {
 const LAYOUT_X_SPACING = 300;
 const LAYOUT_Y_SPACING = 180;
 
+/*
+ * A star this wide cannot be a left-to-right row - see the radial layout.
+ *
+ * The rings are compact and their capacity follows the circumference at a
+ * fixed arc spacing. A hundred endpoints therefore stay inside a web about
+ * 1,100px across, which fits on one screen with the equipment icons still
+ * visible. Names and speeds appear as you zoom in.
+ */
+const RADIAL_RING_RADII = [150, 240, 330, 420, 510, 600, 690];
+const RADIAL_ARC_SPACING = 88;
+const RADIAL_CHILD_STEP = 230;
+const RADIAL_RING_CAPACITY = RADIAL_RING_RADII.map((radius) =>
+  Math.max(8, Math.floor((Math.PI * 2 * radius) / RADIAL_ARC_SPACING))
+);
+
 /**
  * Build the canvas payload.
  *
@@ -229,6 +244,17 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
   const graph = await resolveTopologyGraph();
   const locations = await listLocations();
   const locationNames = new Map(locations.map((location) => [location.id, location.name]));
+
+  // Measured traffic per device, summed over its ports. A device with no
+  // managed ports has no rates at all — never a fabricated zero.
+  const deviceRates = new Map<number, { inRate: number | null; outRate: number | null }>();
+  for (const port of graph.ports.values()) {
+    if (port.inRateBps === null && port.outRateBps === null) continue;
+    const current = deviceRates.get(port.deviceId) ?? { inRate: null, outRate: null };
+    if (port.inRateBps !== null) current.inRate = (current.inRate ?? 0) + port.inRateBps;
+    if (port.outRateBps !== null) current.outRate = (current.outRate ?? 0) + port.outRateBps;
+    deviceRates.set(port.deviceId, current);
+  }
 
   // Group children of each parent so siblings sit side by side.
   const siblingIndex = new Map<number, number>();
@@ -242,6 +268,56 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
    * resolved position so the tree reads top-down on the canvas.
    */
   const resolved = new Map<number, { x: number; y: number }>();
+
+  const rootNode =
+    graph.roots.length === 1 ? graph.devices.get(graph.roots[0]) ?? null : null;
+  const radial = rootNode !== null && rootNode.children.length > 6;
+
+  if (radial && rootNode) {
+    /*
+     * A home/office star has one gateway and dozens of endpoints. Laid out as
+     * a row that is a 13,000px horizontal line: the fit-to-screen zoom makes
+     * every node unreadable and the "web" disappears. Arrange the endpoints
+     * on concentric rings around the gateway instead.
+     */
+    resolved.set(rootNode.device.id, { x: 0, y: 0 });
+
+    const children = rootNode.children
+      .map((id) => graph.devices.get(id))
+      .filter((node): node is PositionedDevice => Boolean(node))
+      .sort((a, b) => a.device.name.localeCompare(b.device.name));
+
+    let cursor = 0;
+    for (let ring = 0; cursor < children.length; ring += 1) {
+      const capacity = RADIAL_RING_CAPACITY[Math.min(ring, RADIAL_RING_CAPACITY.length - 1)];
+      const slice = children.slice(cursor, cursor + capacity);
+      const radius =
+        RADIAL_RING_RADII[Math.min(ring, RADIAL_RING_RADII.length - 1)] +
+        Math.max(0, ring - (RADIAL_RING_RADII.length - 1)) * RADIAL_ARC_SPACING;
+      const offset = -Math.PI / 2 + ring * 0.18;
+      for (let index = 0; index < slice.length; index += 1) {
+        const angle = offset + (index * Math.PI * 2) / slice.length;
+        resolved.set(slice[index].device.id, {
+          x: Math.round(Math.cos(angle) * radius),
+          y: Math.round(Math.sin(angle) * radius),
+        });
+      }
+      cursor += capacity;
+    }
+
+    // Anything deeper than the gateway's own ring hangs just below its parent.
+    for (const node of graph.devices.values()) {
+      if (resolved.has(node.device.id) || node.parentId === null) continue;
+      const parent = resolved.get(node.parentId) ?? { x: 0, y: 0 };
+      const parentNode = graph.devices.get(node.parentId);
+      const siblings = parentNode?.children.length ?? 1;
+      const index = parentNode?.children.indexOf(node.device.id) ?? 0;
+      resolved.set(node.device.id, {
+        x: Math.round(parent.x + (index - (siblings - 1) / 2) * 34),
+        y: Math.round(parent.y + RADIAL_CHILD_STEP),
+      });
+    }
+  }
 
   const resolve = (node: PositionedDevice): { x: number; y: number } => {
     const cached = resolved.get(node.device.id);
@@ -270,6 +346,8 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
 
   for (const node of graph.devices.values()) {
     const auto = resolve(node);
+    const rates = deviceRates.get(node.device.id) ?? { inRate: null, outRate: null };
+    const ownPorts = [...graph.ports.values()].filter((port) => port.deviceId === node.device.id);
 
     nodes.push({
       id: `dev-${node.device.id}`,
@@ -288,6 +366,12 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
       childCount: node.children.length,
       x: auto.x,
       y: auto.y,
+      manufacturer: node.device.manufacturer,
+      model: node.device.model,
+      mac: node.device.mac,
+      inRateBps: rates.inRate,
+      outRateBps: rates.outRate,
+      portCount: ownPorts.length,
     });
   }
 
@@ -329,6 +413,24 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
           ? "up"
           : "unknown";
 
+    /*
+     * Rates come from a switch port when there is one. An inferred link has no
+     * port behind it, so the endpoint's own counters are the best evidence of
+     * what that cable is carrying — and the inspector says which it is.
+     */
+    let inRateBps = parentPort?.inRateBps ?? childPort?.inRateBps ?? null;
+    let outRateBps = parentPort?.outRateBps ?? childPort?.outRateBps ?? null;
+    let rateSource: TopologyEdge["rateSource"] =
+      inRateBps === null && outRateBps === null ? null : "port";
+    if (inRateBps === null && outRateBps === null) {
+      const childRates = deviceRates.get(childNode.device.id);
+      if (childRates && (childRates.inRate !== null || childRates.outRate !== null)) {
+        inRateBps = childRates.inRate;
+        outRateBps = childRates.outRate;
+        rateSource = "device";
+      }
+    }
+
     edges.push({
       id: `conn-${connection.id}`,
       connectionId: connection.id,
@@ -339,8 +441,8 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
       label,
       cableId: connection.cableId,
       speedBps: parentPort?.speedBps ?? childPort?.speedBps ?? null,
-      inRateBps: parentPort?.inRateBps ?? childPort?.inRateBps ?? null,
-      outRateBps: parentPort?.outRateBps ?? childPort?.outRateBps ?? null,
+      inRateBps,
+      outRateBps,
       verified: connection.verified,
       confidence: connection.confidence,
       sourcePort: parentPort ? parentPort.label || parentPort.ifName : "",
@@ -358,6 +460,7 @@ export async function buildTopologySnapshot(): Promise<TopologySnapshot> {
       outErrors: parentPort?.outErrors ?? childPort?.outErrors ?? null,
       inDiscards: parentPort?.inDiscards ?? childPort?.inDiscards ?? null,
       outDiscards: parentPort?.outDiscards ?? childPort?.outDiscards ?? null,
+      rateSource,
     });
   }
 

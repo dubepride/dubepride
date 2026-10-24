@@ -13,8 +13,9 @@
 
 import { listScanTargets, listJobs, startJob, finishJob } from "@/lib/repo/discovery";
 import { sweepAuthorisedRanges, readArpTable, localIpv4Networks, listLocalInterfaces, parseCidr, usableArpEntries } from "@/lib/net/discovery";
-import { classifyDevice, vendorFromMac } from "@/lib/net/classify";
-import { upsertDiscoveredDevice, deviceByIp } from "@/lib/repo/devices";
+import { ingestObservedHost } from "@/lib/net/ingest";
+import { deviceByIp } from "@/lib/repo/devices";
+import { inferStarTopology } from "@/lib/net/topology-infer";
 import { recordEvent } from "@/lib/repo/events";
 import { recordAudit } from "@/lib/repo/audit";
 import { getNumberSetting } from "@/lib/settings";
@@ -69,20 +70,21 @@ export async function POST(request: Request): Promise<Response> {
       );
       let created = 0;
       for (const entry of entries) {
-        const vendor = vendorFromMac(entry.mac);
-        const classification = classifyDevice({ mac: entry.mac });
-        const { created: isNew } = await upsertDiscoveredDevice({
+        const { created: isNew } = await ingestObservedHost({
           ip: entry.ip,
           mac: entry.mac,
-          manufacturer: vendor ?? undefined,
-          category: classification.category,
           source: "arp",
-          confidence: classification.confidence,
         });
         if (isNew) created += 1;
       }
+      const inferred = await inferStarTopology();
       const ignored = arp.length - entries.length;
-      const summary = `${arp.length} neighbour entr${arp.length === 1 ? "y" : "ies"} read, ${entries.length} usable (${ignored} ignored), ${created} new device(s).`;
+      const summary =
+        `${arp.length} neighbour entr${arp.length === 1 ? "y" : "ies"} read, ` +
+        `${entries.length} usable (${ignored} ignored), ${created} new device(s). ` +
+        (inferred.originName
+          ? `${inferred.linked} new inferred link(s) to ${inferred.originName}.`
+          : "No default gateway was found, so the map could not be linked.");
       await finishJob(jobId, "completed", summary);
       await recordEvent({
         type: "discovery_completed",
@@ -129,26 +131,26 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       const mac = macByIp.get(hit.ip) ?? existing?.mac ?? "";
-      const classification = classifyDevice({ hostname: hit.hostname, mac });
-      const { created: isNew } = await upsertDiscoveredDevice({
+      const { created: isNew } = await ingestObservedHost({
         ip: hit.ip,
         mac,
-        hostname: hit.hostname ?? undefined,
-        manufacturer: vendorFromMac(mac) ?? undefined,
-        category: classification.category,
-        confidence: classification.confidence,
+        hostname: hit.hostname,
         source: "active_scan",
       });
       if (isNew) created += 1;
       else updated += 1;
     }
 
+    const inferred = await inferStarTopology();
     const summary =
       `${result.addressesScanned} address(es) scanned, ${result.hits.length} responded, ` +
       `${created} new device(s), ${updated} updated` +
       (result.truncated ? " (the sweep was truncated by the safety limit)" : "") +
       (result.refused > 0 ? `, ${result.refused} address(es) refused as unauthorised` : "") +
-      ".";
+      ". " +
+      (inferred.originName
+        ? `${inferred.linked} new inferred link(s) to ${inferred.originName}.`
+        : "No default gateway was found, so the map could not be linked.");
 
     await finishJob(jobId, "completed", summary);
     await recordEvent({

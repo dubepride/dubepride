@@ -54,6 +54,16 @@ export interface DeviceEvidence {
   internetUp: boolean | null;
   /** True when at least one managed interface reports traffic counters. */
   hasTrafficCounters: boolean;
+  /**
+   * The address is present in the monitoring host's neighbour table, with a
+   * matching MAC.
+   *
+   * This is layer-2 proof of life. A device that answers ARP but not ICMP is
+   * alive and filtering probes — calling it OFFLINE would send an operator to
+   * a cabinet that is working. It is not enough evidence to call it ONLINE
+   * either, so the state stays UNKNOWN.
+   */
+  presentOnSegment?: boolean;
   /** Seconds since the last non-zero counter movement (null when unknown). */
   noTrafficSeconds: number | null;
   /** Probe results to quote as evidence. */
@@ -98,6 +108,12 @@ export function evaluateDeviceHealth(evidence: DeviceEvidence): HealthVerdict {
   }
 
   if (evidence.consecutiveFailures >= evidence.failureThreshold) {
+    if (evidence.presentOnSegment) {
+      return {
+        state: "UNKNOWN",
+        reason: `Failed ${evidence.consecutiveFailures} reachability checks (threshold ${evidence.failureThreshold}), but the address is still present in the local neighbour table — the device is alive and probably filters ICMP. This is not a confirmed outage.${quote ? ` ${quote}` : ""}`,
+      };
+    }
     return {
       state: "OFFLINE",
       reason: `Failed ${evidence.consecutiveFailures} consecutive reachability checks (threshold ${evidence.failureThreshold}).${quote ? ` ${quote}` : ""}`,

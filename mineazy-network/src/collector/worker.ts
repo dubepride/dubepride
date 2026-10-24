@@ -64,6 +64,8 @@ import {
   type SnmpTarget,
 } from "../lib/net/snmp";
 import { pingProbe, runProbe, tcpProbe } from "../lib/net/probes";
+import { listLocalInterfaces, readArpTable } from "../lib/net/discovery";
+import { readHostTrafficTotals } from "../lib/net/hoststats";
 import { classifyDevice } from "../lib/net/classify";
 import { buildTopologyGraph } from "../lib/topology";
 import type { Connection, Device, HealthState, NetworkPort } from "../lib/types";
@@ -484,10 +486,30 @@ export async function checkInternetConnectivity(
 /* The per-device poll                                                 */
 /* ------------------------------------------------------------------ */
 
+/** MACs compare equal regardless of separators or case. */
+function normaliseMac(value: string): string {
+  return value.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+}
+
+/**
+ * Is the device present in this host's neighbour table?
+ *
+ * A matching MAC matters: an address that has been reassigned to a different
+ * machine is not the device being polled. When the device has no MAC on
+ * record, any entry for the address counts.
+ */
+function isPresentOnSegment(neighbour: Map<string, string> | undefined, device: Device): boolean {
+  if (!neighbour || !device.mgmtIp) return false;
+  const mac = neighbour.get(device.mgmtIp);
+  if (!mac) return false;
+  return !device.mac || normaliseMac(mac) === normaliseMac(device.mac);
+}
+
 /** Poll one device and write everything the console shows. */
 export async function pollDevice(
   device: Device,
-  options: CollectorOptions
+  options: CollectorOptions,
+  neighbour?: Map<string, string>
 ): Promise<DevicePollResult> {
   const now = Date.now();
   const result: DevicePollResult = {
@@ -680,6 +702,7 @@ export async function pollDevice(
       internetUp,
       hasTrafficCounters,
       noTrafficSeconds,
+      presentOnSegment: isPresentOnSegment(neighbour, device),
       probeEvidence: evidence,
     });
 
@@ -753,7 +776,27 @@ export async function refreshConnectionStates(): Promise<number> {
   const resolved = ordered.map((connection) => {
     const localPort = connection.localPortId ? ports.get(connection.localPortId) : undefined;
     const remotePort = connection.remotePortId ? ports.get(connection.remotePortId) : undefined;
-    const { state, evidence } = connectionStateForPorts(localPort?.operState, remotePort?.operState);
+    let { state, evidence } = connectionStateForPorts(localPort?.operState, remotePort?.operState);
+
+    /*
+     * An inferred link (no managed port at either end) still has evidence:
+     * both endpoints answering their reachability checks means the path
+     * between them works. This is not the same as a confirmed cable, so the
+     * evidence says exactly what was measured — and the record stays
+     * unverified.
+     */
+    if (state === "unknown" && !localPort && !remotePort) {
+      const localDevice = graph.devices.get(connection.localDeviceId)?.device;
+      const remoteDevice = graph.devices.get(connection.remoteDeviceId)?.device;
+      if (localDevice?.healthState === "ONLINE" && remoteDevice?.healthState === "ONLINE") {
+        state = "up";
+        evidence =
+          `${localDevice.name} and ${remoteDevice.name} both answer reachability checks, so the ` +
+          "path between them is carrying traffic. Inferred from reachability — no managed port " +
+          "confirms the physical cable.";
+      }
+    }
+
     return { connection, localPort, remotePort, state, evidence };
   });
 
@@ -817,6 +860,51 @@ export function isDeviceDue(device: Device, now: number): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* Host link throughput                                                */
+/* ------------------------------------------------------------------ */
+
+let previousHostSample: { at: number; rxBytes: number; txBytes: number } | null = null;
+
+/**
+ * Measure the monitoring host's own interface throughput and store it on the
+ * device that *is* this host.
+ *
+ * The console runs somewhere on the network, so that machine's byte counters
+ * are real. They are the one rate that can be shown without SNMP. The port row
+ * is marked managed=false, so the UI never mistakes it for a switch port.
+ */
+async function recordHostTraffic(devices: Device[]): Promise<void> {
+  const local = listLocalInterfaces().filter((entry) => entry.family === "IPv4" && !entry.internal);
+  if (local.length === 0) return;
+  const host = devices.find((device) => local.some((entry) => entry.address === device.mgmtIp));
+  if (!host) return;
+
+  const totals = await readHostTrafficTotals();
+  if (!totals) return;
+
+  const previous = previousHostSample;
+  previousHostSample = { at: totals.at, rxBytes: totals.rxBytes, txBytes: totals.txBytes };
+  if (!previous) return;
+
+  const seconds = (totals.at - previous.at) / 1000;
+  const rxDelta = totals.rxBytes - previous.rxBytes;
+  const txDelta = totals.txBytes - previous.txBytes;
+  // A negative delta means the counter wrapped or the interface reset; drop the
+  // sample rather than publish a bogus multi-gigabit spike.
+  if (seconds <= 0 || rxDelta < 0 || txDelta < 0) return;
+
+  const { id } = await upsertPort(host.id, {
+    ifName: "host-traffic",
+    description: `Measured on the monitoring host (${totals.scope})`,
+    adminState: "up",
+    operState: "up",
+    source: "host",
+    managed: false,
+  });
+  await setPortRates(id, Math.round((rxDelta * 8) / seconds), Math.round((txDelta * 8) / seconds));
+}
+
+/* ------------------------------------------------------------------ */
 /* The cycle                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -836,6 +924,14 @@ export async function runCollectorCycle(options: CollectorOptions): Promise<Devi
 
   const results: DevicePollResult[] = [];
 
+  // Layer-2 evidence, read once per cycle: an address in this table answered
+  // ARP recently, which is proof the host exists even when it drops ICMP.
+  const neighbour = await readArpTable()
+    .then((entries) => new Map(entries.map((entry) => [entry.ip, entry.mac] as const)))
+    .catch(() => new Map<string, string>());
+
+  await recordHostTraffic(devices).catch(() => undefined);
+
   // A modest amount of concurrency: enough to be quick, gentle enough not to
   // overwhelm a small switch.
   const concurrency = 6;
@@ -847,7 +943,7 @@ export async function runCollectorCycle(options: CollectorOptions): Promise<Devi
       cursor += 1;
       const device = targets[index];
       try {
-        results.push(await pollDevice(device, options));
+        results.push(await pollDevice(device, options, neighbour));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         results.push({

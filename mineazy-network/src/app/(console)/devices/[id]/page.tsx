@@ -66,6 +66,21 @@ function DeviceDetail() {
               { label: "Last seen", value: d.lastSeenAt ? timeAgo(d.lastSeenAt) : "—" },
             ]}
           />
+          {d.classificationEvidence ? (
+            <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[0.6rem] font-semibold tracking-[0.12em] text-muted uppercase">
+                Why this type
+              </div>
+              <p className="mt-1 text-sm text-white/85">{d.classificationEvidence}</p>
+              <p className="mt-1 text-[0.65rem] text-muted">
+                {humanise(d.discoverySource)} · {d.classificationConfidence} confidence
+              </p>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-muted">
+              No classification evidence was recorded for this device.
+            </p>
+          )}
           {d.notes ? <p className="mt-3 text-sm text-muted">{d.notes}</p> : null}
         </Panel>
         <Panel title="Upstream path">

@@ -134,6 +134,32 @@ describe("evaluateDeviceHealth", () => {
     assert.equal(at.state, "OFFLINE");
   });
 
+  test("a device that answers ARP but not ICMP is UNKNOWN, not OFFLINE", () => {
+    const verdict = evaluateDeviceHealth(
+      evidence({
+        consecutiveFailures: 3,
+        failureThreshold: 3,
+        consecutiveSuccesses: 0,
+        presentOnSegment: true,
+      })
+    );
+    assert.equal(verdict.state, "UNKNOWN");
+    assert.match(verdict.reason, /neighbour table/i);
+    assert.match(verdict.reason, /not a confirmed outage/i);
+  });
+
+  test("a device with no neighbour-table entry still fails normally", () => {
+    const verdict = evaluateDeviceHealth(
+      evidence({
+        consecutiveFailures: 3,
+        failureThreshold: 3,
+        consecutiveSuccesses: 0,
+        presentOnSegment: false,
+      })
+    );
+    assert.equal(verdict.state, "OFFLINE");
+  });
+
   test("a switch port reporting down makes the device LINK_DOWN, not OFFLINE", () => {
     const verdict = evaluateDeviceHealth(
       evidence({ managementLinkDown: "GigabitEthernet1/0/4", consecutiveFailures: 0 })

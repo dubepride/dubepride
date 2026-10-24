@@ -181,7 +181,7 @@ export default function SetupPage() {
       </Panel>
 
       <p className="text-center text-xs text-muted">
-        Mineazy Network is local-first. Monitoring runs independently of your browser session; close
+        Automap is local-first. Monitoring runs independently of your browser session; close
         this tab and collection keeps going if the collector process is running.
       </p>
     </main>

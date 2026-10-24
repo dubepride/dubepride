@@ -260,6 +260,11 @@ body {
   color: #a0aec0;
   border: 1px solid rgba(255, 255, 255, 0.16);
 }
+.btn--active {
+  border: 1px solid rgba(0, 230, 118, 0.45);
+  background: rgba(0, 230, 118, 0.14);
+  color: #7ef0b0;
+}
 .btn--ghost:not(:disabled):hover {
   color: #ffffff;
   border-color: rgba(0, 230, 118, 0.55);
@@ -350,6 +355,11 @@ body {
 select.field option {
   background-color: #1a1226;
   color: #ffffff;
+}
+/* A filter does not need the full width of the page. */
+.field--compact {
+  width: auto;
+  min-width: 9rem;
 }
 textarea.field {
   min-height: 5rem;
@@ -517,99 +527,98 @@ textarea.field {
 }
 
 .map-node {
-  width: 15.5rem;
-  border-radius: 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(140deg, rgba(45, 27, 78, 0.96), rgba(10, 10, 10, 0.94));
-  padding: 0.5rem 0.6rem;
+  display: flex;
+  width: 9.75rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.15rem 0.2rem 0.25rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: transparent;
   color: #ffffff;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  text-align: center;
   transition:
-    border-color 140ms ease,
+    background 140ms ease,
     box-shadow 140ms ease;
 }
 .map-node:hover {
-  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(35, 22, 60, 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 .map-node:focus-visible {
   outline: 2px solid rgba(0, 230, 118, 0.8);
   outline-offset: 2px;
 }
-.map-node__body {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-/* The equipment outline is deliberately neutral: the LED carries the state. */
+/* The icon sits on its own pedestal; the ring colour is the device state. */
 .map-node__glyph {
-  display: flex;
-  flex: 0 0 auto;
+  display: grid;
+  width: 3.1rem;
+  height: 3.1rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(96, 62, 158, 0.55), rgba(14, 10, 24, 0.88) 72%);
   color: #c9b6ff;
-}
-.map-node__text {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.08rem;
+  transition: border-color 140ms ease;
 }
 .map-node__name {
   overflow: hidden;
-  font-size: 0.8rem;
-  font-weight: 600;
+  max-width: 100%;
+  font-size: 0.72rem;
+  font-weight: 650;
   line-height: 1.2;
   color: #ffffff;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.map-node__kind {
+.map-node__sub {
   overflow: hidden;
-  font-size: 0.66rem;
-  color: var(--color-muted);
+  max-width: 100%;
+  font-size: 0.55rem;
+  line-height: 1.25;
+  color: #b9a7e0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .map-node__ip {
+  font-size: 0.55rem;
   font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
 }
-.map-node__foot {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.12rem;
+.map-node__rates {
+  display: inline-flex;
+  gap: 0.45rem;
+  font-size: 0.56rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.map-node__led {
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
+.map-node__rate--down {
+  color: #7ef0b0;
+}
+.map-node__rate--up {
+  color: #8ecbff;
 }
 .map-node__state {
-  font-size: 0.58rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--color-muted);
 }
-.map-node__meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.4rem;
-  margin-top: 0.35rem;
-  padding-top: 0.3rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  font-size: 0.62rem;
-  color: var(--color-muted);
+.map-node__led {
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
 }
-.map-node__port {
-  color: #00e676;
-}
-.map-node__children {
-  white-space: nowrap;
-}
-.map-node--selected {
-  border-color: rgba(0, 230, 118, 0.85);
-  box-shadow:
-    0 0 0 1px rgba(0, 230, 118, 0.4),
-    0 0 26px rgba(0, 230, 118, 0.25);
+.map-node--selected .map-node__glyph {
+  border-color: rgba(0, 230, 118, 0.9);
+  box-shadow: 0 0 0 3px rgba(0, 230, 118, 0.16);
 }
 /*
  * Node colour is the WHOLE-state colour, and the states are kept visually
@@ -617,23 +626,234 @@ textarea.field {
  * means the device itself is fine but the internet beyond it is not; amber is
  * a performance or freshness problem; grey is "we do not know".
  */
-.map-node--offline,
-.map-node--link_down {
-  border-color: rgba(255, 82, 82, 0.8);
-  box-shadow: 0 0 22px rgba(255, 82, 82, 0.25);
+.map-node--offline .map-node__glyph,
+.map-node--link_down .map-node__glyph {
+  border-color: rgba(255, 82, 82, 0.85);
+  box-shadow: 0 0 18px rgba(255, 82, 82, 0.28);
 }
-.map-node--no_internet {
-  border-color: rgba(155, 109, 255, 0.9);
-  box-shadow: 0 0 22px rgba(155, 109, 255, 0.3);
+.map-node--no_internet .map-node__glyph {
+  border-color: rgba(155, 109, 255, 0.95);
+  box-shadow: 0 0 18px rgba(155, 109, 255, 0.32);
 }
-.map-node--degraded,
-.map-node--stale,
-.map-node--no_traffic {
-  border-color: rgba(255, 196, 0, 0.75);
-  box-shadow: 0 0 20px rgba(255, 196, 0, 0.18);
+.map-node--degraded .map-node__glyph,
+.map-node--stale .map-node__glyph,
+.map-node--no_traffic .map-node__glyph {
+  border-color: rgba(255, 196, 0, 0.8);
+  box-shadow: 0 0 16px rgba(255, 196, 0, 0.2);
 }
 .map-node--dimmed {
   opacity: 0.25;
+}
+
+/*
+ * A healthy device breathes. This is a liveness cue, not a traffic figure:
+ * measured throughput still only moves the cables in the "All links" view.
+ */
+.map-node--online .map-node__glyph {
+  animation: node-breathe 4.2s ease-in-out infinite;
+}
+@keyframes node-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 230, 118, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px 1px rgba(0, 230, 118, 0.22);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-node--online .map-node__glyph {
+    animation: none;
+  }
+}
+
+/*
+ * Progressive disclosure. A hundred labelled cards cannot be legible at once,
+ * so the map sheds text as it zooms out: speeds and ports up close, names in
+ * the middle distance, bare equipment icons in the overview.
+ */
+.map-canvas--far .map-node__name,
+.map-canvas--far .map-node__sub,
+.map-canvas--far .map-node__ip,
+.map-canvas--far .map-node__rates,
+.map-canvas--far .map-node__state {
+  display: none;
+}
+.map-canvas--mid .map-node__sub,
+.map-canvas--mid .map-node__ip,
+.map-canvas--mid .map-node__rates {
+  display: none;
+}
+.map-canvas--far .map-node__glyph {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: radial-gradient(circle at 50% 35%, rgba(110, 74, 176, 0.7), rgba(14, 10, 24, 0.9) 72%);
+}
+/* The gateway is the one label that must survive the overview. */
+.map-node--anchor .map-node__glyph {
+  width: 3.8rem;
+  height: 3.8rem;
+  border-color: rgba(0, 230, 118, 0.6);
+  box-shadow: 0 0 22px rgba(0, 230, 118, 0.22);
+}
+.map-canvas--far .map-node--anchor .map-node__name {
+  display: block;
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.35rem;
+  background: rgba(10, 8, 18, 0.78);
+  font-size: 0.62rem;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Group rows and the logical internet node                                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * One row per equipment type. The row is the click target: opening it lays its
+ * devices out underneath, so the default map is short and readable instead of
+ * a hundred icons at once.
+ */
+.group-node {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.8rem;
+  background: linear-gradient(120deg, rgba(34, 24, 52, 0.94), rgba(15, 11, 23, 0.92));
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
+}
+.group-node:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.group-node--open {
+  border-color: rgba(0, 230, 118, 0.45);
+  background: linear-gradient(120deg, rgba(15, 44, 33, 0.92), rgba(15, 11, 23, 0.92));
+}
+.group-node__label {
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.group-node__count {
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: #c9b6ff;
+}
+.group-node__summary {
+  overflow: hidden;
+  font-size: 0.68rem;
+  color: var(--color-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-node__chevron {
+  margin-left: auto;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #00e676;
+}
+.group-node.map-node--offline,
+.group-node.map-node--link_down {
+  border-color: rgba(255, 82, 82, 0.45);
+}
+.group-node.map-node--no_internet {
+  border-color: rgba(155, 109, 255, 0.5);
+}
+.group-node.map-node--degraded,
+.group-node.map-node--stale,
+.group-node.map-node--no_traffic {
+  border-color: rgba(255, 196, 0, 0.4);
+}
+
+.internet-node {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(12, 9, 20, 0.92);
+  color: #ffffff;
+}
+.group-frame {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed rgba(154, 130, 200, 0.22);
+  border-radius: 1rem;
+  background: rgba(46, 30, 72, 0.18);
+  pointer-events: none;
+}
+.internet-node__label {
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.internet-node__state {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Map dock — the detail card, floating over the canvas                       */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The canvas owns the whole width of the page. Details arrive in a floating
+ * card so opening a device never shrinks the map you are trying to read.
+ */
+.map-dock {
+  position: fixed;
+  top: 8.5rem;
+  right: 1rem;
+  z-index: 60;
+  width: min(350px, calc(100vw - 2rem));
+  max-height: calc(100vh - 10rem);
+  overflow-y: auto;
+  padding: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.9rem;
+  background: rgba(12, 9, 20, 0.93);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+}
+.map-dock__close {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.55rem;
+  z-index: 1;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.6rem;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.map-dock__close:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+@media (max-width: 1023px) {
+  .map-dock {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin-top: 0.75rem;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -664,6 +884,20 @@ textarea.field {
 @keyframes cable-flow {
   to {
     stroke-dashoffset: -11;
+  }
+}
+/*
+ * A link that is confirmed up but has no counters: slow, dim drift. It is
+ * deliberately four times slower than measured traffic so the two can never be
+ * confused at a glance.
+ */
+.cable--linked {
+  stroke-dasharray: 3 7 !important;
+  animation: cable-flow 3.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cable--linked {
+    animation: none;
   }
 }
 

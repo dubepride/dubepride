@@ -68,8 +68,14 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   viewer: ["can_view_topology", "can_view_traffic", "can_view_reports"],
 };
 
+const NO_AUTH = process.env.MINEAZY_NO_AUTH === "1" || process.env.MINEAZY_NO_AUTH === "true";
+
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
+
+  if (NO_AUTH) {
+    return NextResponse.next();
+  }
 
   if (
     PUBLIC_PATHS.has(pathname) ||

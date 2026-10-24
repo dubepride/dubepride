@@ -280,6 +280,10 @@ export const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] 
   { table: "Devices", column: "Failure_Threshold", ddl: "Failure_Threshold INTEGER NOT NULL DEFAULT 3" },
   { table: "Devices", column: "Discovery_Source", ddl: "Discovery_Source TEXT NOT NULL DEFAULT 'unknown'" },
   { table: "Devices", column: "Classification_Confidence", ddl: "Classification_Confidence TEXT NOT NULL DEFAULT 'unknown'" },
+  // The evidence behind the category, in plain words ("TCP 554 answered").
+  // Without it a category is an unexplained guess; the console must be able to
+  // say why it called a device a camera.
+  { table: "Devices", column: "Classification_Evidence", ddl: "Classification_Evidence TEXT NOT NULL DEFAULT ''" },
   { table: "Devices", column: "Health_State", ddl: "Health_State TEXT NOT NULL DEFAULT 'UNKNOWN'" },
   { table: "Devices", column: "Health_Reason", ddl: "Health_Reason TEXT NOT NULL DEFAULT ''" },
   { table: "Devices", column: "First_Discovered_At", ddl: "First_Discovered_At INTEGER" },

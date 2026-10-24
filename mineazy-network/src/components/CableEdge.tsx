@@ -49,6 +49,10 @@ export type CableEdgeData = {
   rateLabel: string;
   /** True only when measured counters show actual traffic in this window. */
   flowing: boolean;
+  /** Link confirmed up, but no counters exist for it: slow dim drift. */
+  linked?: boolean;
+  /** A group connector in the tiered view: structural, not a cable. */
+  grouped?: boolean;
   /** The operator turned "Port labels" on for the whole map. */
   forceLabel?: boolean;
 };
@@ -95,6 +99,8 @@ export function CableEdge({
   const tone: CableTone = data?.tone ?? "muted";
   const physical: CablePhysical = data?.physical ?? "unknown";
   const flowing = Boolean(data?.flowing);
+  const linked = Boolean(data?.linked) && !flowing;
+  const grouped = Boolean(data?.grouped);
   const colour = STROKE[tone];
   const dash = DASH[tone];
 
@@ -119,14 +125,16 @@ export function CableEdge({
           "cable",
           `cable--${tone}`,
           flowing ? "cable--flowing" : "",
+          linked ? "cable--linked" : "",
           selected ? "cable--selected" : "",
         ]
           .filter(Boolean)
           .join(" ")}
         style={{
           stroke: colour,
-          strokeWidth: selected ? 2.9 : 2,
-          strokeDasharray: dash,
+          strokeWidth: grouped ? 1.5 : selected ? 2.9 : 2,
+          strokeDasharray: grouped ? undefined : dash,
+          opacity: grouped ? 0.65 : linked ? 0.62 : 1,
         }}
       />
 
@@ -147,7 +155,7 @@ export function CableEdge({
       />
 
       {/* Physical link, drawn on the wire where a port reports it is down. */}
-      {physical === "down" ? (
+      {!grouped && physical === "down" ? (
         <g transform={`translate(${labelX}, ${labelY})`} pointerEvents="none">
           <circle r={8.5} fill="#0a0a0a" stroke={colour} strokeWidth={1.4} />
           <path
@@ -157,13 +165,13 @@ export function CableEdge({
             strokeLinecap="round"
           />
         </g>
-      ) : physical === "unknown" ? (
+      ) : !grouped && physical === "unknown" ? (
         <g transform={`translate(${labelX}, ${labelY})`} pointerEvents="none">
           <circle r={3.4} fill="#0a0a0a" stroke="#8a93a0" strokeWidth={1.2} />
         </g>
       ) : null}
 
-      {showLabel ? (
+      {!grouped && showLabel ? (
         <EdgeLabelRenderer>
           <div
             className="cable-label nodrag nopan"

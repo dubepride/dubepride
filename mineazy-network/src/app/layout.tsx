@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Mineazy Network",
-    template: "%s · Mineazy Network",
+    default: "Automap",
+    template: "%s · Automap",
   },
   description:
-    "Local-first network discovery, topology visualisation, monitoring and troubleshooting console.",
-  applicationName: "Mineazy Network",
+    "Automap discovers a network, draws its live topology, and monitors every device on it.",
+  applicationName: "Automap",
   robots: { index: false, follow: false },
 };
 

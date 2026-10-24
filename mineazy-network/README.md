@@ -1,4 +1,4 @@
-# Mineazy Network
+# Automap
 
 A **local-first network monitoring console**: live topology, device discovery,
 per-port switch monitoring, traffic rates, fault-path analysis, incident

@@ -91,7 +91,7 @@ function LoginForm() {
       </form>
 
       <p className="mt-5 text-xs leading-relaxed text-muted">
-        Mineazy Network runs entirely on this machine. Credentials are checked against the local
+        Automap runs entirely on this machine. Credentials are checked against the local
         database and the session is held in an HttpOnly cookie — nothing is sent to a third party.
       </p>
       <p className="mt-2 text-xs text-muted">

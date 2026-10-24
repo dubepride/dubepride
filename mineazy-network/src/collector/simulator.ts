@@ -289,9 +289,9 @@ const SEED_CONNECTIONS: SeedConnection[] = [
 export async function seedSimulatedTopology(): Promise<{ devices: number; connections: number }> {
   // Site + locations.
   const sites = await listSites();
-  let siteId = sites.find((site) => site.name === "Mineazy Demo Estate")?.id;
+  let siteId = sites.find((site) => site.name === "Automap Demo Estate")?.id;
   if (siteId === undefined) {
-    siteId = await createSite("Mineazy Demo Estate", "Simulated estate used for demonstrations and tests.");
+    siteId = await createSite("Automap Demo Estate", "Simulated estate used for demonstrations and tests.");
   }
 
   const locations = await listLocations();
@@ -738,3 +738,4 @@ function findParentSwitch(
   if (!parentName) return null;
   return devices.find((candidate) => candidate.name === parentName) ?? null;
 }
+
