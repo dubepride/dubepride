@@ -301,6 +301,11 @@ export function Dashboard(): React.ReactElement {
           </View>
         ) : null}
 
+        {queue.autoSyncing ? (
+          <View style={[styles.infoBox, styles.infoOk]}>
+            <Text style={styles.infoText}>Network back — syncing automatically…</Text>
+          </View>
+        ) : null}
         {queue.message ? (
           <View style={[styles.infoBox, styles.infoOk]}>
             <Text style={styles.infoText}>{queue.message}</Text>

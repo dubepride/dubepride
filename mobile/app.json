@@ -24,6 +24,7 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK"
       ],
       "predictiveBackGestureEnabled": false
@@ -42,10 +43,12 @@
       ]
     ],
     "extra": {
-      "_comment": "Change `apiUrl` to your bridge's address. 10.0.2.2 is the Android emulator's alias for the host's localhost; on a physical phone use your machine's LAN IP. This is set to the build machine's current Wi-Fi IP so the phone works on first launch. The login screen overrides it at runtime (persisted in the session), so a changed DHCP lease or a new server needs no rebuild.",
-      "apiUrl": "http://192.168.1.52:3000",
+      "_comment": "Base URL of the BIOBRIDGE bridge. The login screen can override it at runtime (persisted in the session), so a changed host needs no rebuild.",
+      "apiUrl": "https://dubepride.vercel.app",
       "_comment_mobileKey": "Must match MOBILE_PUNCH_KEY on the server (default: biobridge-mobile).",
       "mobileKey": "biobridge-mobile",
+      "_comment_handsFree": "Automatic arrival/departure clocking via background geofencing. Off = button-only clocking (no background location, no persisted jobs).",
+      "handsFree": false,
       "_comment_cleartext": "RELEASE builds need android:usesCleartextTraffic=\"true\" on <application> (set by hand in android/app/src/main/AndroidManifest.xml). Without it Android blocks plain http:// and the app reports 'Cannot reach the bridge'. Re-running `expo prebuild` wipes that line; re-add it."
     }
   }

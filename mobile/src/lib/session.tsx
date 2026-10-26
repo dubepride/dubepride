@@ -28,6 +28,7 @@ import React, {
 
 import {
   configuredApiUrl,
+  configuredHandsFree,
   configuredMobileKey,
   HttpError,
   login as loginRequest,
@@ -80,6 +81,21 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/**
+ * Arm the background geofencing tasks only when hands-free clocking is
+ * enabled in app.json (`extra.handsFree === true`). With it off the app is
+ * button-only, needs no background location, and never schedules a persisted
+ * geofencing job.
+ */
+async function maybeStartTracking(session: MobileSession): Promise<TrackingResult | null> {
+  if (!configuredHandsFree()) return null;
+  try {
+    return await startGeofenceTracking(session);
+  } catch {
+    return null;
+  }
+}
+
 /** Does a cached session belong to the ID the employee just typed? */
 function matchesEmployee(session: MobileSession, ref: string): boolean {
   const value = ref.trim().toLowerCase();
@@ -110,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       setStatus(restored ? "signed-in" : "signed-out");
 
       if (restored) {
-        const result = await startGeofenceTracking(restored);
+        const result = await maybeStartTracking(restored);
         if (!cancelled) setTracking(result);
       }
     })();
@@ -148,7 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
 
       setSession(next);
       setStatus("signed-in");
-      setTracking(await startGeofenceTracking(next));
+      setTracking(await maybeStartTracking(next));
 
       return { ok: true, offline: false, error: null, message: result.message };
     } catch (err) {
@@ -162,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
           await writeSavedApiUrl(base);
           setSession(next);
           setStatus("signed-in");
-          setTracking(await startGeofenceTracking(next));
+          setTracking(await maybeStartTracking(next));
           return {
             ok: true,
             offline: true,
@@ -201,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   }, []);
 
   const retryTracking = useCallback(async (): Promise<void> => {
-    if (!session) return;
+    if (!session || !configuredHandsFree()) return;
     setTracking(await startGeofenceTracking(session));
   }, [session]);
 

@@ -70,6 +70,16 @@ export function configuredMobileKey(): string {
   return extraString("mobileKey") || DEFAULT_MOBILE_KEY;
 }
 
+/**
+ * Hands-free (background geofencing) is opt-in. Set `"handsFree": true` in
+ * app.json `extra` to re-enable automatic arrival/departure clocking; when
+ * false the app only clocks in/out from the button, so it needs no background
+ * location permission and never schedules a geofencing job.
+ */
+export function configuredHandsFree(): boolean {
+  return extra()["handsFree"] === true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Errors                                                             */
 /* ------------------------------------------------------------------ */
