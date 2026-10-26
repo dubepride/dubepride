@@ -97,6 +97,18 @@ test("groups share one left edge so the connectors form a single trunk", () => {
   assert.ok(layout.gatewayPosition.x < Math.min(...layout.groups.map((g) => g.x)));
 });
 
+test("a closed group still reports the size of the grid it will open into", () => {
+  const closed = layoutLayered(fleet, new Set());
+  const camera = closed.groups.find((g) => g.key === "camera");
+  assert.ok(camera);
+  assert.equal(camera.openHeight, 62 + 142 + 18);
+  assert.equal(camera.openWidth, 760);
+
+  const open = layoutLayered(fleet, new Set(["camera"])).groups.find((g) => g.key === "camera");
+  assert.equal(open?.openHeight, camera.openHeight);
+  assert.equal(open?.openWidth, camera.openWidth);
+});
+
 test("the group state is the worst state of its members", () => {
   assert.equal(worstState(["ONLINE", "OFFLINE", "DEGRADED"]), "OFFLINE");
   assert.equal(worstState(["ONLINE", "STALE"]), "STALE");

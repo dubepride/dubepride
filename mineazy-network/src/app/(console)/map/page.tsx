@@ -81,8 +81,8 @@ interface TopologyPayload {
 
 /** The payload a map node carries. */
 type MapNodeData = {
-  /** "device" is real hardware; the other two are view structure. */
-  kind: "device" | "group" | "internet";
+  /** "device" is real hardware; the rest are view structure. */
+  kind: "device" | "group" | "internet" | "layer" | "frame";
   deviceId: number;
   name: string;
   category: DeviceCategory;
@@ -104,6 +104,11 @@ type MapNodeData = {
   groupCount?: number;
   groupOnline?: number;
   groupCollapsed?: boolean;
+  /** Group rows only: the grid size this row gets when opened. */
+  groupOpenWidth?: number;
+  groupOpenHeight?: number;
+  /** Layer captions only: a short factual note beside the layer name. */
+  layerNote?: string;
   /** True while the operator has this node open in the inspector. */
   selected?: boolean;
 };
@@ -118,7 +123,13 @@ type MapNodeType = Node<MapNodeData, "mapNode">;
 type GroupNodeType = Node<MapNodeData, "groupNode">;
 type InternetNodeType = Node<MapNodeData, "internetNode">;
 type GroupFrameNodeType = Node<MapNodeData, "groupFrame">;
-type AnyMapNode = MapNodeType | GroupNodeType | InternetNodeType | GroupFrameNodeType;
+type LayerNodeType = Node<MapNodeData, "layerLabel">;
+type AnyMapNode =
+  | MapNodeType
+  | GroupNodeType
+  | InternetNodeType
+  | GroupFrameNodeType
+  | LayerNodeType;
 
 /**
  * The CSS class that carries a device's state colour.
@@ -259,11 +270,22 @@ function GroupFrame() {
   return <div className="group-frame" aria-hidden="true" />;
 }
 
+/** A tier caption — Core, Distribution, Access — not a device. */
+function LayerLabel({ data }: NodeProps<LayerNodeType>) {
+  return (
+    <div className="layer-label">
+      <span className="layer-label__name">{data.name}</span>
+      {data.layerNote ? <span className="layer-label__note">{data.layerNote}</span> : null}
+    </div>
+  );
+}
+
 const nodeTypes: NodeTypes = {
   mapNode: MapNode,
   groupNode: GroupNode,
   internetNode: InternetNode,
   groupFrame: GroupFrame,
+  layerLabel: LayerLabel,
 };const edgeTypes: EdgeTypes = { cable: CableEdge };
 
 /**
@@ -293,6 +315,9 @@ function sameNodeData(a: MapNodeData, b: MapNodeData): boolean {
     a.groupCount === b.groupCount &&
     a.groupOnline === b.groupOnline &&
     a.groupCollapsed === b.groupCollapsed &&
+    a.groupOpenWidth === b.groupOpenWidth &&
+    a.groupOpenHeight === b.groupOpenHeight &&
+    a.layerNote === b.layerNote &&
     Boolean(a.selected) === Boolean(b.selected)
   );
 }
@@ -503,6 +528,78 @@ export default function MapPage() {
           pushDevice(gateway, layout.gatewayPosition.x, layout.gatewayPosition.y);
         }
 
+        // Tier captions. They are labels, not devices: the counts beside them
+        // are the honest structure of THIS network (often: one gateway, no
+        // managed switch, every link inferred).
+        const switchCount = snapshot.nodes.filter((n) => n.category === "switch").length;
+        const apCount = snapshot.nodes.filter((n) => n.category === "access_point").length;
+        const gatewayCount = snapshot.nodes.filter(
+          (n) => n.category === "router" || n.category === "gateway"
+        ).length;
+        const endpointCount = snapshot.nodes.length - switchCount - apCount - gatewayCount;
+        const verifiedCount = snapshot.edges.filter((e) => e.verified).length;
+        const treeLeft = layout.groups[0]?.x ?? -790;
+        const firstRowY = layout.groups[0]?.y ?? 300;
+
+        const layerNode = (
+          id: string,
+          name: string,
+          note: string,
+          y: number
+        ): LayerNodeType => ({
+          id,
+          type: "layerLabel",
+          position: { x: treeLeft - 110, y },
+          style: { width: 880, height: 26, pointerEvents: "none" },
+          data: {
+            kind: "layer",
+            deviceId: 0,
+            name,
+            category: "unknown",
+            state: "UNKNOWN",
+            reason: note,
+            ip: null,
+            portLabel: null,
+            childCount: 0,
+            locationName: null,
+            manufacturer: "",
+            model: "",
+            mac: "",
+            inRateBps: null,
+            outRateBps: null,
+            portCount: 0,
+            layerNote: note,
+          },
+          draggable: false,
+          selectable: false,
+          zIndex: 0,
+        });
+
+        nextNodes.push(
+          layerNode(
+            "layer-core",
+            "CORE LAYER",
+            `${gatewayCount} gateway${gatewayCount === 1 ? "" : "s"}`,
+            layout.gatewayPosition.y - 78
+          ),
+          layerNode(
+            "layer-distribution",
+            "DISTRIBUTION LAYER",
+            switchCount + apCount === 0
+              ? "no managed switch or access point detected"
+              : `${switchCount} switch${switchCount === 1 ? "" : "es"} · ${apCount} access point${
+                  apCount === 1 ? "" : "s"
+                }`,
+            layout.gatewayPosition.y + 205
+          ),
+          layerNode(
+            "layer-access",
+            "ACCESS LAYER",
+            `${endpointCount} endpoints · ${snapshot.edges.length} links, ${verifiedCount} verified`,
+            firstRowY - 38
+          )
+        );
+
         // The tinted band behind an open group, drawn before its devices so
         // it sits underneath them.
         for (const group of layout.groups) {
@@ -511,9 +608,9 @@ export default function MapPage() {
             id: `group-frame-${group.key}`,
             type: "groupFrame",
             position: { x: group.x - 12, y: group.y - 8 },
-            style: { width: group.width + 24, height: group.height + 16 },
+            style: { width: group.width + 24, height: group.height + 16, pointerEvents: "none" },
             data: {
-              kind: "group",
+              kind: "frame",
               deviceId: 0,
               name: "",
               category: group.category,
@@ -572,6 +669,8 @@ export default function MapPage() {
             groupCount: group.devices.length,
             groupOnline: group.online,
             groupCollapsed: group.collapsed,
+            groupOpenWidth: group.openWidth,
+            groupOpenHeight: group.openHeight,
           };
           const id = `group-${group.key}`;
           const prev = prevById.get(id);
@@ -621,6 +720,8 @@ export default function MapPage() {
           sourceHandle: "down",
           targetHandle: "up",
           type: "cable",
+          selectable: false,
+          focusable: false,
           data: {
             tone:
               gatewayState === "ONLINE"
@@ -647,6 +748,8 @@ export default function MapPage() {
             sourceHandle: "down",
             targetHandle: "left",
             type: "cable",
+            selectable: false,
+            focusable: false,
             data: {
               tone: "muted",
               physical: "unknown",
@@ -795,6 +898,7 @@ export default function MapPage() {
     (_: React.MouseEvent, node: AnyMapNode) => {
       if (node.data.kind === "group" && node.data.groupKey) {
         const key = node.data.groupKey;
+        const opening = !expanded.has(key);
         setSelected(null);
         setSelectedEdgeId(null);
         setExpanded((prev) => {
@@ -803,10 +907,44 @@ export default function MapPage() {
           else next.add(key);
           return next;
         });
-        // The grid is rebuilt in an effect; fit once its boxes exist, and
-        // again after a pause in case the browser measured them late.
-        window.setTimeout(() => fitWhenMeasured(0.16, 0.9), 300);
-        window.setTimeout(() => fitWhenMeasured(0.16, 0.9), 1600);
+        /*
+         * Opening a row frames THAT row and its devices, not the whole tree:
+         * fitting all five groups at once shrinks a 49-camera grid to
+         * unreadable specks. Closing returns to the overview.
+         */
+        if (opening) {
+          /*
+           * Keep the row readable and keep the hierarchy in frame: the trunk,
+           * gateway and layer captions live in a gutter to the left of the
+           * rows. A wide grid (49 cameras) is allowed to give up a little
+           * zoom so that gutter and every column still fit; fitting the whole
+           * tree instead shrinks the icons to unreadable specks.
+           */
+          window.setTimeout(() => {
+            const instance = flowRef.current;
+            if (!instance) return;
+            const pane = document.querySelector(".map-canvas .react-flow");
+            const paneWidth = pane instanceof HTMLElement ? pane.clientWidth : 1100;
+            const gutter = 300;
+            const openWidth = node.data.groupOpenWidth ?? 760;
+            const fitZoom = (paneWidth - 24) / (openWidth + gutter);
+            const zoom = Math.min(0.9, Math.max(0.5, Math.min(instance.getZoom(), fitZoom)));
+            const contentWidth = (openWidth + gutter) * zoom;
+            const leftWorld = node.position.x - gutter;
+            const x =
+              contentWidth <= paneWidth - 24
+                ? (paneWidth - contentWidth) / 2 - leftWorld * zoom
+                : 12 - leftWorld * zoom;
+            /* Keep the internet edge itself on screen, not just the row. */
+            const internetY =
+              nodes.find((candidate) => candidate.data.kind === "internet")?.position.y ?? -190;
+            const y = 14 - internetY * zoom;
+            instance.setViewport({ x, y, zoom }, { duration: 420 });
+          }, 260);
+        } else {
+          window.setTimeout(() => fitWhenMeasured(0.16, 0.9), 300);
+          window.setTimeout(() => fitWhenMeasured(0.16, 0.9), 1600);
+        }
         return;
       }
       if (node.data.kind === "internet") {
@@ -816,12 +954,16 @@ export default function MapPage() {
         if (gateway) void selectDevice(gateway.id, gateway.data);
         return;
       }
+      /* Captions and group frames are structure, never inventory. */
+      if (node.data.kind !== "device") return;
       void selectDevice(node.id, node.data);
     },
-    [selectDevice, nodes, fitWhenMeasured]
+    [selectDevice, nodes, fitWhenMeasured, expanded]
   );
 
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: CableEdgeType) => {
+    /* Grouped connectors are a summary of the tree, not a cable. */
+    if (edge.data?.grouped) return;
     setSelectedEdgeId(edge.id);
   }, []);
 
@@ -927,6 +1069,7 @@ export default function MapPage() {
         return matchingDevices.has(n.id);
       }
       if (n.data.kind === "group") return groupsWithMatch.has(n.data.groupKey ?? "");
+      if (n.data.kind === "frame") return groupsWithMatch.has(n.data.groupKey ?? "");
       return true;
     });
   }, [nodes, query, healthFilter, categoryFilter]);
@@ -942,6 +1085,13 @@ export default function MapPage() {
 
   const snapshot = data.snapshot;
   const nodeById = new Map(snapshot.nodes.map((n) => [n.id, n]));
+  const gatewayCount = snapshot.nodes.filter(
+    (n) => n.category === "router" || n.category === "gateway"
+  ).length;
+  const switchCount = snapshot.nodes.filter((n) => n.category === "switch").length;
+  const apCount = snapshot.nodes.filter((n) => n.category === "access_point").length;
+  const endpointCount = snapshot.nodes.length - gatewayCount - switchCount - apCount;
+  const verifiedLinkCount = snapshot.edges.filter((e) => e.verified).length;
   const selectedEdge =
     selectedEdgeId === null
       ? null
@@ -966,8 +1116,8 @@ export default function MapPage() {
   return (
     <>
       <PageHeader
-        title="Automap"
-        description="Automap found every device on this network and grouped it by equipment type. Open a group to see each device, its state and its measured speed."
+        title="Live Map"
+        description="Automap draws this network in layers: the internet edge, the gateway, then every endpoint grouped by equipment type. Open a group to see each device, its link state and any measured speed."
         actions={
           <>
             {snapshot.simulated ? (
@@ -975,8 +1125,21 @@ export default function MapPage() {
             ) : (
               <Chip tone="muted">LIVE · AUTO-DISCOVERED</Chip>
             )}
-            <span className="chip chip--muted">
-              {snapshot.nodes.length} devices · {snapshot.edges.length} links
+            <span
+              className="chip chip--muted"
+              title={`${gatewayCount} gateway(s), ${switchCount} managed switch(es), ${apCount} access point(s) · ${snapshot.edges.length} links, ${verifiedLinkCount} confirmed by a managed port`}
+            >
+              {gatewayCount} gateway · {endpointCount} endpoints
+            </span>
+            <span
+              className="chip chip--muted"
+              title={
+                verifiedLinkCount === 0
+                  ? "No managed port has confirmed a link, so every cable is drawn as unverified (grey)."
+                  : `${verifiedLinkCount} of ${snapshot.edges.length} links are confirmed by a managed port.`
+              }
+            >
+              {verifiedLinkCount} verified links
             </span>
             <button type="button" className="btn btn--ghost btn--sm" onClick={reload}>
               <Icon name="refresh" size={13} />
@@ -1112,8 +1275,9 @@ export default function MapPage() {
                           .filter((c) => c !== "router" && c !== "gateway")
                       )
                     );
-                    window.setTimeout(() => fitWhenMeasured(0.14, 0.95), 300);
-                    window.setTimeout(() => fitWhenMeasured(0.14, 0.95), 1500);
+                    /* Opening every row is a browsing action: keep the
+                     * operator's current viewport instead of yanking the map
+                     * to a fit that is either microscopic or cropped. */
                   }
                 }}
               >
@@ -1232,14 +1396,21 @@ export default function MapPage() {
                 <MapNodeMeasurer />
                 {showMiniMap ? (
                   <MiniMap
+                    position="top-right"
                     pannable
                     zoomable
                     bgColor="rgba(10, 8, 18, 0.92)"
                     maskColor="rgba(6, 5, 10, 0.74)"
                     nodeColor={(n) =>
-                      n.type === "groupFrame" ? "transparent" : stateColour(n.data?.state as string)
+                      n.type === "groupFrame" || n.type === "layerLabel"
+                        ? "transparent"
+                        : stateColour(n.data?.state as string)
                     }
-                    nodeStrokeColor="rgba(255, 255, 255, 0.22)"
+                    nodeStrokeColor={(n) =>
+                      n.type === "groupFrame" || n.type === "layerLabel"
+                        ? "transparent"
+                        : "rgba(255, 255, 255, 0.22)"
+                    }
                     nodeBorderRadius={4}
                     style={{ width: 168, height: 112, borderRadius: 10 }}
                   />

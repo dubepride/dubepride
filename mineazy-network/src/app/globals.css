@@ -513,13 +513,28 @@ textarea.field {
   background: rgba(0, 230, 118, 0.7);
   border: none;
 }
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.7rem;
+  background: rgba(16, 12, 26, 0.92);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
 .react-flow__controls-button {
-  background: rgba(20, 15, 32, 0.95);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  width: 28px;
+  height: 28px;
+  background: rgba(20, 15, 32, 0.95) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #a0aec0;
   fill: #a0aec0;
 }
 .react-flow__controls-button:hover {
-  background: rgba(74, 20, 140, 0.5);
+  background: rgba(74, 20, 140, 0.6) !important;
+}
+.react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+  fill: currentColor;
 }
 .react-flow__minimap {
   background: rgba(10, 10, 10, 0.8);
@@ -695,6 +710,13 @@ textarea.field {
   border-color: rgba(0, 230, 118, 0.6);
   box-shadow: 0 0 22px rgba(0, 230, 118, 0.22);
 }
+.map-node--anchor .map-node__name {
+  font-size: 1rem;
+  font-weight: 750;
+}
+.map-node--anchor .map-node__state {
+  font-size: 0.7rem;
+}
 .map-canvas--far .map-node--anchor .map-node__name {
   display: block;
   padding: 0.05rem 0.3rem;
@@ -762,7 +784,11 @@ textarea.field {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #00e676;
+  color: var(--color-muted);
+  transition: color 120ms ease;
+}
+.group-node:hover .group-node__chevron {
+  color: #ffffff;
 }
 .group-node.map-node--offline,
 .group-node.map-node--link_down {
@@ -795,6 +821,35 @@ textarea.field {
   background: rgba(46, 30, 72, 0.18);
   pointer-events: none;
 }
+
+/*
+ * Tier captions: a dotted rule and a name, like an engineering drawing.
+ * Deliberately not a card — it must read as a band, not as another device.
+ */
+.layer-label {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding-top: 0.32rem;
+  border-top: 2px dotted rgba(154, 130, 200, 0.32);
+  pointer-events: none;
+}
+.layer-label__name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: #d8d3e4;
+  white-space: nowrap;
+}
+.layer-label__note {
+  overflow: hidden;
+  font-size: 0.76rem;
+  color: var(--color-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .internet-node__label {
   font-size: 0.78rem;
   font-weight: 650;
@@ -817,11 +872,11 @@ textarea.field {
  */
 .map-dock {
   position: fixed;
-  top: 8.5rem;
+  top: 17rem;
   right: 1rem;
   z-index: 60;
   width: min(350px, calc(100vw - 2rem));
-  max-height: calc(100vh - 10rem);
+  max-height: calc(100vh - 18rem);
   overflow-y: auto;
   padding: 0.7rem;
   border: 1px solid rgba(255, 255, 255, 0.12);

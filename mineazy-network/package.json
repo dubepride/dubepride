@@ -10,7 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/*.test.ts\"",
-    "collector": "node --import tsx src/collector/main.ts",
+    "collector": "node --env-file-if-exists=.env.local --import tsx src/collector/main.ts",
     "connect": "node scripts/connect-network.mjs",
     "demo:seed": "node --import tsx scripts/seed-demo.ts",
     "demo:scenario": "node --import tsx scripts/acceptance-scenario.ts"

@@ -76,7 +76,7 @@ export const LAYERED = {
   /** Vertical distance between rows of devices. */
   stepY: 142,
   /** Maximum devices per row before wrapping. */
-  columns: 10,
+  columns: 8,
   /** Height of a closed group row. */
   closedHeight: 62,
   /** Height of the group header inside an open group. */
@@ -90,7 +90,7 @@ export const LAYERED = {
   /** Vertical gap between group rows. */
   laneGap: 18,
   /** Y of the first group row. */
-  firstLaneY: 250,
+  firstLaneY: 300,
   /** Gateway and internet positions. */
   gatewayY: 0,
   internetY: -190,
@@ -111,6 +111,10 @@ export interface LayeredGroup {
   visualHeight: number;
   /** Width of this row. */
   width: number;
+  /** Width of the device grid when this group is open (even if it is closed now). */
+  openWidth: number;
+  /** Full height including the device grid when this group is open. */
+  openHeight: number;
   /** Top-left corner of the group header. */
   x: number;
   y: number;
@@ -192,14 +196,13 @@ export function layoutLayered(
       a.name.localeCompare(b.name)
     );
     const collapsed = !expanded.has(category);
-    const columns = Math.min(devices.length, LAYERED.columns);
-    const rows = collapsed ? 0 : Math.ceil(devices.length / columns);
-    const width = collapsed
-      ? LAYERED.closedWidth
-      : Math.max(LAYERED.minOpenWidth, columns * LAYERED.stepX + 60);
-    const height = collapsed
-      ? LAYERED.closedHeight
-      : LAYERED.headerHeight + rows * LAYERED.stepY + LAYERED.bottomPadding;
+    const columns = Math.max(1, Math.min(devices.length, LAYERED.columns));
+    const openRows = Math.ceil(devices.length / columns);
+    const openWidth = Math.max(LAYERED.minOpenWidth, columns * LAYERED.stepX + 60);
+    const openHeight =
+      LAYERED.headerHeight + openRows * LAYERED.stepY + LAYERED.bottomPadding;
+    const width = collapsed ? LAYERED.closedWidth : openWidth;
+    const height = collapsed ? LAYERED.closedHeight : openHeight;
 
     groups.push({
       key: category,
@@ -210,6 +213,8 @@ export function layoutLayered(
       collapsed,
       width,
       height,
+      openWidth,
+      openHeight,
       visualHeight: LAYERED.closedHeight,
       x: treeLeft,
       y,
