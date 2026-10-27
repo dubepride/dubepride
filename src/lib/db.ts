@@ -169,18 +169,34 @@ async function ensureColumn(db: Client, table: string, column: string, ddl: stri
   }
 }
 
-/** Schema + demo seed. Runs once per process, before the first query. */
+/**
+ * Sample content (roster, terminals, punch history) is OPT-IN.
+ *
+ * A live bridge must never invent people or punches: an empty console is
+ * honest, a console full of fabricated staff is not. Set SEED_DEMO_DATA=true
+ * only when you deliberately want the old first-run demo dataset.
+ *
+ * Reference configuration is always seeded regardless: the 13 real branches,
+ * the standard shifts, the baseline access levels and the admin account.
+ */
+function seedDemoData(): boolean {
+  return (process.env.SEED_DEMO_DATA ?? "").trim().toLowerCase() === "true";
+}
+
+/** Schema + seed. Runs once per process, before the first query. */
 async function bootstrap(client: Client): Promise<void> {
   await migrate(client);
   await seedShifts(client);
-  await seedRoster(client);
-  await seedTerminals(client);
+  if (seedDemoData()) {
+    await seedRoster(client);
+    await seedTerminals(client);
+  }
   await seedBranches(client);
   await seedAccessLevels(client);
-  await ensureBranchCoverage(client);
+  if (seedDemoData()) await ensureBranchCoverage(client);
   await backfillEmployeeMeta(client);
   await seedSystemAccounts(client);
-  await seedAttendanceHistory(client);
+  if (seedDemoData()) await seedAttendanceHistory(client);
 }
 
 // db.ts owns the schema; sqlite.ts owns the connection + bootstrap ordering.
@@ -571,17 +587,19 @@ async function ensureBranchCoverage(db: Client): Promise<void> {
  * position/shift; anything unknown falls back to a Department default.
  */
 async function backfillEmployeeMeta(db: Client): Promise<void> {
-  for (const e of SEED_EMPLOYEES) {
-    await exec(
-      db,
-      `UPDATE Employees
-          SET Position = ?, Shift_ID = ?, Status = 'Active'
-        WHERE ERP_User_ID = ?
-          AND (Position = '' OR Position IS NULL OR Shift_ID IS NULL)`,
-      e.position,
-      e.shiftId,
-      e.erp
-    );
+  if (seedDemoData()) {
+    for (const e of SEED_EMPLOYEES) {
+      await exec(
+        db,
+        `UPDATE Employees
+            SET Position = ?, Shift_ID = ?, Status = 'Active'
+          WHERE ERP_User_ID = ?
+            AND (Position = '' OR Position IS NULL OR Shift_ID IS NULL)`,
+        e.position,
+        e.shiftId,
+        e.erp
+      );
+    }
   }
   // Roster rows outside the demo seed: give them a sensible department default.
   const orphans = await queryAll<{ Employee_ID: number; Position: string }>(
@@ -596,24 +614,26 @@ async function backfillEmployeeMeta(db: Client): Promise<void> {
   // blanks, so an admin's edits on the enrolment page survive restarts —
   // clearing all fingers drops Fingerprint_Enrolled to 0, which also stops
   // this backfill from resurrecting them).
-  for (const e of SEED_EMPLOYEES) {
-    if (e.branch) {
-      await exec(
-        db,
-        "UPDATE Employees SET Branch_Name = ? WHERE ERP_User_ID = ? AND (Branch_Name IS NULL OR Branch_Name = '')",
-        e.branch,
-        e.erp
-      );
-    }
-    if (e.enrolled && e.fingers > 0) {
-      await exec(
-        db,
-        `UPDATE Employees SET Fingers_Enrolled = ?
-          WHERE ERP_User_ID = ? AND Fingerprint_Enrolled = 1
-            AND (Fingers_Enrolled IS NULL OR Fingers_Enrolled = '')`,
-        serializeFingers(seedFingers(e.fingers)),
-        e.erp
-      );
+  if (seedDemoData()) {
+    for (const e of SEED_EMPLOYEES) {
+      if (e.branch) {
+        await exec(
+          db,
+          "UPDATE Employees SET Branch_Name = ? WHERE ERP_User_ID = ? AND (Branch_Name IS NULL OR Branch_Name = '')",
+          e.branch,
+          e.erp
+        );
+      }
+      if (e.enrolled && e.fingers > 0) {
+        await exec(
+          db,
+          `UPDATE Employees SET Fingers_Enrolled = ?
+            WHERE ERP_User_ID = ? AND Fingerprint_Enrolled = 1
+              AND (Fingers_Enrolled IS NULL OR Fingers_Enrolled = '')`,
+          serializeFingers(seedFingers(e.fingers)),
+          e.erp
+        );
+      }
     }
   }
 }
@@ -885,8 +905,10 @@ const SEED_ADMIN: SeedAccount = {
   // Overridden by BIOBRIDGE_ADMIN_PASSWORD (or a random value) on serverless.
   password: "biobridge-admin",
   level: "IT Administrator",
-  branch: "Branch 1",
-  employeeErp: "ERP-1001", // Amara — the admin's My Portal demo profile
+  // The admin account is not tied to a roster row or a site: those are real
+  // business records, and guessing them would resurrect demo data.
+  branch: "",
+  employeeErp: null,
 };
 
 const SEED_DEMO_ACCOUNTS: SeedAccount[] = [
