@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   // snapshot.
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    agentUpgrade: false as never,
+  },
   // Tailwind v4 is wired through postcss.config.mjs. Turbopack applies the
   // project's PostCSS config natively — adding a `turbopack.rules` entry for
   // "*.css" would run the same transform twice through the webpack-loader
