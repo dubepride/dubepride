@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    agentUpgrade: false as never,
+  },
   turbopack: {
     // Pin the workspace root so Turbopack doesn't walk up into the user
     // profile folder (there is a stray package-lock.json in ~ on this machine).
