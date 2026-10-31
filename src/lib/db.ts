@@ -329,6 +329,11 @@ async function migrate(db: Client): Promise<void> {
       Created_At  INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS App_Meta (
+      Key   TEXT PRIMARY KEY,
+      Value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_logs_emp  ON Attendance_Logs (Employee_ID, Timestamp);
     CREATE INDEX IF NOT EXISTS idx_logs_sync ON Attendance_Logs (ERP_Sync_Status, Log_ID);
     CREATE INDEX IF NOT EXISTS idx_logs_ts   ON Attendance_Logs (Timestamp DESC);
@@ -892,18 +897,17 @@ interface SeedAccount {
 /**
  * The seeded logins.
  *
- * `SEED_ADMIN` always exists so a fresh install is usable. Its password comes
- * from BIOBRIDGE_ADMIN_PASSWORD on any public deployment; otherwise (a normal
- * host) the long-standing default keeps local dev working, and on a serverless
- * runtime a one-time random password is generated and logged instead — see
- * `seedSystemAccounts`. The three demo accounts are seeded on a normal host and
- * skipped on serverless, unless BIOBRIDGE_SEED_DEMO_ACCOUNTS=true.
+ * `SEED_ADMIN` always exists so a fresh install is usable, with the
+ * `admin@biobridge.com` / `admin` credentials requested by the owner.
+ * `ensureSeedAdmin` also repairs older databases (legacy email or an unknown
+ * hash). The password can be changed afterwards from Settings -> Accounts.
+ * The three demo accounts are seeded on a normal host and skipped on
+ * serverless, unless BIOBRIDGE_SEED_DEMO_ACCOUNTS=true.
  */
 const SEED_ADMIN: SeedAccount = {
   first: "Bridge",
   surname: "Admin",
   email: "admin@biobridge.com",
-  // Overridden by BIOBRIDGE_ADMIN_PASSWORD when set.
   password: "admin",
   level: "IT Administrator",
   // The admin account is not tied to a roster row or a site: those are real
@@ -953,10 +957,9 @@ function includeDemoAccounts(): boolean {
 /** The accounts to seed, with the admin password resolved for this runtime. */
 function seededAccounts(): SeedAccount[] {
   const accounts: SeedAccount[] = [];
-  const envPassword = (process.env.BIOBRIDGE_ADMIN_PASSWORD ?? "").trim();
   // The owner asked for a predictable admin login (admin@biobridge.com / admin).
-  // BIOBRIDGE_ADMIN_PASSWORD can still override the password on any deployment.
-  accounts.push({ ...SEED_ADMIN, password: envPassword || SEED_ADMIN.password });
+  // It can be changed afterwards from Settings -> Accounts.
+  accounts.push(SEED_ADMIN);
   if (includeDemoAccounts()) accounts.push(...SEED_DEMO_ACCOUNTS);
   return accounts;
 }
@@ -994,31 +997,85 @@ async function seedSystemAccounts(db: Client): Promise<void> {
 }
 
 /**
- * Keep the built-in administrator reachable at the configured email even on a
- * database that was first seeded under the old `admin@biobridge.example`
- * address. A legacy row is renamed (and its password reset to the configured
- * bootstrap password) so the owner can sign in with the new credentials.
+ * Guarantee the built-in administrator exists at `admin@biobridge.com` with the
+ * requested password, whatever state the database was in before:
+ *
+ *   • new email already present  → reset its password (unknown legacy hash)
+ *   • old `admin@biobridge.example` present → rename it + reset the password
+ *   • neither present            → create the account
+ *
+ * Runs once per database (marker in App_Meta) so a password changed later from
+ * Settings → Accounts is not reverted on every restart/cold start.
  */
+const ADMIN_LOGIN_MARKER = "admin_login_v2";
+
 async function ensureSeedAdmin(db: Client): Promise<void> {
-  const password = (process.env.BIOBRIDGE_ADMIN_PASSWORD ?? "").trim() || SEED_ADMIN.password;
+  const done = await queryOne<{ v: string }>(
+    db,
+    "SELECT Value AS v FROM App_Meta WHERE Key = ?",
+    ADMIN_LOGIN_MARKER
+  );
+  if (done) return;
+
+  const hash = hashPassword(SEED_ADMIN.password);
   const existing = await queryOne<{ id: number }>(
     db,
     "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
     SEED_ADMIN.email.toLowerCase()
   );
-  if (existing) return;
-  const legacy = await queryOne<{ id: number }>(
-    db,
-    "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
-    "admin@biobridge.example"
-  );
-  if (!legacy) return;
+
+  if (existing) {
+    await run(
+      db,
+      "UPDATE System_Accounts SET Password_Hash = ? WHERE Account_ID = ?",
+      hash,
+      existing.id
+    );
+  } else {
+    const legacy = await queryOne<{ id: number }>(
+      db,
+      "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
+      "admin@biobridge.example"
+    );
+    if (legacy) {
+      await run(
+        db,
+        "UPDATE System_Accounts SET Company_Email = ?, Password_Hash = ? WHERE Account_ID = ?",
+        SEED_ADMIN.email,
+        hash,
+        legacy.id
+      );
+    } else {
+      const levelId =
+        (
+          await queryOne<{ id: number }>(
+            db,
+            "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?",
+            SEED_ADMIN.level
+          )
+        )?.id ?? null;
+      const inserted = await run(
+        db,
+        `INSERT INTO System_Accounts
+           (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
+        SEED_ADMIN.first,
+        SEED_ADMIN.surname,
+        SEED_ADMIN.email,
+        hash,
+        levelId,
+        SEED_CREATED_AT
+      );
+      // If the insert was rejected, leave the marker unset so the next boot retries.
+      if (!inserted.changes) return;
+    }
+  }
+
   await run(
     db,
-    "UPDATE System_Accounts SET Company_Email = ?, Password_Hash = ? WHERE Account_ID = ?",
-    SEED_ADMIN.email,
-    hashPassword(password),
-    legacy.id
+    "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
+    ADMIN_LOGIN_MARKER,
+    String(Date.now())
   );
 }
 

@@ -32,9 +32,9 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) — you land on **`/login`**
 (the whole console is protected). Sign in with the seeded administrator
-account (`admin@biobridge.com` / `admin` — set `BIOBRIDGE_ADMIN_PASSWORD` in
-`.env.local` to change the password), then the dashboard, feed and clock start
-working immediately
+account (`admin@biobridge.com` / `admin` — change it afterwards in
+Settings → Accounts), then the dashboard, feed and clock start working
+immediately
 (demo data — including **8 weeks of multi-punch history** — is seeded into
 `data/ta-bridge.db` on first run).
 
@@ -292,17 +292,17 @@ demo branches are not seeded.
 | `TURSO_AUTH_TOKEN` | Database token |
 | `CRON_SECRET` | Guards `/api/cron/erp-sync` (long random string) |
 | `SESSION_SECRET` | HMAC key for session cookies — **set this** |
-| `BIOBRIDGE_ADMIN_PASSWORD` | Password for the seeded admin — **set this** |
 | `SIMULATOR_ENABLED` | `false` in production (real devices push instead) |
 | `ERP_API_URL` / `ERP_API_KEY` / `ERP_MOCK_MODE` | Point at the real ERP |
 
 Leave `TURSO_*` empty and the app falls back to the local SQLite file.
 
 **Seeded logins.** On first use the app creates the admin account
-(`admin@biobridge.com` / `admin`). Set `BIOBRIDGE_ADMIN_PASSWORD` to choose a
-different password. The demo hr/sales/worker logins are seeded on a normal host but skipped
+(`admin@biobridge.com` / `admin`) and repairs older databases that still hold
+the legacy email or an unknown password hash. Change the password after your
+first login from Settings → Accounts. The demo hr/sales/worker logins are seeded on a normal host but skipped
 on serverless — set `BIOBRIDGE_SEED_DEMO_ACCOUNTS=true` to force them, or
-`false` to never seed them. Change the admin password after your first login.
+`false` to never seed them.
 
 ### 3. Deploy
 
