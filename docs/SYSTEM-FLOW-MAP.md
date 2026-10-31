@@ -30,11 +30,11 @@ Next 16's `proxy.ts` (middleware successor) runs before every route:
 
 **File:** `src/app/login/page.tsx` → renders `src/components/LoginForm.tsx`.
 
-- Form input: password field (placeholder `"Enter the HR department password"`, show/hide toggle, `autoFocus`).
-- **Action: Submit ("Unlock Console")** → `POST /api/auth/login` with `{ password }`.
+- Form fields: optional Work Email + password (show/hide toggle, `autoFocus`).
+- **Action: Submit ("Unlock Console")** → `POST /api/auth/login` with `{ email?, password }`.
   - Success → 200 `{ ok:true, message:"Welcome back, Admin" }` + `Set-Cookie: biobridge_session` (HttpOnly, SameSite=Lax, expires +12 h) → client does `router.push("/?welcome=1")`.
   - Wrong password → 401 `{ error:"Incorrect master password." }` (counted toward throttle); ≥ **8 failures / 10 min** → 429 `"Too many failed attempts — try again in 10 minutes."`
-  - `demoHint` block renders `"Demo credentials — password biobridge-admin"` only when `ADMIN_PASSWORD` env is unset (computed at build time).
+  - `demoHint` block removed; the seeded administrator is `admin@biobridge.com` / `admin` (override the password with `BIOBRIDGE_ADMIN_PASSWORD`).
 - Sidebar on this route renders the degraded "Secure area" plate (no nav links). Footer: *"Every route behind this wall is session-protected."*
 
 ### 1.2 `/` — Main Dashboard
@@ -400,7 +400,7 @@ So a punch pushed in Step 1 is visible in the Live Feed within ~2.5 s, and its t
                                                           (or built-in simulator)
 ```
 
-**Configuration surface (env):** `ADMIN_PASSWORD` (default `biobridge-admin`), `SESSION_SECRET`, `ERP_API_URL`, `ERP_API_KEY`, `ERP_MOCK_MODE`, `ERP_MOCK_FAIL_EVERY` (default 5), `SIMULATOR_ENABLED`, `SIMULATOR_MIN_MS`/`SIMULATOR_MAX_MS`.
+**Configuration surface (env):** `BIOBRIDGE_ADMIN_PASSWORD` (default `admin`), `SESSION_SECRET`, `ERP_API_URL`, `ERP_API_KEY`, `ERP_MOCK_MODE`, `ERP_MOCK_FAIL_EVERY` (default 5), `SIMULATOR_ENABLED`, `SIMULATOR_MIN_MS`/`SIMULATOR_MAX_MS`.
 
 ---
 

@@ -17,7 +17,7 @@
  *  (server side), never trusted from the token.
  *
  *  CONFIG (.env):
- *    ADMIN_PASSWORD   — fallback admin password (default: biobridge-admin)
+ *    ADMIN_PASSWORD   — fallback admin password (default: admin)
  *    SESSION_SECRET   — HMAC key for cookies     (default: dev-only value)
  */
 
@@ -30,7 +30,7 @@ export const SESSION_COOKIE = "biobridge_session";
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 /** Used only when ADMIN_PASSWORD is unset — see .env.example. */
-export const DEFAULT_ADMIN_PASSWORD = "biobridge-admin";
+export const DEFAULT_ADMIN_PASSWORD = "admin";
 
 function masterPassword(): string {
   return process.env.ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD;

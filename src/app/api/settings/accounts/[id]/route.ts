@@ -15,7 +15,7 @@
  *  DELETE → removes the account.
  *
  *  Prohibited cases (409):
- *    • deleting the built-in bridge administrator (admin@biobridge.example)
+ *    • deleting the built-in bridge administrator (admin@biobridge.com)
  *      — the app must always keep a guaranteed login path. (PATCH is allowed
  *      on it, so the administrator's details/password can still be maintained.)
  *

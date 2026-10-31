@@ -14,7 +14,7 @@ import { useState, type FormEvent } from "react";
  *
  * The email field is optional: leaving it blank signs into the built-in
  * Bridge administrator, so the app's long-standing single-password demo
- * flow (type `biobridge-admin`) keeps working unchanged.
+ * flow (type `admin`) keeps working unchanged.
  */
 export default function LoginForm() {
   const router = useRouter();
@@ -103,7 +103,7 @@ export default function LoginForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              placeholder="admin@biobridge.example"
+              placeholder="admin@biobridge.com"
               className="glass-inset w-full rounded-xl px-4 py-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
             />
           </label>

@@ -196,6 +196,7 @@ async function bootstrap(client: Client): Promise<void> {
   if (seedDemoData()) await ensureBranchCoverage(client);
   await backfillEmployeeMeta(client);
   await seedSystemAccounts(client);
+  await ensureSeedAdmin(client);
   if (seedDemoData()) await seedAttendanceHistory(client);
 }
 
@@ -901,9 +902,9 @@ interface SeedAccount {
 const SEED_ADMIN: SeedAccount = {
   first: "Bridge",
   surname: "Admin",
-  email: "admin@biobridge.example",
-  // Overridden by BIOBRIDGE_ADMIN_PASSWORD (or a random value) on serverless.
-  password: "biobridge-admin",
+  email: "admin@biobridge.com",
+  // Overridden by BIOBRIDGE_ADMIN_PASSWORD when set.
+  password: "admin",
   level: "IT Administrator",
   // The admin account is not tied to a roster row or a site: those are real
   // business records, and guessing them would resurrect demo data.
@@ -941,11 +942,6 @@ const SEED_DEMO_ACCOUNTS: SeedAccount[] = [
   },
 ];
 
-/** A random, URL-safe bootstrap password. */
-function randomPassword(): string {
-  return crypto.randomBytes(12).toString("base64url");
-}
-
 /** Demo logins: explicit flag wins, else on for a normal host and off serverless. */
 function includeDemoAccounts(): boolean {
   const flag = (process.env.BIOBRIDGE_SEED_DEMO_ACCOUNTS ?? "").trim().toLowerCase();
@@ -958,28 +954,9 @@ function includeDemoAccounts(): boolean {
 function seededAccounts(): SeedAccount[] {
   const accounts: SeedAccount[] = [];
   const envPassword = (process.env.BIOBRIDGE_ADMIN_PASSWORD ?? "").trim();
-  if (envPassword) {
-    accounts.push({ ...SEED_ADMIN, password: envPassword });
-  } else if (isServerlessRuntime()) {
-    // Never ship the published default on a public URL.
-    const password = randomPassword();
-    accounts.push({ ...SEED_ADMIN, password });
-    console.warn(
-      [
-        "",
-        "=".repeat(72),
-        "[seed] BIOBRIDGE_ADMIN_PASSWORD is not set.",
-        "[seed] The admin account was created with a ONE-TIME RANDOM password:",
-        `[seed]     ${SEED_ADMIN.email}  /  ${password}`,
-        "[seed] Sign in, change it, or set BIOBRIDGE_ADMIN_PASSWORD before the",
-        "[seed] first run to choose your own.",
-        "=".repeat(72),
-        "",
-      ].join("\n")
-    );
-  } else {
-    accounts.push(SEED_ADMIN); // local dev keeps the long-standing default
-  }
+  // The owner asked for a predictable admin login (admin@biobridge.com / admin).
+  // BIOBRIDGE_ADMIN_PASSWORD can still override the password on any deployment.
+  accounts.push({ ...SEED_ADMIN, password: envPassword || SEED_ADMIN.password });
   if (includeDemoAccounts()) accounts.push(...SEED_DEMO_ACCOUNTS);
   return accounts;
 }
@@ -1014,6 +991,35 @@ async function seedSystemAccounts(db: Client): Promise<void> {
     });
   }
   await batch(db, statements);
+}
+
+/**
+ * Keep the built-in administrator reachable at the configured email even on a
+ * database that was first seeded under the old `admin@biobridge.example`
+ * address. A legacy row is renamed (and its password reset to the configured
+ * bootstrap password) so the owner can sign in with the new credentials.
+ */
+async function ensureSeedAdmin(db: Client): Promise<void> {
+  const password = (process.env.BIOBRIDGE_ADMIN_PASSWORD ?? "").trim() || SEED_ADMIN.password;
+  const existing = await queryOne<{ id: number }>(
+    db,
+    "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
+    SEED_ADMIN.email.toLowerCase()
+  );
+  if (existing) return;
+  const legacy = await queryOne<{ id: number }>(
+    db,
+    "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
+    "admin@biobridge.example"
+  );
+  if (!legacy) return;
+  await run(
+    db,
+    "UPDATE System_Accounts SET Company_Email = ?, Password_Hash = ? WHERE Account_ID = ?",
+    SEED_ADMIN.email,
+    hashPassword(password),
+    legacy.id
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1347,7 +1353,11 @@ export async function deleteSystemAccount(accountId: number): Promise<{ ok: bool
   const db = await getDb();
   const row = await queryOne<SystemAccountRow>(db, "SELECT * FROM System_Accounts WHERE Account_ID = ?", accountId);
   if (!row) return { ok: false, reason: "That account no longer exists." };
-  if (row.Company_Email.toLowerCase() === "admin@biobridge.example") {
+  if (
+    ["admin@biobridge.com", "admin@biobridge.example"].includes(
+      row.Company_Email.toLowerCase()
+    )
+  ) {
     return { ok: false, reason: "The built-in bridge administrator cannot be removed." };
   }
   await exec(db, "DELETE FROM Time_Off_Requests WHERE Account_ID = ?", accountId);

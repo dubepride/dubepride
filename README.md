@@ -31,9 +31,10 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) — you land on **`/login`**
-(the whole console is protected). Sign in with the master password
-(`biobridge-admin` by default — set `ADMIN_PASSWORD` in `.env.local` to
-change it), then the dashboard, feed and clock start working immediately
+(the whole console is protected). Sign in with the seeded administrator
+account (`admin@biobridge.com` / `admin` — set `BIOBRIDGE_ADMIN_PASSWORD` in
+`.env.local` to change the password), then the dashboard, feed and clock start
+working immediately
 (demo data — including **8 weeks of multi-punch history** — is seeded into
 `data/ta-bridge.db` on first run).
 
@@ -298,10 +299,8 @@ demo branches are not seeded.
 Leave `TURSO_*` empty and the app falls back to the local SQLite file.
 
 **Seeded logins.** On first use the app creates the admin account
-(`admin@biobridge.example`). Set `BIOBRIDGE_ADMIN_PASSWORD` to choose its
-password; if you don't, a **random one-time password** is generated and printed
-to the server log (the published dev default is never seeded on a serverless
-host). The demo hr/sales/worker logins are seeded on a normal host but skipped
+(`admin@biobridge.com` / `admin`). Set `BIOBRIDGE_ADMIN_PASSWORD` to choose a
+different password. The demo hr/sales/worker logins are seeded on a normal host but skipped
 on serverless — set `BIOBRIDGE_SEED_DEMO_ACCOUNTS=true` to force them, or
 `false` to never seed them. Change the admin password after your first login.
 

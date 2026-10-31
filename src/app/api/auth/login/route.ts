@@ -3,11 +3,11 @@
  *  POST /api/auth/login — System Account sign-in (Phase 13/14)
  * ============================================================================
  *
- *  Body: { "email": "admin@biobridge.example", "password": "…" }
+ *  Body: { "email": "admin@biobridge.com", "password": "…" }
  *
  *  The `email` field is optional — an empty email falls back to the built-in
- *  Bridge administrator (admin@biobridge.example), so the long-standing
- *  "type just the password" demo flow keeps working with `biobridge-admin`.
+ *  Bridge administrator (admin@biobridge.com), so the long-standing
+ *  "type just the password" demo flow keeps working with `admin`.
  *
  *  200 → sets the signed HttpOnly session cookie and returns the account's
  *        landing page (`home`) — the client redirects there.
@@ -31,7 +31,7 @@ import {
 import { findAccountByEmail, resolveAccount, verifyPassword } from "@/lib/db";
 
 /** The demo master account that keeps the legacy single-password flow alive. */
-export const DEFAULT_ADMIN_EMAIL = "admin@biobridge.example";
+export const DEFAULT_ADMIN_EMAIL = "admin@biobridge.com";
 
 export async function POST(request: NextRequest): Promise<Response> {
   if (loginThrottled()) {
