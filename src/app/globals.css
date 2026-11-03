@@ -48,6 +48,20 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+/* Native <select> popups across Windows/macOS/Linux must never render a white
+   background with white text. Force dark scheme + explicit dark purple canvas. */
+select {
+  color-scheme: dark;
+  background-color: #160c28;
+  color: #ffffff;
+}
+
+select option,
+select optgroup {
+  background-color: #160c28;
+  color: #ffffff;
+}
+
 ::selection {
   background: rgba(0, 230, 118, 0.3);
 }
@@ -99,7 +113,8 @@ body {
 
 /* Darker sibling for nested panels / table bodies. */
 .glass-inset {
-  background: linear-gradient(
+  background-color: #160c28;
+  background-image: linear-gradient(
     150deg,
     rgba(10, 10, 10, 0.55) 0%,
     rgba(45, 27, 78, 0.35) 100%
@@ -843,9 +858,10 @@ body {
 .rtc-select {
   width: 100%;
   appearance: none;
+  color-scheme: dark;
   border-radius: 0.85rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: #160c28;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.85rem center;

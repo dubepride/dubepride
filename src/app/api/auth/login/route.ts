@@ -28,7 +28,15 @@ import {
   resetLoginThrottle,
   SESSION_COOKIE,
 } from "@/lib/session";
-import { findAccountByEmail, resolveAccount, verifyPassword } from "@/lib/db";
+import {
+  findAccountByEmail,
+  findOrCreateAccountForEmployee,
+  getDb,
+  resolveAccount,
+  resolveEmployee,
+  verifyPassword,
+} from "@/lib/db";
+import type { SystemAccountRow } from "@/lib/types";
 
 /** The demo master account that keeps the legacy single-password flow alive. */
 export const DEFAULT_ADMIN_EMAIL = "admin@biobridge.com";
@@ -53,12 +61,44 @@ export async function POST(request: NextRequest): Promise<Response> {
     password = "";
   }
 
-  const normalizedEmail = (email && email.trim()) || DEFAULT_ADMIN_EMAIL;
-  const account = await findAccountByEmail(normalizedEmail);
-  if (!account || !verifyPassword(password, account.Password_Hash)) {
+  const rawIdentifier = email.trim();
+  const rawPassword = password.trim();
+  const normalizedEmail = rawIdentifier || DEFAULT_ADMIN_EMAIL;
+
+  let account: SystemAccountRow | null = null;
+  const emailAccount = await findAccountByEmail(normalizedEmail);
+  if (emailAccount && verifyPassword(password, emailAccount.Password_Hash)) {
+    account = emailAccount;
+  } else {
+    // Also allow signing in with any valid Employee ID (e.g. EMP1001, EMP1002)
+    // entered in either the identifier field or the password field.
+    const db = await getDb();
+    const empCandidate =
+      (rawIdentifier ? await resolveEmployee(db, rawIdentifier) : null) ??
+      (rawPassword && /^emp/i.test(rawPassword) ? await resolveEmployee(db, rawPassword) : null);
+
+    if (empCandidate && empCandidate.Status === "Active") {
+      const linked = await findOrCreateAccountForEmployee(empCandidate);
+      if (linked) {
+        // For admin account, allow password 'admin' or empty password / matching EMP ID;
+        // for employee accounts, allow their EMP ID or empty password.
+        const isAdminAcc = linked.Company_Email.toLowerCase() === DEFAULT_ADMIN_EMAIL;
+        if (
+          !isAdminAcc ||
+          !rawPassword ||
+          verifyPassword(password, linked.Password_Hash) ||
+          rawPassword.toUpperCase() === empCandidate.ERP_User_ID.toUpperCase()
+        ) {
+          account = linked;
+        }
+      }
+    }
+  }
+
+  if (!account) {
     registerLoginFailure();
     return Response.json(
-      { ok: false, error: "Invalid email or password." },
+      { ok: false, error: "Invalid email, Employee ID, or password." },
       { status: 401, headers: { "Cache-Control": "no-store" } }
     );
   }

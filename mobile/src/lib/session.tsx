@@ -129,7 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       }
 
       const savedUrl = await readSavedApiUrl();
-      if (!cancelled && savedUrl) setInitialApiUrl(savedUrl);
+      if (!cancelled && savedUrl && !savedUrl.includes("10.0.2.2")) {
+        setInitialApiUrl(savedUrl);
+      }
 
       const restored = await readSession();
       if (cancelled) return;

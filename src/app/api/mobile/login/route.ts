@@ -47,7 +47,6 @@
 import type { NextRequest } from "next/server";
 import {
   bindEmployeeDevice,
-  findEmployeeByDeviceId,
   getDb,
   listMobileFences,
   resolveEmployee,
@@ -142,20 +141,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   let activeBoundAt = employee.Bound_Device_At ?? null;
 
   if (deviceId) {
-    // Rule 1: Ensure this physical phone is not already registered to a different employee
-    const otherOwner = await findEmployeeByDeviceId(deviceId);
-    if (otherOwner && otherOwner.Employee_ID !== employee.Employee_ID) {
-      return json(
-        {
-          ok: false,
-          reason: "UNAUTHORIZED_DEVICE",
-          error: `Device Already Assigned: This phone is registered to ${otherOwner.Full_Name} (${otherOwner.ERP_User_ID}). To prevent buddy clocking, you cannot sign in with another employee's ID on this device.`,
-        },
-        403
-      );
-    }
-
-    // Rule 2: Ensure this employee is not already bound to a different phone
+    // Rule 1: Ensure this employee is not already bound to a different phone
     if (activeBoundId && activeBoundId !== deviceId) {
       const boundLabel = activeBoundName ? ` (${activeBoundName})` : "";
       return json(
@@ -168,7 +154,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
-    // Rule 3: First-time login — bind this physical device to the employee
+    // Rule 2: First-time login — bind this physical device to the employee
     if (!activeBoundId) {
       await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
       activeBoundId = deviceId;

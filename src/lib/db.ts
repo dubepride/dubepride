@@ -620,20 +620,53 @@ async function backfillEmployeeMeta(db: Client): Promise<void> {
   }
 
   // 2. Automatically convert any legacy ERP-xxxx / EMP-xxxx / ERP_xxxx / EMP_xxxx Employee IDs to EMPxxxx
+  //    NOTE: Use GLOB (not LIKE) because '_' in SQLite LIKE is a single-character wildcard!
   await exec(
     db,
     `UPDATE OR IGNORE Employees
         SET ERP_User_ID = 'EMP' || substr(ERP_User_ID, 5)
-      WHERE ERP_User_ID LIKE 'ERP-%'
-         OR ERP_User_ID LIKE 'EMP-%'
-         OR ERP_User_ID LIKE 'ERP_%'
-         OR ERP_User_ID LIKE 'EMP_%'`
+      WHERE ERP_User_ID GLOB 'ERP-*'
+         OR ERP_User_ID GLOB 'EMP-*'
+         OR ERP_User_ID GLOB 'ERP_*'
+         OR ERP_User_ID GLOB 'EMP_*'`
+  );
+
+  // 2b. Repair Pride Admin (and any employee whose ERP_User_ID was truncated to 'EMP' or 'EMP0*' by earlier LIKE '_')
+  await exec(
+    db,
+    `UPDATE OR IGNORE Employees
+        SET ERP_User_ID = 'EMP1001'
+      WHERE (Full_Name = 'Pride Admin' OR ERP_User_ID = 'EMP' OR ERP_User_ID = 'EMP1' OR ERP_User_ID = 'EMP01' OR ERP_User_ID = 'EMP001')
+        AND NOT EXISTS (SELECT 1 FROM Employees WHERE ERP_User_ID = 'EMP1001')`
+  );
+  await exec(
+    db,
+    `UPDATE OR IGNORE Employees
+        SET ERP_User_ID = 'EMP' || (1000 + Employee_ID)
+      WHERE ERP_User_ID = 'EMP' OR ERP_User_ID GLOB 'EMP0*'`
   );
 
   // 3. Ensure Pride Admin (EMP1001) exists if roster is completely empty
   const empCount = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Employees"))?.c ?? 0;
   if (empCount === 0) {
     await seedRoster(db);
+  }
+
+  // 3b. Ensure the admin System_Accounts row is linked to Pride Admin (EMP1001)
+  const prideRow = await queryOne<{ id: number }>(
+    db,
+    "SELECT Employee_ID AS id FROM Employees WHERE ERP_User_ID = 'EMP1001' OR Full_Name = 'Pride Admin' LIMIT 1"
+  );
+  if (prideRow) {
+    await exec(
+      db,
+      `UPDATE System_Accounts
+          SET Employee_ID = ?, First_Name = 'Pride', Surname = 'Admin'
+        WHERE lower(Company_Email) = 'admin@biobridge.com'
+          AND (Employee_ID IS NULL OR Employee_ID <> ?)`,
+      prideRow.id,
+      prideRow.id
+    );
   }
 
   if (seedDemoData()) {
@@ -1612,6 +1645,86 @@ export async function findAccountByEmail(email: string): Promise<SystemAccountRo
       normalized
     ) ?? null
   );
+}
+
+/**
+ * Find or auto-create a System_Accounts row for an existing roster employee
+ * so any employee who exists in Employees (`EMPxxxx`) can sign in on the web
+ * portal as well as the mobile app.
+ */
+export async function findOrCreateAccountForEmployee(
+  employee: EmployeeRow
+): Promise<SystemAccountRow | null> {
+  const db = await getDb();
+
+  // 1. Direct match by linked Employee_ID
+  const byEmpId = await queryOne<SystemAccountRow>(
+    db,
+    "SELECT * FROM System_Accounts WHERE Employee_ID = ? LIMIT 1",
+    employee.Employee_ID
+  );
+  if (byEmpId) return byEmpId;
+
+  // 2. If this is EMP1001 / Pride Admin, link to the admin account
+  if (
+    employee.ERP_User_ID.toUpperCase() === "EMP1001" ||
+    employee.Full_Name.toLowerCase() === "pride admin"
+  ) {
+    const adminAcc = await findAccountByEmail("admin@biobridge.com");
+    if (adminAcc) {
+      await exec(
+        db,
+        "UPDATE System_Accounts SET Employee_ID = ? WHERE Account_ID = ?",
+        employee.Employee_ID,
+        adminAcc.Account_ID
+      );
+      return (await systemAccountById(adminAcc.Account_ID)) ?? adminAcc;
+    }
+  }
+
+  // 3. Auto-provision a Worker account linked to this employee
+  const workerLevel = await queryOne<{ id: number }>(
+    db,
+    "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = 'Worker' LIMIT 1"
+  );
+  const branchRow = employee.Branch_Name
+    ? await queryOne<{ id: number }>(
+        db,
+        "SELECT Branch_ID AS id FROM Branches WHERE Branch_Name COLLATE NOCASE = ? LIMIT 1",
+        employee.Branch_Name
+      )
+    : undefined;
+  const parts = employee.Full_Name.trim().split(/\s+/);
+  const firstName = parts[0] || employee.ERP_User_ID;
+  const surname = parts.slice(1).join(" ") || "Employee";
+  const autoEmail = `${employee.ERP_User_ID.toLowerCase()}@biobridge.com`;
+
+  const existingByEmail = await findAccountByEmail(autoEmail);
+  if (existingByEmail) {
+    await exec(
+      db,
+      "UPDATE System_Accounts SET Employee_ID = ? WHERE Account_ID = ?",
+      employee.Employee_ID,
+      existingByEmail.Account_ID
+    );
+    return (await systemAccountById(existingByEmail.Account_ID)) ?? existingByEmail;
+  }
+
+  const { lastId } = await run(
+    db,
+    `INSERT INTO System_Accounts
+       (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    firstName,
+    surname,
+    autoEmail,
+    hashPassword(employee.ERP_User_ID),
+    workerLevel?.id ?? null,
+    branchRow?.id ?? null,
+    employee.Employee_ID,
+    Date.now()
+  );
+  return await systemAccountById(lastId);
 }
 
 /**

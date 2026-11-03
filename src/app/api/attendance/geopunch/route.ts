@@ -14,7 +14,6 @@ import type { NextRequest } from "next/server";
 import { after } from "next/server";
 import {
   bindEmployeeDevice,
-  findEmployeeByDeviceId,
   getDb,
   resolveEmployee,
 } from "@/lib/db";
@@ -111,21 +110,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   const deviceName = rawDeviceName ? String(rawDeviceName).trim() : null;
 
   if (deviceId) {
-    const otherOwner = await findEmployeeByDeviceId(deviceId);
-    if (otherOwner && otherOwner.Employee_ID !== employee.Employee_ID) {
-      return json(
-        {
-          ok: false,
-          reason: "UNAUTHORIZED_DEVICE",
-          message: `Device Already Assigned: This phone is registered to ${otherOwner.Full_Name} (${otherOwner.ERP_User_ID}). Clocking in for another employee is blocked.`,
-          punch: null,
-          geo: null,
-          error: `This device belongs to ${otherOwner.Full_Name}.`,
-        },
-        403
-      );
-    }
-
     const boundId = (employee.Bound_Device_ID ?? "").trim();
     if (!boundId) {
       await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);

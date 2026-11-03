@@ -10,7 +10,7 @@
  *  rejects it with a clear "Wrong Device" error.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -35,6 +35,10 @@ export function Login(): React.ReactElement {
   const [showServer, setShowServer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialApiUrl) setApiUrl(initialApiUrl);
+  }, [initialApiUrl]);
 
   const submit = async (): Promise<void> => {
     if (busy) return;

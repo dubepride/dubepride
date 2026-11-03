@@ -28,8 +28,8 @@ import type {
 /* Configuration                                                       */
 /* ------------------------------------------------------------------ */
 
-/** Android emulator's alias for the host machine's localhost. */
-export const DEFAULT_API_URL = "http://10.0.2.2:3000";
+/** Default live bridge URL. */
+export const DEFAULT_API_URL = "https://dubepride.vercel.app";
 export const DEFAULT_MOBILE_KEY = "biobridge-mobile";
 
 /** Requests are abandoned after this long so a background task can't hang. */
@@ -102,16 +102,30 @@ async function requestJson<T>(
   init: RequestInit,
   timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<JsonResponse<T>> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response | null = null;
+  let lastNetErr: unknown = null;
 
-  let response: Response;
-  try {
-    response = await fetch(url, { ...init, signal: controller.signal });
-  } catch (err) {
-    throw new NetworkError(err instanceof Error ? err.message : "Network request failed");
-  } finally {
-    clearTimeout(timer);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal });
+      lastNetErr = null;
+      break;
+    } catch (err) {
+      lastNetErr = err;
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  if (!response) {
+    throw new NetworkError(
+      lastNetErr instanceof Error ? lastNetErr.message : "Network request failed"
+    );
   }
 
   let text = "";

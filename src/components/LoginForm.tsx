@@ -96,21 +96,21 @@ export default function LoginForm() {
         <form onSubmit={submit} className="mt-7 space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
-              Work Email <span className="text-muted/50">(optional)</span>
+              Work Email or Employee ID <span className="text-muted/50">(e.g. EMP1001)</span>
             </span>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              placeholder="admin@biobridge.com"
+              autoComplete="username"
+              placeholder="admin@biobridge.com or EMP1001"
               className="glass-inset w-full rounded-xl px-4 py-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
             />
           </label>
 
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
-              Administrator Password
+              Password <span className="text-muted/50">(optional for EMP ID)</span>
             </span>
             <div className="relative">
               <input
@@ -119,7 +119,7 @@ export default function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 autoFocus
                 autoComplete="current-password"
-                placeholder="Enter password"
+                placeholder="Enter password (or leave blank for EMP login)"
                 className="glass-inset w-full rounded-xl px-4 py-3 pr-16 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
               />
               <button
@@ -144,7 +144,7 @@ export default function LoginForm() {
 
           <button
             type="submit"
-            disabled={busy || password.length === 0}
+            disabled={busy || (password.trim().length === 0 && email.trim().length === 0)}
             className="btn btn--neon w-full justify-center"
           >
             {busy ? (
