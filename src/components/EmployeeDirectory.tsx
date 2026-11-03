@@ -256,7 +256,7 @@ function EmployeeForm({
               className={`${INPUT} font-mono`}
               value={erpUserId}
               onChange={(e) => setErpUserId(e.target.value)}
-              placeholder="EMP_1016"
+              placeholder="EMP1016"
               autoComplete="off"
               required
             />

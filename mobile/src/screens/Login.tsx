@@ -3,7 +3,7 @@
  *  Login.tsx — BioBridge Mobile Employee ID Sign-In & Hardware Device Binding
  * ============================================================================
  *
- *  Employees sign in using ONLY their Employee ID / Number (e.g. EMP_1001 or 1001).
+ *  Employees sign in using ONLY their Employee ID / Number (e.g. EMP1001 or 1001).
  *  Upon sign-in, BioBridge Mobile sends this phone's persistent Hardware Device ID
  *  so the employee's ID is bound 1-to-1 to their phone on the main system.
  *  If anyone tries to sign in with that Employee ID on another device, the server
@@ -81,7 +81,7 @@ export function Login(): React.ReactElement {
           <TextInput
             value={employeeNumber}
             onChangeText={setEmployeeNumber}
-            placeholder="e.g. EMP_1001 or 1001"
+            placeholder="e.g. EMP1001 or 1001"
             placeholderTextColor={COLORS.textFaint}
             autoCapitalize="characters"
             autoCorrect={false}

@@ -221,9 +221,9 @@ export function parseEmployeeRows(
     const rawErpUserId = getVal("erpUserId");
     const erpUserId = rawErpUserId
       ? /^(ERP|EMP)[-_ ]?(.+)$/i.test(rawErpUserId)
-        ? `EMP_${rawErpUserId.replace(/^(ERP|EMP)[-_ ]?/i, "").trim()}`
+        ? `EMP${rawErpUserId.replace(/^(ERP|EMP)[-_ ]?/i, "").trim()}`
         : /^\d+$/.test(rawErpUserId)
-        ? `EMP_${rawErpUserId}`
+        ? `EMP${rawErpUserId}`
         : rawErpUserId
       : "";
     let fullName = getVal("fullName");
@@ -334,7 +334,7 @@ export function parseEmployeeBuffer(buffer: Buffer | ArrayBuffer): {
 /** Sample employee rows for user template downloads. */
 export const SAMPLE_EMPLOYEE_ROWS: Record<string, string>[] = [
   {
-    "Employee Number": "EMP_1016",
+    "Employee Number": "EMP1016",
     "Full Name": "Kagiso Molefe",
     "Department": "Mining Operations",
     "Position": "Drill Rig Operator",
@@ -343,7 +343,7 @@ export const SAMPLE_EMPLOYEE_ROWS: Record<string, string>[] = [
     "Status": "Active",
   },
   {
-    "Employee Number": "EMP_1017",
+    "Employee Number": "EMP1017",
     "Full Name": "Thabo Sithole",
     "Department": "Engineering",
     "Position": "Electrical Technician",
@@ -352,7 +352,7 @@ export const SAMPLE_EMPLOYEE_ROWS: Record<string, string>[] = [
     "Status": "Active",
   },
   {
-    "Employee Number": "EMP_1018",
+    "Employee Number": "EMP1018",
     "Full Name": "Nomvula Dlamini",
     "Department": "Safety & Health",
     "Position": "Safety Officer",
@@ -361,7 +361,7 @@ export const SAMPLE_EMPLOYEE_ROWS: Record<string, string>[] = [
     "Status": "Active",
   },
   {
-    "Employee Number": "EMP_1019",
+    "Employee Number": "EMP1019",
     "Full Name": "Bongani Khumalo",
     "Department": "Processing Plant",
     "Position": "Plant Operator",
@@ -370,7 +370,7 @@ export const SAMPLE_EMPLOYEE_ROWS: Record<string, string>[] = [
     "Status": "Active",
   },
   {
-    "Employee Number": "EMP_1020",
+    "Employee Number": "EMP1020",
     "Full Name": "Lerato Mokoena",
     "Department": "Administration",
     "Position": "HR Administrator",

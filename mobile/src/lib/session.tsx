@@ -99,6 +99,7 @@ function matchesEmployee(session: MobileSession, ref: string): boolean {
   return (
     value === erp ||
     value === id ||
+    value === `emp${id}` ||
     value === `emp_${id}` ||
     value === `emp-${id}` ||
     value === `erp-${id}` ||
