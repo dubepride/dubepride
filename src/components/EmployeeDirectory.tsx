@@ -130,7 +130,11 @@ function EmployeeForm({
   );
   const [enrolled, setEnrolled] = useState(employee?.enrolled ?? false);
   const [status, setStatus] = useState(employee?.status === "Inactive" ? "Inactive" : "Active");
+  const [boundDeviceId, setBoundDeviceId] = useState<string | null>(employee?.boundDeviceId ?? null);
+  const [boundDeviceName, setBoundDeviceName] = useState<string | null>(employee?.boundDeviceName ?? null);
   const [unbindDevice, setUnbindDevice] = useState(false);
+  const [unbindingNow, setUnbindingNow] = useState(false);
+  const [unbindSuccessMsg, setUnbindSuccessMsg] = useState<string | null>(null);
   const [shifts, setShifts] = useState<ShiftRow[] | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -138,15 +142,17 @@ function EmployeeForm({
 
   const isAdd = mode === "add";
 
-  // Shift catalogue + branch list are only needed while the modal is open —
-  // fetch lazily (branches come from the registered terminal sites).
+  // Shift catalogue + branch list + live bound device status while modal is open
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [shiftsRes, terminalsRes] = await Promise.all([
+        const [shiftsRes, terminalsRes, empRes] = await Promise.all([
           fetch("/api/shifts", { cache: "no-store" }),
           fetch("/api/terminals", { cache: "no-store" }),
+          !isAdd && employee
+            ? fetch(`/api/employees/${employee.id}`, { cache: "no-store" })
+            : Promise.resolve(null),
         ]);
         if (!shiftsRes.ok || !terminalsRes.ok) {
           throw new Error(`HTTP ${shiftsRes.status}/${terminalsRes.status}`);
@@ -155,6 +161,15 @@ function EmployeeForm({
         const terminalsJson = (await terminalsRes.json()) as {
           terminals?: { branch?: string }[];
         };
+        if (empRes && empRes.ok) {
+          const empJson = (await empRes.json()) as {
+            employee?: { boundDeviceId?: string | null; boundDeviceName?: string | null };
+          };
+          if (!cancelled && empJson.employee) {
+            setBoundDeviceId(empJson.employee.boundDeviceId ?? null);
+            setBoundDeviceName(empJson.employee.boundDeviceName ?? null);
+          }
+        }
         if (cancelled) return;
         setShifts(shiftsJson.shifts ?? []);
         setBranches(
@@ -178,7 +193,39 @@ function EmployeeForm({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAdd, employee]);
+
+  async function handleInstantUnbind() {
+    if (!employee || unbindingNow) return;
+    setUnbindingNow(true);
+    setFormError(null);
+    setUnbindSuccessMsg(null);
+    try {
+      const res = await fetch(`/api/employees/${employee.id}/unbind-device`, {
+        method: "POST",
+      });
+      const json = ((await res.json()).catch(() => null)) as {
+        ok?: boolean;
+        message?: string;
+        error?: string;
+      } | null;
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
+      setBoundDeviceId(null);
+      setBoundDeviceName(null);
+      setUnbindDevice(true);
+      setUnbindSuccessMsg(
+        json.message ||
+          `Mobile device unbound for ${employee.fullName}. Their next login will auto-bind their new phone.`
+      );
+      onSaved();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUnbindingNow(false);
+    }
+  }
 
   // Keep the selects honest if the saved value is missing from the catalogue.
   const shiftKnown =
@@ -407,41 +454,52 @@ function EmployeeForm({
 
           {!isAdd && employee ? (
             <div className="sm:col-span-2">
-              <span className={LABEL}>BioBridge Mobile Device Binding</span>
-              {employee.boundDeviceId && !unbindDevice ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-xs">
-                  <div>
-                    <span className="font-semibold text-neon">
-                      Bound to {employee.boundDeviceName || "Android Phone"}
-                    </span>
-                    <span className="ml-2 font-mono text-[11px] text-muted">
-                      ({employee.boundDeviceId})
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setUnbindDevice(true)}
-                    className="btn btn--ghost py-1! px-2.5! text-[10px]! text-amber-300 uppercase"
-                  >
-                    Unbind Device
-                  </button>
+              <span className={LABEL}>BioBridge Mobile Device Binding (Auto-Bind on First Login)</span>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-3 text-xs">
+                <div className="space-y-1">
+                  {boundDeviceId ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="chip chip--neon">
+                          🔒 Bound · {boundDeviceName || "Android Handset"}
+                        </span>
+                        <span className="font-mono text-[11px] text-muted">
+                          ID: {boundDeviceId}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted">
+                        Locked to this device. Sign-in from any other phone is blocked.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="chip chip--muted">
+                          🔓 Ready for Auto-Bind on First Login
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted">
+                        No phone currently bound — automatically locks to the first phone that signs in with <span className="font-mono text-ink">{erpUserId || employee.erpUserId}</span>.
+                      </p>
+                    </>
+                  )}
                 </div>
-              ) : unbindDevice ? (
-                <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">
-                  <span>Device will be unbound when you click Save Changes.</span>
-                  <button
-                    type="button"
-                    onClick={() => setUnbindDevice(false)}
-                    className="underline text-[11px]"
-                  >
-                    Undo
-                  </button>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5 text-xs text-muted">
-                  No phone bound yet — automatically locks to the employee&apos;s phone on first login.
-                </div>
-              )}
+
+                <button
+                  type="button"
+                  onClick={() => void handleInstantUnbind()}
+                  disabled={unbindingNow}
+                  className="btn btn--ghost py-1.5! px-3! text-[10px]! tracking-[0.12em]! text-amber-300 uppercase hover:text-amber-200"
+                >
+                  {unbindingNow ? "Resetting…" : "Reset / Unbind Device"}
+                </button>
+              </div>
+
+              {unbindSuccessMsg ? (
+                <p className="mt-2 rounded-xl border border-neon/40 bg-neon/10 px-3 py-2 text-xs text-neon">
+                  ✓ {unbindSuccessMsg}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -743,6 +801,7 @@ export default function EmployeeDirectory() {
                 <th>Position</th>
                 <th>Status</th>
                 <th>Fingerprint</th>
+                <th>Mobile Device</th>
                 <th>Last Seen</th>
                 <th className="text-right">Actions</th>
               </tr>
@@ -751,12 +810,12 @@ export default function EmployeeDirectory() {
               {loading && employees.length === 0 ? (
                 [0, 1, 2, 3, 4].map((i) => (
                   <tr key={i} className="animate-pulse">
-                    <td colSpan={9} className="h-[57px] bg-white/[0.03]" />
+                    <td colSpan={10} className="h-[57px] bg-white/[0.03]" />
                   </tr>
                 ))
               ) : employees.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-10 text-center">
+                  <td colSpan={10} className="px-5 py-10 text-center">
                     <span className="text-sm text-muted">
                       {searching
                         ? `No employee matches “${query.trim()}”.`
@@ -845,6 +904,20 @@ export default function EmployeeDirectory() {
                           ? `${e.fingers.length} of 5 fingerprints enrolled`
                           : "Not enrolled"}
                       </span>
+                    </td>
+                    <td>
+                      {e.boundDeviceId ? (
+                        <span
+                          className="chip chip--neon"
+                          title={`Bound to ${e.boundDeviceName || "Android Phone"} (${e.boundDeviceId})`}
+                        >
+                          🔒 {e.boundDeviceName || "Bound"}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-muted">
+                          Auto-bind on login
+                        </span>
+                      )}
                     </td>
                     <td>
                       {e.lastSeen !== null ? (

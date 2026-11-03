@@ -139,6 +139,33 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       if (restored) {
         const result = await maybeStartTracking(restored);
         if (!cancelled) setTracking(result);
+
+        // If restored session predates device binding, auto-bind this handset now
+        if (!restored.employee.boundDeviceId) {
+          try {
+            const loginRes = await loginRequest({
+              employeeNumber: restored.employee.erpUserId,
+              employeeId: restored.employee.erpUserId,
+              deviceId: hw.deviceId,
+              deviceName: hw.deviceName,
+              apiUrl: restored.apiUrl,
+              mobileKey: restored.mobileKey,
+            });
+            if (!cancelled) {
+              const updated: MobileSession = {
+                ...restored,
+                employee: loginRes.employee,
+                deviceId: hw.deviceId,
+                deviceName: hw.deviceName,
+              };
+              sessionRef.current = updated;
+              await writeSession(updated);
+              setSession(updated);
+            }
+          } catch {
+            // Will retry on next refresh or punch
+          }
+        }
       }
     })();
     return () => {
@@ -159,11 +186,18 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
         ? { ...active.employee, ...data.employee }
         : active.employee;
 
-      // If the employee was deactivated in the web admin, or bound to another device, sign out cleanly
+      // If the employee was deactivated in the web admin, bound to another device,
+      // or their device binding was reset/unbound by an admin, sign out cleanly
       const hw = await getDeviceIdentity();
+      const wasUnboundByAdmin =
+        Boolean(active.employee.boundDeviceId) &&
+        data.employee !== null &&
+        data.employee !== undefined &&
+        !data.employee.boundDeviceId;
       if (
         (nextEmployee.status && nextEmployee.status !== "Active") ||
-        (nextEmployee.boundDeviceId && nextEmployee.boundDeviceId !== hw.deviceId)
+        (nextEmployee.boundDeviceId && nextEmployee.boundDeviceId !== hw.deviceId) ||
+        wasUnboundByAdmin
       ) {
         await stopGeofenceTracking();
         await writeSession(null);

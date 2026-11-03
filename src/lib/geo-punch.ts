@@ -32,6 +32,8 @@
  */
 
 import {
+  bindEmployeeDevice,
+  findEmployeeByDeviceId,
   findTerminalOnlyFenceAt,
   inferDirection,
   insertPunch,
@@ -154,13 +156,26 @@ export async function performGeoPunch(input: GeoPunchInput): Promise<GeoPunchOut
 
   // ── 0a. Hardware Device Binding gate (Anti-Buddy Clocking) ───────────
   const boundId = (employee.Bound_Device_ID ?? "").trim();
-  if (deviceId && boundId && boundId !== deviceId) {
-    const boundLabel = employee.Bound_Device_Name ? ` (${employee.Bound_Device_Name})` : "";
-    return refusal(
-      "UNAUTHORIZED_DEVICE",
-      `Wrong Device: ${employee.Full_Name} (${employee.ERP_User_ID}) is registered to another device${boundLabel}. Clocking from an unauthorized phone is blocked.`,
-      403
-    );
+  if (deviceId) {
+    const otherOwner = await findEmployeeByDeviceId(deviceId);
+    if (otherOwner && otherOwner.Employee_ID !== employee.Employee_ID) {
+      return refusal(
+        "UNAUTHORIZED_DEVICE",
+        `Device Already Assigned: This phone is registered to ${otherOwner.Full_Name} (${otherOwner.ERP_User_ID}). Clocking in for another employee is blocked.`,
+        403
+      );
+    }
+    if (boundId && boundId !== deviceId) {
+      const boundLabel = employee.Bound_Device_Name ? ` (${employee.Bound_Device_Name})` : "";
+      return refusal(
+        "UNAUTHORIZED_DEVICE",
+        `Wrong Device: ${employee.Full_Name} (${employee.ERP_User_ID}) is registered to another device${boundLabel}. Clocking from an unauthorized phone is blocked.`,
+        403
+      );
+    }
+    if (!boundId) {
+      await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
+    }
   }
 
   // ── 0. Optional accuracy gate (off by default) ───────────────────────
