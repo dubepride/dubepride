@@ -186,11 +186,11 @@ export default function TerminalManager() {
                 {"\n"}http://&lt;bridge-host&gt;:3000/api/biometrics/push?SN=&lt;terminal-mac&gt;
                 {"\n\n"}
                 <span className="text-neon">EXAMPLE BODY (per line)</span>
-                {"\n"}ID=ERP-1001&amp;Time=2026-10-07 08:02:07&amp;Status=0&amp;Verify=1
+                {"\n"}ID=EMP_1001&amp;Time=2026-10-07 08:02:07&amp;Status=0&amp;Verify=1
                 {"\n\n"}
                 <span className="text-neon">TEST WITH CURL</span>
                 {"\n"}curl -X POST &quot;http://localhost:3000/api/biometrics/push?SN=A4:1F:72:0C:9B:31&amp;table=ATTLOG&quot; \
-                {"\n"}  -d &quot;ID=ERP-1001&amp;Time=2026-10-07 08:02:07&amp;Status=0&quot;
+                {"\n"}  -d &quot;ID=EMP_1001&amp;Time=2026-10-07 08:02:07&amp;Status=0&quot;
               </code>
             </pre>
           </div>

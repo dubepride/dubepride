@@ -190,7 +190,7 @@ function EmployeeForm({
     const erp = erpUserId.trim();
     const name = fullName.trim();
     if (!erp || !name) {
-      setFormError("ERP user ID and full name are required.");
+      setFormError("Employee ID and full name are required.");
       return;
     }
     setSaving(true);
@@ -240,7 +240,7 @@ function EmployeeForm({
       title={isAdd ? "Add Employee" : "Edit Employee"}
       subtitle={
         isAdd
-          ? "Register a new employee on the bridge — ERP ID and name are required."
+          ? "Register a new employee on the bridge — Employee ID and name are required."
           : `Editing ${employee?.fullName ?? ""} — update their record, shift or enrolment.`
       }
       onClose={onClose}
@@ -249,14 +249,14 @@ function EmployeeForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className={LABEL} htmlFor="emp-erp">
-              ERP User ID
+              Employee ID
             </label>
             <input
               id="emp-erp"
               className={`${INPUT} font-mono`}
               value={erpUserId}
               onChange={(e) => setErpUserId(e.target.value)}
-              placeholder="ERP-1016"
+              placeholder="EMP_1016"
               autoComplete="off"
               required
             />
@@ -660,7 +660,7 @@ export default function EmployeeDirectory() {
             Employee Directory
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Every employee enrolled in the bridge — search by name or ERP ID
+            Every employee enrolled in the bridge — search by name or Employee ID
             and open anyone&apos;s weekly timesheet.
           </p>
         </div>
@@ -739,7 +739,6 @@ export default function EmployeeDirectory() {
                 <th>Employee ID</th>
                 <th>Full Name</th>
                 <th>Branch</th>
-                <th>ERP User ID</th>
                 <th>Department</th>
                 <th>Position</th>
                 <th>Status</th>
@@ -752,12 +751,12 @@ export default function EmployeeDirectory() {
               {loading && employees.length === 0 ? (
                 [0, 1, 2, 3, 4].map((i) => (
                   <tr key={i} className="animate-pulse">
-                    <td colSpan={10} className="h-[57px] bg-white/[0.03]" />
+                    <td colSpan={9} className="h-[57px] bg-white/[0.03]" />
                   </tr>
                 ))
               ) : employees.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-10 text-center">
+                  <td colSpan={9} className="px-5 py-10 text-center">
                     <span className="text-sm text-muted">
                       {searching
                         ? `No employee matches “${query.trim()}”.`
@@ -786,7 +785,7 @@ export default function EmployeeDirectory() {
                   >
                     <td>
                       <span className="font-mono text-xs text-muted tabular-nums">
-                        {e.id}
+                        {e.erpUserId}
                       </span>
                     </td>
                     <td>
@@ -800,11 +799,6 @@ export default function EmployeeDirectory() {
                       ) : (
                         <span className="text-xs text-muted">—</span>
                       )}
-                    </td>
-                    <td>
-                      <span className="font-mono text-xs text-muted">
-                        {e.erpUserId}
-                      </span>
                     </td>
                     <td>
                       {e.department ? (

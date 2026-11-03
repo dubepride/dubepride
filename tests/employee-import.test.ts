@@ -43,7 +43,7 @@ test("detectHeaderMapping matches common HR and payroll column variations", () =
 test("parseEmployeeRows maps rows and extracts full names correctly", () => {
   const rows = [
     {
-      "Employee Number": "EMP-9001",
+      "Employee Number": "EMP_9001",
       "Full Name": "Sipho Sithole",
       "Department": "Mining Operations",
       "Position": "Driller",
@@ -69,7 +69,7 @@ test("parseEmployeeRows maps rows and extracts full names correctly", () => {
   assert.equal(result.validCount, 2);
   assert.equal(result.invalidCount, 0);
 
-  assert.equal(result.items[0].erpUserId, "EMP-9001");
+  assert.equal(result.items[0].erpUserId, "EMP_9001");
   assert.equal(result.items[0].fullName, "Sipho Sithole");
   assert.equal(result.items[0].department, "Mining Operations");
   assert.equal(result.items[0].position, "Driller");
@@ -77,7 +77,7 @@ test("parseEmployeeRows maps rows and extracts full names correctly", () => {
   assert.equal(result.items[0].shift, "Morning");
   assert.equal(result.items[0].status, "Active");
 
-  assert.equal(result.items[1].erpUserId, "EMP-9002");
+  assert.equal(result.items[1].erpUserId, "EMP_9002");
   assert.equal(result.items[1].fullName, "Nandi Ndlovu");
   assert.equal(result.items[1].department, "Safety");
   assert.equal(result.items[1].position, "Inspector");
@@ -91,7 +91,7 @@ test("parseEmployeeRows flags invalid or missing employee numbers or names", () 
       "Full Name": "No ID Person",
     },
     {
-      "Emp ID": "EMP-9003",
+      "Emp ID": "EMP_9003",
       "Full Name": "",
     },
   ];
@@ -117,6 +117,6 @@ test("generateEmployeeTemplateXlsx generates a valid parseable workbook buffer",
   const parsed = parseEmployeeBuffer(xlsxBuffer);
   assert.ok(parsed.items.length >= 3);
   assert.equal(parsed.validCount, parsed.items.length);
-  assert.equal(parsed.items[0].erpUserId, "EMP-1016");
+  assert.equal(parsed.items[0].erpUserId, "EMP_1016");
   assert.equal(parsed.items[0].fullName, "Kagiso Molefe");
 });

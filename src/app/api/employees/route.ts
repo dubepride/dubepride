@@ -57,7 +57,7 @@ function parseEmployeeBody(
 
   if (body.erpUserId !== undefined) {
     const v = String(body.erpUserId).trim();
-    if (!partial && !v) return { error: "ERP user id is required.", value };
+    if (!partial && !v) return { error: "Employee ID is required.", value };
     if (v) value.erpUserId = v;
   }
   if (body.fullName !== undefined) {
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const { error, value } = parseEmployeeBody(body, false);
   if (error) return bad(error);
-  if (!value.erpUserId) return bad("ERP user id is required.");
+  if (!value.erpUserId) return bad("Employee ID is required.");
   if (!value.fullName) return bad("Full name is required.");
 
   try {
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const message = e instanceof Error ? e.message : "Could not create the employee.";
     return bad(
       message.includes("UNIQUE")
-        ? `An employee with ERP id "${value.erpUserId}" already exists.`
+        ? `An employee with Employee ID "${value.erpUserId}" already exists.`
         : message
     );
   }
@@ -182,7 +182,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not update the employee.";
-    return bad(message.includes("UNIQUE") ? "That ERP user id is already in use." : message);
+    return bad(message.includes("UNIQUE") ? "That Employee ID is already in use." : message);
   }
 }
 

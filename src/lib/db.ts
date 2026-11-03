@@ -434,25 +434,25 @@ interface SeedEmployee {
 }
 
 /**
- * The 15-person demo roster (ids 1‥15, ERP-1001‥ERP-1015).
+ * The 15-person demo roster (ids 1‥15, EMP_1001‥EMP_1015).
  * Names/departments mirror the dashboard mock so deep links line up.
  */
 const SEED_EMPLOYEES: SeedEmployee[] = [
-  { erp: "ERP-1001", name: "Amara Okafor",       enrolled: 1, department: "Operations",       position: "Operations Lead",       shiftId: 2, branch: "Branch 1",  fingers: 5 },
-  { erp: "ERP-1002", name: "Daniel Whitfield",   enrolled: 1, department: "Logistics",        position: "Logistics Coordinator", shiftId: 1, branch: "Branch 17", fingers: 4 },
-  { erp: "ERP-1003", name: "Priya Raghunathan",  enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 5 },
-  { erp: "ERP-1004", name: "Marcus Delaney",     enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "ERP-1005", name: "Sofia Castellanos",  enrolled: 1, department: "Finance",          position: "Finance Analyst",       shiftId: 2, branch: "Branch 4",  fingers: 4 },
-  { erp: "ERP-1006", name: "Kwame Mensah",       enrolled: 1, department: "Warehouse",        position: "Warehouse Associate",   shiftId: 1, branch: "Branch 3",  fingers: 5 },
-  { erp: "ERP-1007", name: "Elena Petrova",      enrolled: 1, department: "Human Resources",  position: "HR Officer",            shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "ERP-1008", name: "Jackson Rowe",       enrolled: 1, department: "Security",         position: "Security Officer",      shiftId: 4, branch: "Branch 1",  fingers: 4 },
-  { erp: "ERP-1009", name: "Fatima Al-Sayed",    enrolled: 1, department: "Procurement",      position: "Procurement Officer",   shiftId: 2, branch: "Branch 6",  fingers: 5 },
-  { erp: "ERP-1010", name: "Thomas Achebe",      enrolled: 1, department: "Maintenance",      position: "Maintenance Technician",shiftId: 4, branch: "Branch 2",  fingers: 4 },
-  { erp: "ERP-1011", name: "Grace Lindqvist",    enrolled: 1, department: "Engineering",      position: "QA Engineer",           shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "ERP-1012", name: "Rafael Moreno",      enrolled: 1, department: "Logistics",        position: "Fleet Dispatcher",      shiftId: 1, branch: "Branch 17", fingers: 5 },
-  { erp: "ERP-1013", name: "Hannah Kim",         enrolled: 1, department: "Finance",          position: "Accountant",            shiftId: 2, branch: "Branch 4",  fingers: 4 },
-  { erp: "ERP-1014", name: "Oliver Baptiste",    enrolled: 0, department: "Operations",       position: "Field Officer",         shiftId: 2, branch: "Branch 5",  fingers: 0 },
-  { erp: "ERP-1015", name: "Nadia Volkova",      enrolled: 0, department: "Warehouse",        position: "Stores Clerk",          shiftId: 1, branch: "Branch 3",  fingers: 0 },
+  { erp: "EMP_1001", name: "Amara Okafor",       enrolled: 1, department: "Operations",       position: "Operations Lead",       shiftId: 2, branch: "Branch 1",  fingers: 5 },
+  { erp: "EMP_1002", name: "Daniel Whitfield",   enrolled: 1, department: "Logistics",        position: "Logistics Coordinator", shiftId: 1, branch: "Branch 17", fingers: 4 },
+  { erp: "EMP_1003", name: "Priya Raghunathan",  enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 5 },
+  { erp: "EMP_1004", name: "Marcus Delaney",     enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 3 },
+  { erp: "EMP_1005", name: "Sofia Castellanos",  enrolled: 1, department: "Finance",          position: "Finance Analyst",       shiftId: 2, branch: "Branch 4",  fingers: 4 },
+  { erp: "EMP_1006", name: "Kwame Mensah",       enrolled: 1, department: "Warehouse",        position: "Warehouse Associate",   shiftId: 1, branch: "Branch 3",  fingers: 5 },
+  { erp: "EMP_1007", name: "Elena Petrova",      enrolled: 1, department: "Human Resources",  position: "HR Officer",            shiftId: 2, branch: "Branch 4",  fingers: 3 },
+  { erp: "EMP_1008", name: "Jackson Rowe",       enrolled: 1, department: "Security",         position: "Security Officer",      shiftId: 4, branch: "Branch 1",  fingers: 4 },
+  { erp: "EMP_1009", name: "Fatima Al-Sayed",    enrolled: 1, department: "Procurement",      position: "Procurement Officer",   shiftId: 2, branch: "Branch 6",  fingers: 5 },
+  { erp: "EMP_1010", name: "Thomas Achebe",      enrolled: 1, department: "Maintenance",      position: "Maintenance Technician",shiftId: 4, branch: "Branch 2",  fingers: 4 },
+  { erp: "EMP_1011", name: "Grace Lindqvist",    enrolled: 1, department: "Engineering",      position: "QA Engineer",           shiftId: 2, branch: "Branch 4",  fingers: 3 },
+  { erp: "EMP_1012", name: "Rafael Moreno",      enrolled: 1, department: "Logistics",        position: "Fleet Dispatcher",      shiftId: 1, branch: "Branch 17", fingers: 5 },
+  { erp: "EMP_1013", name: "Hannah Kim",         enrolled: 1, department: "Finance",          position: "Accountant",            shiftId: 2, branch: "Branch 4",  fingers: 4 },
+  { erp: "EMP_1014", name: "Oliver Baptiste",    enrolled: 0, department: "Operations",       position: "Field Officer",         shiftId: 2, branch: "Branch 5",  fingers: 0 },
+  { erp: "EMP_1015", name: "Nadia Volkova",      enrolled: 0, department: "Warehouse",        position: "Stores Clerk",          shiftId: 1, branch: "Branch 3",  fingers: 0 },
 ];
 
 /** The first `count` fingers of a seed employee — thumb → little. */
@@ -604,6 +604,16 @@ async function ensureBranchCoverage(db: Client): Promise<void> {
  * position/shift; anything unknown falls back to a Department default.
  */
 async function backfillEmployeeMeta(db: Client): Promise<void> {
+  // Automatically convert any legacy ERP-xxxx / EMP-xxxx / ERP_xxxx Employee IDs to EMP_xxxx
+  await exec(
+    db,
+    `UPDATE OR IGNORE Employees
+        SET ERP_User_ID = 'EMP_' || substr(ERP_User_ID, 5)
+      WHERE ERP_User_ID LIKE 'ERP-%'
+         OR ERP_User_ID LIKE 'EMP-%'
+         OR ERP_User_ID LIKE 'ERP_%'`
+  );
+
   if (seedDemoData()) {
     for (const e of SEED_EMPLOYEES) {
       await exec(
@@ -953,7 +963,7 @@ const SEED_DEMO_ACCOUNTS: SeedAccount[] = [
     password: "worker-pass-2026",
     level: "Worker",
     branch: "Branch 3",
-    employeeErp: "ERP-1014", // Oliver — the worker portal demo profile
+    employeeErp: "EMP_1014", // Oliver — the worker portal demo profile
   },
 ];
 
@@ -1795,9 +1805,30 @@ export async function employeeById(employeeId: number): Promise<EmployeeRow | nu
 }
 
 /**
+ * Normalize an employee code into the standard `EMP_xxxx` format.
+ * Examples:
+ *   "EMP_1001" -> "EMP_1001"
+ *   "ERP-1001" -> "EMP_1001"
+ *   "EMP-1001" -> "EMP_1001"
+ *   "1001"     -> "EMP_1001"
+ */
+export function normalizeEmployeeId(raw: string): string {
+  const v = raw.trim();
+  if (!v) return "";
+  if (/^(ERP|EMP)[-_ ]?(.+)$/i.test(v)) {
+    const suffix = v.replace(/^(ERP|EMP)[-_ ]?/i, "").trim();
+    return `EMP_${suffix}`;
+  }
+  if (/^\d+$/.test(v)) {
+    return `EMP_${v}`;
+  }
+  return v;
+}
+
+/**
  * Resolve a device/ERP/route reference to an employee.
- * Accepts ERP_User_ID ("ERP-1001"), the bare numeric id ("1", "1001" →
- * "ERP-1001") or a route param in either form. Returns null when unknown.
+ * Accepts ERP_User_ID ("EMP_1001"), the bare numeric id ("1", "1001" →
+ * "EMP_1001") or a route param in either form. Returns null when unknown.
  */
 export async function resolveEmployee(db: Client, ref: string): Promise<EmployeeRow | null> {
   const value = ref.trim();
@@ -1811,7 +1842,7 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
   );
   if (direct) return direct;
 
-  // 2. Extract digits if present (e.g. "1001", "EMP-1001", "ERP-1001")
+  // 2. Extract digits if present (e.g. "1001", "EMP_1001", "EMP-1001", "ERP-1001")
   const digitsMatch = value.match(/\d+/);
   const digits = digitsMatch ? digitsMatch[0] : "";
 
@@ -1823,19 +1854,26 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
     );
     if (byId) return byId;
 
+    const byEmpUnderscore = await queryOne<EmployeeRow>(
+      db,
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+      `EMP_${digits}`
+    );
+    if (byEmpUnderscore) return byEmpUnderscore;
+
+    const byEmpDash = await queryOne<EmployeeRow>(
+      db,
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+      `EMP-${digits}`
+    );
+    if (byEmpDash) return byEmpDash;
+
     const byErp = await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
       `ERP-${digits}`
     );
     if (byErp) return byErp;
-
-    const byEmp = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `EMP-${digits}`
-    );
-    if (byEmp) return byEmp;
 
     const byBare = await queryOne<EmployeeRow>(
       db,
@@ -1845,15 +1883,16 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
     if (byBare) return byBare;
   }
 
-  // 3. Try stripped common prefixes (ERP-, EMP-, ME-)
+  // 3. Try stripped common prefixes (ERP-, EMP_, EMP-, ME-)
   const stripped = value.replace(/^(ERP|EMP|ME)[-_ ]?/i, "");
   if (stripped && stripped !== value) {
     const byStripped = await queryOne<EmployeeRow>(
       db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ?",
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ?",
       stripped,
-      `ERP-${stripped}`,
-      `EMP-${stripped}`
+      `EMP_${stripped}`,
+      `EMP-${stripped}`,
+      `ERP-${stripped}`
     );
     if (byStripped) return byStripped;
   }
@@ -1987,7 +2026,7 @@ export async function createEmployee(input: EmployeeInput): Promise<number> {
        (ERP_User_ID, Full_Name, Fingerprint_Enrolled, Fingers_Enrolled,
         Department, Position, Branch_Name, Shift_ID, Status, Created_At)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    input.erpUserId.trim(),
+    normalizeEmployeeId(input.erpUserId),
     input.fullName.trim(),
     input.enrolled ? 1 : 0,
     serializeFingers(fingers),
@@ -2013,7 +2052,7 @@ export async function updateEmployee(employeeId: number, patch: Partial<Employee
     params.push(value);
   };
 
-  if (patch.erpUserId !== undefined) push("ERP_User_ID", patch.erpUserId.trim() || current.ERP_User_ID);
+  if (patch.erpUserId !== undefined) push("ERP_User_ID", normalizeEmployeeId(patch.erpUserId) || current.ERP_User_ID);
   if (patch.fullName !== undefined) push("Full_Name", patch.fullName.trim() || current.Full_Name);
   if (patch.department !== undefined) push("Department", patch.department.trim());
   if (patch.position !== undefined) push("Position", patch.position.trim());
@@ -2129,7 +2168,7 @@ export async function importEmployees(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const rowNum = i + 1;
-    const erp = (item.erpUserId ?? "").toString().trim();
+    const erp = normalizeEmployeeId((item.erpUserId ?? "").toString());
     const name = (item.fullName ?? "").toString().trim();
 
     if (!erp) {

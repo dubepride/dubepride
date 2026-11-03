@@ -256,7 +256,7 @@ export default function TimesheetReport({ query, scopeLabel, onClose }: Props) {
                   <thead>
                     <tr>
                       <th>Employee</th>
-                      <th>ERP ID</th>
+                      <th>Employee ID</th>
                       <th>Department</th>
                       <th className="tsr-r">Days</th>
                       <th className="tsr-r">Punches</th>

@@ -248,7 +248,7 @@ export default function MyPortal() {
                 <p className="mt-0.5 font-semibold text-ink">{employee.fullName}</p>
               </div>
               <div>
-                <p className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase">ERP ID</p>
+                <p className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase">Employee ID</p>
                 <p className="mt-0.5 font-mono text-sm text-ink">{employee.erpUserId}</p>
               </div>
               <div>

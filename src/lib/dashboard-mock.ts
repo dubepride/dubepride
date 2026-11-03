@@ -33,18 +33,18 @@ export interface EmployeeStatusRow {
 }
 
 export const EMPLOYEE_STATUS: EmployeeStatusRow[] = [
-  { employeeId: 1,  erpUserId: "ERP-1001", name: "Amara Okafor",       department: "Operations",        status: "WORKING", time: "7:42 AM" },
-  { employeeId: 2,  erpUserId: "ERP-1002", name: "Daniel Whitfield",   department: "Logistics",         status: "WORKING", time: "7:58 AM" },
-  { employeeId: 3,  erpUserId: "ERP-1003", name: "Priya Raghunathan",  department: "Engineering",       status: "WORKING", time: "8:03 AM" },
-  { employeeId: 4,  erpUserId: "ERP-1004", name: "Marcus Delaney",     department: "Engineering",       status: "NOT IN",  time: "—" },
-  { employeeId: 5,  erpUserId: "ERP-1005", name: "Sofia Castellanos",  department: "Finance",           status: "WORKING", time: "7:31 AM" },
-  { employeeId: 6,  erpUserId: "ERP-1006", name: "Kwame Mensah",       department: "Warehouse",         status: "ON BREAK", time: "12:14 PM" },
-  { employeeId: 7,  erpUserId: "ERP-1007", name: "Elena Petrova",      department: "Human Resources",   status: "WORKING", time: "8:12 AM" },
-  { employeeId: 8,  erpUserId: "ERP-1008", name: "Jackson Rowe",       department: "Security",          status: "WORKING", time: "6:58 AM" },
-  { employeeId: 9,  erpUserId: "ERP-1009", name: "Fatima Al-Sayed",    department: "Procurement",       status: "NOT IN",  time: "—" },
-  { employeeId: 10, erpUserId: "ERP-1010", name: "Thomas Achebe",      department: "Maintenance",       status: "WORKING", time: "8:45 AM" },
-  { employeeId: 11, erpUserId: "ERP-1011", name: "Grace Lindqvist",    department: "Engineering",       status: "WORKING", time: "8:21 AM" },
-  { employeeId: 12, erpUserId: "ERP-1012", name: "Rafael Moreno",      department: "Logistics",         status: "NOT IN",  time: "—" },
+  { employeeId: 1,  erpUserId: "EMP_1001", name: "Amara Okafor",       department: "Operations",        status: "WORKING", time: "7:42 AM" },
+  { employeeId: 2,  erpUserId: "EMP_1002", name: "Daniel Whitfield",   department: "Logistics",         status: "WORKING", time: "7:58 AM" },
+  { employeeId: 3,  erpUserId: "EMP_1003", name: "Priya Raghunathan",  department: "Engineering",       status: "WORKING", time: "8:03 AM" },
+  { employeeId: 4,  erpUserId: "EMP_1004", name: "Marcus Delaney",     department: "Engineering",       status: "NOT IN",  time: "—" },
+  { employeeId: 5,  erpUserId: "EMP_1005", name: "Sofia Castellanos",  department: "Finance",           status: "WORKING", time: "7:31 AM" },
+  { employeeId: 6,  erpUserId: "EMP_1006", name: "Kwame Mensah",       department: "Warehouse",         status: "ON BREAK", time: "12:14 PM" },
+  { employeeId: 7,  erpUserId: "EMP_1007", name: "Elena Petrova",      department: "Human Resources",   status: "WORKING", time: "8:12 AM" },
+  { employeeId: 8,  erpUserId: "EMP_1008", name: "Jackson Rowe",       department: "Security",          status: "WORKING", time: "6:58 AM" },
+  { employeeId: 9,  erpUserId: "EMP_1009", name: "Fatima Al-Sayed",    department: "Procurement",       status: "NOT IN",  time: "—" },
+  { employeeId: 10, erpUserId: "EMP_1010", name: "Thomas Achebe",      department: "Maintenance",       status: "WORKING", time: "8:45 AM" },
+  { employeeId: 11, erpUserId: "EMP_1011", name: "Grace Lindqvist",    department: "Engineering",       status: "WORKING", time: "8:21 AM" },
+  { employeeId: 12, erpUserId: "EMP_1012", name: "Rafael Moreno",      department: "Logistics",         status: "NOT IN",  time: "—" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -91,11 +91,11 @@ export interface OvertimeRow {
 }
 
 export const OVERTIME_ROWS: OvertimeRow[] = [
-  { employeeId: 1,  erpUserId: "ERP-1001", name: "Amara Okafor",      department: "Operations",      worked: "30:20", approaching: "9h 39m to OT1",  status: "ON TRACK" },
-  { employeeId: 2,  erpUserId: "ERP-1002", name: "Daniel Whitfield",  department: "Logistics",       worked: "34:05", approaching: "5h 55m to OT1",  status: "NEAR OT"  },
-  { employeeId: 3,  erpUserId: "ERP-1003", name: "Priya Raghunathan", department: "Engineering",     worked: "36:40", approaching: "3h 20m to OT1",  status: "NEAR OT"  },
-  { employeeId: 5,  erpUserId: "ERP-1005", name: "Sofia Castellanos", department: "Finance",         worked: "28:15", approaching: "11h 45m to OT1", status: "ON TRACK" },
-  { employeeId: 6,  erpUserId: "ERP-1006", name: "Kwame Mensah",      department: "Warehouse",       worked: "38:10", approaching: "1h 50m to OT1",  status: "NEAR OT"  },
+  { employeeId: 1,  erpUserId: "EMP_1001", name: "Amara Okafor",      department: "Operations",      worked: "30:20", approaching: "9h 39m to OT1",  status: "ON TRACK" },
+  { employeeId: 2,  erpUserId: "EMP_1002", name: "Daniel Whitfield",  department: "Logistics",       worked: "34:05", approaching: "5h 55m to OT1",  status: "NEAR OT"  },
+  { employeeId: 3,  erpUserId: "EMP_1003", name: "Priya Raghunathan", department: "Engineering",     worked: "36:40", approaching: "3h 20m to OT1",  status: "NEAR OT"  },
+  { employeeId: 5,  erpUserId: "EMP_1005", name: "Sofia Castellanos", department: "Finance",         worked: "28:15", approaching: "11h 45m to OT1", status: "ON TRACK" },
+  { employeeId: 6,  erpUserId: "EMP_1006", name: "Kwame Mensah",      department: "Warehouse",       worked: "38:10", approaching: "1h 50m to OT1",  status: "NEAR OT"  },
 ];
 
 /* ------------------------------------------------------------------ */
