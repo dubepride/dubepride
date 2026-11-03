@@ -186,7 +186,7 @@ export function BranchesTab() {
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="New branch name, e.g. Branch 18"
+            placeholder="New branch name, e.g. Main Office"
             className={INPUT}
             aria-label="New branch name"
             autoComplete="off"
@@ -247,6 +247,7 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
   );
 
   useEffect(() => {
+    setValue(branch.name);
     setClocking(
       emptyClockingFields(
         branch.clockingMethod,
@@ -255,7 +256,7 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
         branch.geofenceRadiusMeters
       )
     );
-  }, [branch.clockingMethod, branch.latitude, branch.longitude, branch.geofenceRadiusMeters]);
+  }, [branch.name, branch.clockingMethod, branch.latitude, branch.longitude, branch.geofenceRadiusMeters]);
 
   async function saveRename() {
     const name = value.trim();
@@ -266,17 +267,17 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
       const res = await fetch(`/api/settings/branches/${branch.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, ...clockingPayload(clocking) }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!res.ok || !json.ok) {
-        setRowError(json.error ?? "Could not rename the branch.");
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        setRowError(json?.error ?? "Could not save branch changes.");
         return;
       }
       setRenaming(false);
       onChanged();
     } catch {
-      setRowError("Could not rename the branch.");
+      setRowError("Could not save branch changes.");
     } finally {
       setBusy(false);
     }
@@ -284,23 +285,25 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
 
   async function saveClocking() {
     if (busy) return;
+    const name = value.trim() || branch.name;
     setBusy(true);
     setRowError(null);
     try {
       const res = await fetch(`/api/settings/branches/${branch.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(clockingPayload(clocking)),
+        body: JSON.stringify({ name, ...clockingPayload(clocking) }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!res.ok || !json.ok) {
-        setRowError(json.error ?? "Could not save the clocking method.");
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        setRowError(json?.error ?? "Could not save branch changes.");
         return;
       }
       setClockingOpen(false);
+      setRenaming(false);
       onChanged();
     } catch {
-      setRowError("Could not save the clocking method.");
+      setRowError("Could not save branch changes.");
     } finally {
       setBusy(false);
     }
@@ -402,6 +405,18 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
       ) : null}
       {clockingOpen ? (
         <div className="mt-3 space-y-3 rounded-xl border border-white/[0.08] bg-black/20 p-4">
+          <div>
+            <label className={LABEL} htmlFor={`branch-name-${branch.id}`}>
+              Branch Name
+            </label>
+            <input
+              id={`branch-name-${branch.id}`}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className={INPUT}
+              placeholder="Branch name"
+            />
+          </div>
           <ClockingMethodFields
             value={clocking}
             onChange={(patch) => setClocking((prev) => ({ ...prev, ...patch }))}
@@ -412,6 +427,7 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
               type="button"
               className="btn btn--ghost"
               onClick={() => {
+                setValue(branch.name);
                 setClocking(
                   emptyClockingFields(
                     branch.clockingMethod,
@@ -427,7 +443,7 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
               Cancel
             </button>
             <button type="button" className="btn btn--neon" onClick={() => void saveClocking()} disabled={busy}>
-              {busy ? "Saving…" : "Save Clocking"}
+              {busy ? "Saving…" : "Save Changes"}
             </button>
           </div>
         </div>

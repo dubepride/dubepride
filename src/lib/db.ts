@@ -434,25 +434,28 @@ interface SeedEmployee {
 }
 
 /**
- * The 15-person demo roster (ids 1‥15, EMP1001‥EMP1015).
- * Names/departments mirror the dashboard mock so deep links line up.
+ * Live default roster — only Pride Admin (EMP1001).
  */
 const SEED_EMPLOYEES: SeedEmployee[] = [
-  { erp: "EMP1001", name: "Amara Okafor",       enrolled: 1, department: "Operations",       position: "Operations Lead",       shiftId: 2, branch: "Branch 1",  fingers: 5 },
-  { erp: "EMP1002", name: "Daniel Whitfield",   enrolled: 1, department: "Logistics",        position: "Logistics Coordinator", shiftId: 1, branch: "Branch 17", fingers: 4 },
-  { erp: "EMP1003", name: "Priya Raghunathan",  enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 5 },
-  { erp: "EMP1004", name: "Marcus Delaney",     enrolled: 1, department: "Engineering",      position: "Software Engineer",     shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "EMP1005", name: "Sofia Castellanos",  enrolled: 1, department: "Finance",          position: "Finance Analyst",       shiftId: 2, branch: "Branch 4",  fingers: 4 },
-  { erp: "EMP1006", name: "Kwame Mensah",       enrolled: 1, department: "Warehouse",        position: "Warehouse Associate",   shiftId: 1, branch: "Branch 3",  fingers: 5 },
-  { erp: "EMP1007", name: "Elena Petrova",      enrolled: 1, department: "Human Resources",  position: "HR Officer",            shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "EMP1008", name: "Jackson Rowe",       enrolled: 1, department: "Security",         position: "Security Officer",      shiftId: 4, branch: "Branch 1",  fingers: 4 },
-  { erp: "EMP1009", name: "Fatima Al-Sayed",    enrolled: 1, department: "Procurement",      position: "Procurement Officer",   shiftId: 2, branch: "Branch 6",  fingers: 5 },
-  { erp: "EMP1010", name: "Thomas Achebe",      enrolled: 1, department: "Maintenance",      position: "Maintenance Technician",shiftId: 4, branch: "Branch 2",  fingers: 4 },
-  { erp: "EMP1011", name: "Grace Lindqvist",    enrolled: 1, department: "Engineering",      position: "QA Engineer",           shiftId: 2, branch: "Branch 4",  fingers: 3 },
-  { erp: "EMP1012", name: "Rafael Moreno",      enrolled: 1, department: "Logistics",        position: "Fleet Dispatcher",      shiftId: 1, branch: "Branch 17", fingers: 5 },
-  { erp: "EMP1013", name: "Hannah Kim",         enrolled: 1, department: "Finance",          position: "Accountant",            shiftId: 2, branch: "Branch 4",  fingers: 4 },
-  { erp: "EMP1014", name: "Oliver Baptiste",    enrolled: 0, department: "Operations",       position: "Field Officer",         shiftId: 2, branch: "Branch 5",  fingers: 0 },
-  { erp: "EMP1015", name: "Nadia Volkova",      enrolled: 0, department: "Warehouse",        position: "Stores Clerk",          shiftId: 1, branch: "Branch 3",  fingers: 0 },
+  { erp: "EMP1001", name: "Pride Admin", enrolled: 1, department: "IT", position: "Administrator", shiftId: 2, branch: "", fingers: 5 },
+];
+
+const LEGACY_DEMO_NAMES: string[] = [
+  "Amara Okafor",
+  "Daniel Whitfield",
+  "Priya Raghunathan",
+  "Marcus Delaney",
+  "Sofia Castellanos",
+  "Kwame Mensah",
+  "Elena Petrova",
+  "Jackson Rowe",
+  "Fatima Al-Sayed",
+  "Thomas Achebe",
+  "Grace Lindqvist",
+  "Rafael Moreno",
+  "Hannah Kim",
+  "Oliver Baptiste",
+  "Nadia Volkova",
 ];
 
 /** The first `count` fingers of a seed employee — thumb → little. */
@@ -470,26 +473,8 @@ interface SeedTerminal {
   clocking?: ClockingMethod;
 }
 
-/** One registered terminal per branch — the bridge's 17 sites. */
-const BRANCH_TERMINALS: SeedTerminal[] = [
-  { branch: "Branch 1",  mac: "A4:1F:72:0C:9B:31", ip: "192.168.10.21", location: "Main Gate — North Entrance",     status: "Online",  clocking: "Both" },
-  { branch: "Branch 2",  mac: "A4:1F:72:0C:9B:32", ip: "192.168.10.22", location: "Factory Floor — Line A",         status: "Online"  },
-  { branch: "Branch 3",  mac: "A4:1F:72:0C:9B:33", ip: "192.168.10.23", location: "Warehouse — Bay 3",              status: "Online"  },
-  { branch: "Branch 4",  mac: "A4:1F:72:0C:9B:34", ip: "192.168.10.24", location: "HQ — 2nd Floor Studio",          status: "Offline" },
-  { branch: "Branch 5",  mac: "A4:1F:72:0C:9B:35", ip: "192.168.10.25", location: "West Perimeter Fence",           status: "Online",  clocking: "Geofence" },
-  { branch: "Branch 6",  mac: "A4:1F:72:BC:06:01", ip: "192.168.17.26", location: "East Warehouse — Bay 1",         status: "Online"  },
-  { branch: "Branch 7",  mac: "A4:1F:72:BC:07:01", ip: "192.168.17.27", location: "South Depot — Yard Entrance",    status: "Online"  },
-  { branch: "Branch 8",  mac: "A4:1F:72:BC:08:01", ip: "192.168.17.28", location: "Airport Road — Service Desk",    status: "Online"  },
-  { branch: "Branch 9",  mac: "A4:1F:72:BC:09:01", ip: "192.168.17.29", location: "Industrial Ave — Workshop",      status: "Online"  },
-  { branch: "Branch 10", mac: "A4:1F:72:BC:10:01", ip: "192.168.17.30", location: "Harbour Site — Gate 2",          status: "Offline" },
-  { branch: "Branch 11", mac: "A4:1F:72:BC:11:01", ip: "192.168.17.31", location: "Hillview — Reception",           status: "Online"  },
-  { branch: "Branch 12", mac: "A4:1F:72:BC:12:01", ip: "192.168.17.32", location: "Riverside — Gate House",         status: "Offline" },
-  { branch: "Branch 13", mac: "A4:1F:72:BC:13:01", ip: "192.168.17.33", location: "Eastlands — Shop Floor",         status: "Online"  },
-  { branch: "Branch 14", mac: "A4:1F:72:BC:14:01", ip: "192.168.17.34", location: "Greenfield — Annex",             status: "Offline" },
-  { branch: "Branch 15", mac: "A4:1F:72:BC:15:01", ip: "192.168.17.35", location: "Kivu Road — Store",              status: "Online"  },
-  { branch: "Branch 16", mac: "A4:1F:72:BC:16:01", ip: "192.168.17.36", location: "Airport Terminal — Staff Gate",  status: "Online"  },
-  { branch: "Branch 17", mac: "A4:1F:72:BC:17:01", ip: "192.168.17.37", location: "Distribution Centre — Dock 4",   status: "Online"  },
-];
+/** Empty by default in production — admins register real terminals/branches. */
+const BRANCH_TERMINALS: SeedTerminal[] = [];
 
 interface SeedShift {
   id: number;
@@ -604,7 +589,37 @@ async function ensureBranchCoverage(db: Client): Promise<void> {
  * position/shift; anything unknown falls back to a Department default.
  */
 async function backfillEmployeeMeta(db: Client): Promise<void> {
-  // Automatically convert any legacy ERP-xxxx / EMP-xxxx / ERP_xxxx / EMP_xxxx Employee IDs to EMPxxxx
+  // 1. Purge legacy fake demo employees & their punches so only real staff (e.g. Pride Admin) remain
+  if (!seedDemoData() && LEGACY_DEMO_NAMES.length > 0) {
+    const namePlaceholders = placeholders(LEGACY_DEMO_NAMES.length);
+    await exec(
+      db,
+      `DELETE FROM Attendance_Logs WHERE Employee_ID IN (SELECT Employee_ID FROM Employees WHERE Full_Name IN (${namePlaceholders}))`,
+      ...LEGACY_DEMO_NAMES
+    );
+    await exec(
+      db,
+      `DELETE FROM Employees WHERE Full_Name IN (${namePlaceholders})`,
+      ...LEGACY_DEMO_NAMES
+    );
+    // Purge legacy demo system accounts
+    await exec(
+      db,
+      `DELETE FROM System_Accounts WHERE Company_Email IN ('hr@biobridge.example', 'sales@biobridge.example', 'worker@biobridge.example')`
+    );
+    // Purge legacy pre-seeded testing branches (SEED_CREATED_AT and Branch 1..17) while keeping user-created branches
+    await exec(
+      db,
+      `DELETE FROM Terminals WHERE Branch_Name GLOB 'Branch [0-9]*' OR IP_Address LIKE '192.168.10.%' OR IP_Address LIKE '192.168.17.%'`
+    );
+    await exec(
+      db,
+      `DELETE FROM Branches WHERE Created_At = ? OR Branch_Name GLOB 'Branch [0-9]*'`,
+      SEED_CREATED_AT
+    );
+  }
+
+  // 2. Automatically convert any legacy ERP-xxxx / EMP-xxxx / ERP_xxxx / EMP_xxxx Employee IDs to EMPxxxx
   await exec(
     db,
     `UPDATE OR IGNORE Employees
@@ -614,6 +629,12 @@ async function backfillEmployeeMeta(db: Client): Promise<void> {
          OR ERP_User_ID LIKE 'ERP_%'
          OR ERP_User_ID LIKE 'EMP_%'`
   );
+
+  // 3. Ensure Pride Admin (EMP1001) exists if roster is completely empty
+  const empCount = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Employees"))?.c ?? 0;
+  if (empCount === 0) {
+    await seedRoster(db);
+  }
 
   if (seedDemoData()) {
     for (const e of SEED_EMPLOYEES) {
@@ -800,6 +821,7 @@ export function verifyPassword(password: string, hash: string): boolean {
 }
 
 async function seedBranches(db: Client): Promise<void> {
+  if (!seedDemoData()) return;
   const count = (await queryOne<{ c: number }>(db, "SELECT COUNT(*) AS c FROM Branches"))?.c ?? 0;
   if (count > 0) return;
   // Only the real field sites are seeded, each geofenced ("Both") so a phone can
@@ -927,46 +949,16 @@ interface SeedAccount {
  * serverless, unless BIOBRIDGE_SEED_DEMO_ACCOUNTS=true.
  */
 const SEED_ADMIN: SeedAccount = {
-  first: "Bridge",
+  first: "Pride",
   surname: "Admin",
   email: "admin@biobridge.com",
   password: "admin",
   level: "IT Administrator",
-  // The admin account is not tied to a roster row or a site: those are real
-  // business records, and guessing them would resurrect demo data.
   branch: "",
-  employeeErp: null,
+  employeeErp: "EMP1001",
 };
 
-const SEED_DEMO_ACCOUNTS: SeedAccount[] = [
-  {
-    first: "Grace",
-    surname: "Mwangi",
-    email: "hr@biobridge.example",
-    password: "hr-manager-2026",
-    level: "HR Manager",
-    branch: "Branch 4",
-    employeeErp: null,
-  },
-  {
-    first: "Daniel",
-    surname: "Otieno",
-    email: "sales@biobridge.example",
-    password: "sales-manager-2026",
-    level: "Sales Manager",
-    branch: "Branch 4",
-    employeeErp: null,
-  },
-  {
-    first: "Jayden",
-    surname: "Osei",
-    email: "worker@biobridge.example",
-    password: "worker-pass-2026",
-    level: "Worker",
-    branch: "Branch 3",
-    employeeErp: "EMP1014", // Oliver — the worker portal demo profile
-  },
-];
+const SEED_DEMO_ACCOUNTS: SeedAccount[] = [];
 
 /** Demo logins: explicit flag wins, else on for a normal host and off serverless. */
 function includeDemoAccounts(): boolean {
@@ -1256,6 +1248,7 @@ export async function renameBranch(branchId: number, name: string): Promise<void
   if (!trimmed) throw new Error("Branch name is required.");
   const current = await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", branchId);
   if (!current) throw new Error("That branch no longer exists.");
+  if (trimmed === current.Branch_Name) return;
   await exec(db, "UPDATE Employees SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
   await exec(db, "UPDATE Terminals SET Branch_Name = ? WHERE Branch_Name = ?", trimmed, current.Branch_Name);
   await exec(db, "UPDATE Branches SET Branch_Name = ? WHERE Branch_ID = ?", trimmed, branchId);

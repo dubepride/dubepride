@@ -33,18 +33,7 @@ export interface EmployeeStatusRow {
 }
 
 export const EMPLOYEE_STATUS: EmployeeStatusRow[] = [
-  { employeeId: 1,  erpUserId: "EMP1001", name: "Amara Okafor",       department: "Operations",        status: "WORKING", time: "7:42 AM" },
-  { employeeId: 2,  erpUserId: "EMP1002", name: "Daniel Whitfield",   department: "Logistics",         status: "WORKING", time: "7:58 AM" },
-  { employeeId: 3,  erpUserId: "EMP1003", name: "Priya Raghunathan",  department: "Engineering",       status: "WORKING", time: "8:03 AM" },
-  { employeeId: 4,  erpUserId: "EMP1004", name: "Marcus Delaney",     department: "Engineering",       status: "NOT IN",  time: "—" },
-  { employeeId: 5,  erpUserId: "EMP1005", name: "Sofia Castellanos",  department: "Finance",           status: "WORKING", time: "7:31 AM" },
-  { employeeId: 6,  erpUserId: "EMP1006", name: "Kwame Mensah",       department: "Warehouse",         status: "ON BREAK", time: "12:14 PM" },
-  { employeeId: 7,  erpUserId: "EMP1007", name: "Elena Petrova",      department: "Human Resources",   status: "WORKING", time: "8:12 AM" },
-  { employeeId: 8,  erpUserId: "EMP1008", name: "Jackson Rowe",       department: "Security",          status: "WORKING", time: "6:58 AM" },
-  { employeeId: 9,  erpUserId: "EMP1009", name: "Fatima Al-Sayed",    department: "Procurement",       status: "NOT IN",  time: "—" },
-  { employeeId: 10, erpUserId: "EMP1010", name: "Thomas Achebe",      department: "Maintenance",       status: "WORKING", time: "8:45 AM" },
-  { employeeId: 11, erpUserId: "EMP1011", name: "Grace Lindqvist",    department: "Engineering",       status: "WORKING", time: "8:21 AM" },
-  { employeeId: 12, erpUserId: "EMP1012", name: "Rafael Moreno",      department: "Logistics",         status: "NOT IN",  time: "—" },
+  { employeeId: 1, erpUserId: "EMP1001", name: "Pride Admin", department: "IT", status: "NOT IN", time: "—" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -66,12 +55,12 @@ export interface ExceptionMetric {
 }
 
 export const EXCEPTION_METRICS: ExceptionMetric[] = [
-  { type: "arrived_early", label: "Arrived Early",  count: 4, tone: "neutral" },
-  { type: "arrived_late",  label: "Arrived Late",   count: 3, tone: "warn"    },
-  { type: "left_early",    label: "Left Early",     count: 2, tone: "warn"    },
-  { type: "left_late",     label: "Left Late",      count: 5, tone: "neutral" },
-  { type: "no_show",       label: "No Show",        count: 1, tone: "danger"  },
-  { type: "missing_punch", label: "Missing Punch",  count: 2, tone: "danger"  },
+  { type: "arrived_early", label: "Arrived Early",  count: 0, tone: "neutral" },
+  { type: "arrived_late",  label: "Arrived Late",   count: 0, tone: "warn"    },
+  { type: "left_early",    label: "Left Early",     count: 0, tone: "warn"    },
+  { type: "left_late",     label: "Left Late",      count: 0, tone: "neutral" },
+  { type: "no_show",       label: "No Show",        count: 0, tone: "danger"  },
+  { type: "missing_punch", label: "Missing Punch",  count: 0, tone: "danger"  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -90,13 +79,7 @@ export interface OvertimeRow {
   status: "ON TRACK" | "NEAR OT";
 }
 
-export const OVERTIME_ROWS: OvertimeRow[] = [
-  { employeeId: 1,  erpUserId: "EMP1001", name: "Amara Okafor",      department: "Operations",      worked: "30:20", approaching: "9h 39m to OT1",  status: "ON TRACK" },
-  { employeeId: 2,  erpUserId: "EMP1002", name: "Daniel Whitfield",  department: "Logistics",       worked: "34:05", approaching: "5h 55m to OT1",  status: "NEAR OT"  },
-  { employeeId: 3,  erpUserId: "EMP1003", name: "Priya Raghunathan", department: "Engineering",     worked: "36:40", approaching: "3h 20m to OT1",  status: "NEAR OT"  },
-  { employeeId: 5,  erpUserId: "EMP1005", name: "Sofia Castellanos", department: "Finance",         worked: "28:15", approaching: "11h 45m to OT1", status: "ON TRACK" },
-  { employeeId: 6,  erpUserId: "EMP1006", name: "Kwame Mensah",      department: "Warehouse",       worked: "38:10", approaching: "1h 50m to OT1",  status: "NEAR OT"  },
-];
+export const OVERTIME_ROWS: OvertimeRow[] = [];
 
 /* ------------------------------------------------------------------ */
 /* Widget D — Time Off Requests                                        */
@@ -114,9 +97,4 @@ export interface TimeOffRequest {
   toLabel: string;
 }
 
-export const TIME_OFF_REQUESTS: TimeOffRequest[] = [
-  { id: 1, employeeId: 11, name: "Grace Lindqvist",  hours: 16, type: "Vacation",    fromLabel: "Nov 18", toLabel: "Nov 19" },
-  { id: 2, employeeId: 4,  name: "Marcus Delaney",   hours: 8,  type: "Sick Leave",  fromLabel: "Oct 22", toLabel: "Oct 22" },
-  { id: 3, employeeId: 9,  name: "Fatima Al-Sayed",  hours: 4,  type: "Personal",    fromLabel: "Nov 02", toLabel: "Nov 02" },
-  { id: 4, employeeId: 10, name: "Thomas Achebe",    hours: 24, type: "Vacation",    fromLabel: "Dec 24", toLabel: "Dec 26" },
-];
+export const TIME_OFF_REQUESTS: TimeOffRequest[] = [];

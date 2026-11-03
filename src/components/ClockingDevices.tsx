@@ -27,8 +27,8 @@ import {
  *  mutation succeeds — the 3s poll takes over again on the next tick.
  */
 
-/** The company's 17 sites — always rendered, even when empty. */
-const BRANCHES: string[] = Array.from({ length: 17 }, (_, i) => `Branch ${i + 1}`);
+/** Default fallback list when no branches have been created yet. */
+const BRANCHES: string[] = [];
 
 type ModalMode = "add" | "edit" | "remove";
 
@@ -159,7 +159,7 @@ function DeviceForm({
             : { id: device?.id, mac, ip, location: name, branch, status, ...clockingPayload(clocking) }
         ),
       });
-      const json = ((await res.json()).catch(() => null)) as { ok?: boolean; id?: number; error?: string } | null;
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; id?: number; error?: string } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
 
       const payload = clockingPayload(clocking);
@@ -334,7 +334,7 @@ function RemoveConfirm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: device.id }),
       });
-      const json = ((await res.json()).catch(() => null)) as { ok?: boolean; error?: string } | null;
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       onRemoved(device.id);
       onClose();

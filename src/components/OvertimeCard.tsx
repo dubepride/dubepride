@@ -33,39 +33,47 @@ export default function OvertimeCard() {
             </tr>
           </thead>
           <tbody>
-            {OVERTIME_ROWS.map((r) => (
-              <tr key={r.employeeId} className="tbl-row">
-                <td>
-                  <span className="flex items-center gap-3">
-                    <Avatar name={r.name} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-ink">
-                        {r.name}
-                      </span>
-                      <span className="block truncate text-[11px] text-muted">
-                        {r.erpUserId} · {r.department}
-                      </span>
-                    </span>
-                  </span>
-                </td>
-                <td className="whitespace-nowrap font-mono text-sm font-semibold text-ink tabular-nums">
-                  {r.worked}{" "}
-                  <span className="text-xs font-normal text-muted">(Weekly)</span>
-                </td>
-                <td className="whitespace-nowrap font-mono text-sm font-semibold text-ink tabular-nums">
-                  {r.approaching}
-                </td>
-                <td>
-                  <span
-                    className={
-                      r.status === "NEAR OT" ? "chip chip--warn" : "chip chip--neon"
-                    }
-                  >
-                    {r.status === "NEAR OT" ? "Near OT" : "On Track"}
-                  </span>
+            {OVERTIME_ROWS.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-5 py-8 text-center text-sm text-muted">
+                  No employees approaching overtime this week.
                 </td>
               </tr>
-            ))}
+            ) : (
+              OVERTIME_ROWS.map((r) => (
+                <tr key={r.employeeId} className="tbl-row">
+                  <td>
+                    <span className="flex items-center gap-3">
+                      <Avatar name={r.name} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-ink">
+                          {r.name}
+                        </span>
+                        <span className="block truncate text-[11px] text-muted">
+                          {r.erpUserId} · {r.department}
+                        </span>
+                      </span>
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap font-mono text-sm font-semibold text-ink tabular-nums">
+                    {r.worked}{" "}
+                    <span className="text-xs font-normal text-muted">(Weekly)</span>
+                  </td>
+                  <td className="whitespace-nowrap font-mono text-sm font-semibold text-ink tabular-nums">
+                    {r.approaching}
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        r.status === "NEAR OT" ? "chip chip--warn" : "chip chip--neon"
+                      }
+                    >
+                      {r.status === "NEAR OT" ? "Near OT" : "On Track"}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

@@ -5,8 +5,17 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } fro
 import Avatar from "@/components/Avatar";
 import WidgetShell from "@/components/WidgetShell";
 import { IconCheck, IconFilter, IconSearch, IconUsers } from "@/components/icons";
-import { EMPLOYEE_STATUS, type EmployeeWorkStatus } from "@/lib/dashboard-mock";
-import type { EmployeeSearchResponse, EmployeeSearchResult } from "@/lib/types";
+import {
+  EMPLOYEE_STATUS,
+  type EmployeeStatusRow,
+  type EmployeeWorkStatus,
+} from "@/lib/dashboard-mock";
+import type {
+  EmployeeDirectoryEntry,
+  EmployeeSearchResponse,
+  EmployeeSearchResult,
+  WhosInResponse,
+} from "@/lib/types";
 
 /** Status pill per work state — neon = engaged, amber = transient, gray = absent. */
 const STATUS_CHIP: Record<EmployeeWorkStatus, string> = {
@@ -49,8 +58,67 @@ export default function EmployeeStatusCard() {
   /* --- status filter menu ------------------------------------------- */
   const [filter, setFilter] = useState<StatusFilter>("ALL");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [statusRows, setStatusRows] = useState<EmployeeStatusRow[]>(EMPLOYEE_STATUS);
 
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate live employee list + working status from /api/employees and /api/whos-in.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRoster() {
+      try {
+        const [empRes, whosRes] = await Promise.all([
+          fetch("/api/employees", { cache: "no-store" }),
+          fetch("/api/whos-in", { cache: "no-store" }),
+        ]);
+        if (!empRes.ok) return;
+        const empJson = (await empRes.json().catch(() => null)) as {
+          employees?: EmployeeDirectoryEntry[];
+        } | null;
+        const whosJson = whosRes.ok
+          ? ((await whosRes.json().catch(() => null)) as WhosInResponse | null)
+          : null;
+        if (cancelled || !empJson?.employees) return;
+
+        const checkedInByErp = new Map(
+          (whosJson?.people ?? []).map((item) => [item.erpUserId, item])
+        );
+
+        const mapped: EmployeeStatusRow[] = empJson.employees
+          .filter((e) => e.status.toUpperCase() !== "INACTIVE")
+          .map((e) => {
+            const activePunch = checkedInByErp.get(e.erpUserId);
+            let time = "—";
+            if (activePunch?.clockedInAt) {
+              const dt = new Date(activePunch.clockedInAt);
+              if (!Number.isNaN(dt.getTime())) {
+                time = dt.toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+              }
+            }
+            return {
+              employeeId: e.id,
+              erpUserId: e.erpUserId,
+              name: e.fullName,
+              department: e.department || "Unassigned",
+              status: activePunch ? "WORKING" : "NOT IN",
+              time,
+            };
+          });
+        setStatusRows(mapped);
+      } catch {
+        // Keep current rows on transient network errors.
+      }
+    }
+    void loadRoster();
+    const id = setInterval(() => void loadRoster(), 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // Debounced search (250 ms) with stale-response protection. The
   // "too short / cleared" path is handled in onChange (event handler);
@@ -126,7 +194,7 @@ export default function EmployeeStatusCard() {
 
   // Visible roster: status filter first, then the search text.
   const text = query.trim().toLowerCase();
-  const rows = EMPLOYEE_STATUS.filter(
+  const rows = statusRows.filter(
     (r) =>
       (filter === "ALL" || r.status === filter) &&
       (text.length === 0 ||
@@ -134,8 +202,8 @@ export default function EmployeeStatusCard() {
         r.erpUserId.toLowerCase().includes(text))
   );
 
-  const working = EMPLOYEE_STATUS.filter((r) => r.status === "WORKING").length;
-  const roster = EMPLOYEE_STATUS.length;
+  const working = statusRows.filter((r) => r.status === "WORKING").length;
+  const roster = statusRows.length;
 
   return (
     <WidgetShell

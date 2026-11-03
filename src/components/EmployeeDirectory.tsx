@@ -147,39 +147,59 @@ function EmployeeForm({
     let cancelled = false;
     (async () => {
       try {
-        const [shiftsRes, terminalsRes, empRes] = await Promise.all([
-          fetch("/api/shifts", { cache: "no-store" }),
-          fetch("/api/terminals", { cache: "no-store" }),
+        const [shiftsRes, branchesRes, terminalsRes, empRes] = await Promise.all([
+          fetch("/api/shifts", { cache: "no-store" }).catch(() => null),
+          fetch("/api/settings/branches", { cache: "no-store" }).catch(() => null),
+          fetch("/api/terminals", { cache: "no-store" }).catch(() => null),
           !isAdd && employee
-            ? fetch(`/api/employees/${employee.id}`, { cache: "no-store" })
+            ? fetch(`/api/employees/${employee.id}`, { cache: "no-store" }).catch(() => null)
             : Promise.resolve(null),
         ]);
-        if (!shiftsRes.ok || !terminalsRes.ok) {
-          throw new Error(`HTTP ${shiftsRes.status}/${terminalsRes.status}`);
-        }
-        const shiftsJson = (await shiftsRes.json()) as { shifts?: ShiftRow[] };
-        const terminalsJson = (await terminalsRes.json()) as {
-          terminals?: { branch?: string }[];
-        };
+
+        const shiftsJson =
+          shiftsRes && shiftsRes.ok
+            ? ((await shiftsRes.json().catch(() => null)) as { shifts?: ShiftRow[] } | null)
+            : null;
+        const branchesJson =
+          branchesRes && branchesRes.ok
+            ? ((await branchesRes.json().catch(() => null)) as {
+                branches?: { name?: string }[];
+              } | null)
+            : null;
+        const terminalsJson =
+          terminalsRes && terminalsRes.ok
+            ? ((await terminalsRes.json().catch(() => null)) as {
+                terminals?: { branch?: string }[];
+                branches?: string[];
+              } | null)
+            : null;
+
         if (empRes && empRes.ok) {
-          const empJson = (await empRes.json()) as {
+          const empJson = (await empRes.json().catch(() => null)) as {
             employee?: { boundDeviceId?: string | null; boundDeviceName?: string | null };
-          };
-          if (!cancelled && empJson.employee) {
+          } | null;
+          if (!cancelled && empJson?.employee) {
             setBoundDeviceId(empJson.employee.boundDeviceId ?? null);
             setBoundDeviceName(empJson.employee.boundDeviceName ?? null);
           }
         }
         if (cancelled) return;
-        setShifts(shiftsJson.shifts ?? []);
+        setShifts(shiftsJson?.shifts ?? []);
+        const branchSet = new Set<string>();
+        for (const b of branchesJson?.branches ?? []) {
+          const name = (b.name ?? "").trim();
+          if (name) branchSet.add(name);
+        }
+        for (const b of terminalsJson?.branches ?? []) {
+          const name = (b ?? "").trim();
+          if (name) branchSet.add(name);
+        }
+        for (const t of terminalsJson?.terminals ?? []) {
+          const name = (t.branch ?? "").trim();
+          if (name) branchSet.add(name);
+        }
         setBranches(
-          Array.from(
-            new Set(
-              (terminalsJson.terminals ?? [])
-                .map((t) => (t.branch ?? "").trim())
-                .filter((b) => b.length > 0)
-            )
-          ).sort((a, b) =>
+          Array.from(branchSet).sort((a, b) =>
             a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
           )
         );
@@ -204,7 +224,7 @@ function EmployeeForm({
       const res = await fetch(`/api/employees/${employee.id}/unbind-device`, {
         method: "POST",
       });
-      const json = ((await res.json()).catch(() => null)) as {
+      const json = (await res.json().catch(() => null)) as {
         ok?: boolean;
         message?: string;
         error?: string;
@@ -259,7 +279,7 @@ function EmployeeForm({
           ...(unbindDevice ? { unbindDevice: true } : {}),
         }),
       });
-      const json = ((await res.json()).catch(() => null)) as {
+      const json = (await res.json().catch(() => null)) as {
         ok?: boolean;
         id?: number;
         error?: string;
@@ -561,7 +581,7 @@ function EmployeeDeleteConfirm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: employee.id }),
       });
-      const json = ((await res.json()).catch(() => null)) as {
+      const json = (await res.json().catch(() => null)) as {
         ok?: boolean;
         error?: string;
       } | null;
