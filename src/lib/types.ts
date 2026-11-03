@@ -64,6 +64,10 @@ export interface EmployeeRow {
   /** Employment state — "Active" | "Inactive". */
   Status: string;
   Created_At: number; // epoch ms
+  /** Hardware device identifier bound to this employee (Anti-buddy clocking). */
+  Bound_Device_ID?: string | null;
+  Bound_Device_Name?: string | null;
+  Bound_Device_At?: number | null;
 }
 
 export interface TerminalRow {
@@ -277,6 +281,7 @@ export interface TerminalDto {
 
 export interface TerminalsResponse {
   terminals: TerminalDto[];
+  branches?: string[];
   generatedAt: number;
 }
 
@@ -419,6 +424,10 @@ export interface EmployeeDirectoryEntry {
   assignedBranch: string;
   /** Enrolled finger indexes 0‥4 (thumb → little) for the hand map. */
   fingers: number[];
+  /** Hardware device bound to this employee on BioBridge Mobile. */
+  boundDeviceId?: string | null;
+  boundDeviceName?: string | null;
+  boundDeviceAt?: number | null;
 }
 
 export interface EmployeeDirectoryResponse {
@@ -510,6 +519,9 @@ export interface EmployeeProfileResponse {
     /** Enrolled finger indexes 0‥4 — drives the enrolment hand map. */
     fingers: number[];
     createdAt: number;
+    boundDeviceId?: string | null;
+    boundDeviceName?: string | null;
+    boundDeviceAt?: number | null;
   };
   weeks: TimesheetWeek[];
   stats: {
@@ -921,6 +933,7 @@ export type GeoPunchReason =
   | "BIOMETRIC_ONLY"
   | "LOW_ACCURACY"
   | "RATE_LIMITED"
+  | "UNAUTHORIZED_DEVICE"
   | "GEOFENCE_NOT_CONFIGURED";
 
 /** How a punch's governing site was chosen (Phase 17). */
@@ -991,6 +1004,8 @@ export interface GeoFenceSite {
  * branch is reported for display only; it no longer gates sign-in and no
  * longer decides where a punch is valid — the GPS fix does.
  */
+export type MobileGeofenceConfig = NonNullable<MobileLoginResponse["geofence"]>;
+
 export interface MobileLoginResponse {
   ok: boolean;
   message: string;
@@ -1000,6 +1015,9 @@ export interface MobileLoginResponse {
     fullName: string;
     department: string;
     branch: string;
+    boundDeviceId?: string | null;
+    boundDeviceName?: string | null;
+    boundDeviceAt?: number | null;
   };
   /**
    * The employee's own (roster) site, shown as "Home site". Null when they
@@ -1151,3 +1169,40 @@ export interface MapOverviewResponse {
   error?: string;
 }
 
+
+
+/* ------------------------------------------------------------------ */
+/* Employee CSV / Excel Batch Import Types                             */
+/* ------------------------------------------------------------------ */
+
+export interface EmployeeImportItem {
+  erpUserId: string;
+  fullName: string;
+  department?: string;
+  position?: string;
+  branch?: string;
+  shift?: string | number | null;
+  enrolled?: boolean;
+  status?: string;
+  mobilePin?: string;
+}
+
+export interface EmployeeImportRowError {
+  row: number;
+  erpUserId?: string;
+  name?: string;
+  message: string;
+}
+
+export interface EmployeeImportResult {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: EmployeeImportRowError[];
+}
+
+export interface EmployeeImportResponse extends EmployeeImportResult {
+  ok: boolean;
+  error?: string;
+}

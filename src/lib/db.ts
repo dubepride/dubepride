@@ -66,6 +66,8 @@ import type {
   BranchRow,
   ClockingMethod,
   DashboardMetrics,
+  EmployeeImportItem,
+  EmployeeImportResult,
   EmployeePunchRow,
   EmployeeRow,
   ErpBatchPayload,
@@ -376,6 +378,15 @@ async function migrate(db: Client): Promise<void> {
   // personal PIN yet, so the MOBILE_DEFAULT_PIN deployment value applies".
   // Purely additive — no existing flow reads this column.
   await ensureColumn(db, "Employees", "Mobile_PIN", "Mobile_PIN TEXT");
+
+  // Phase 19 — Anti-Buddy Clocking (Hardware Device Binding).
+  // Binds an employee's mobile sign-in to a single physical device (1-to-1) so
+  // workers cannot sign in or clock in for each other on a different phone.
+  await ensureColumn(db, "Employees", "Bound_Device_ID", "Bound_Device_ID TEXT");
+  await ensureColumn(db, "Employees", "Bound_Device_Name", "Bound_Device_Name TEXT");
+  await ensureColumn(db, "Employees", "Bound_Device_At", "Bound_Device_At INTEGER");
+  await ensureColumn(db, "Attendance_Logs", "Device_ID", "Device_ID TEXT");
+  await ensureColumn(db, "Attendance_Logs", "Device_Name", "Device_Name TEXT");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1155,6 +1166,9 @@ export async function createBranch(name: string, clocking?: ClockingConfigInput)
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("Branch name is required.");
   const method = normalizeClockingMethod(clocking?.clockingMethod);
+  const lat = coerceCoord(clocking?.latitude);
+  const lng = coerceCoord(clocking?.longitude);
+  const radius = coerceCoord(clocking?.geofenceRadiusMeters);
   const { lastId } = await run(
     db,
     `INSERT INTO Branches
@@ -1163,10 +1177,23 @@ export async function createBranch(name: string, clocking?: ClockingConfigInput)
     trimmed,
     Date.now(),
     method,
-    coerceCoord(clocking?.latitude),
-    coerceCoord(clocking?.longitude),
-    coerceCoord(clocking?.geofenceRadiusMeters)
+    lat,
+    lng,
+    radius
   );
+  if (clocking && (clocking.clockingMethod !== undefined || lat !== null || radius !== null)) {
+    await exec(
+      db,
+      `UPDATE Terminals
+          SET Clocking_Method = ?, Latitude = ?, Longitude = ?, Geofence_Radius_Meters = ?
+        WHERE Branch_Name COLLATE NOCASE = ?`,
+      method,
+      lat,
+      lng,
+      radius,
+      trimmed
+    );
+  }
   return lastId;
 }
 
@@ -1196,6 +1223,19 @@ export async function setBranchClocking(branchId: number, input: ClockingConfigI
     radius,
     branchId
   );
+  if (current.Branch_Name) {
+    await exec(
+      db,
+      `UPDATE Terminals
+          SET Clocking_Method = ?, Latitude = ?, Longitude = ?, Geofence_Radius_Meters = ?
+        WHERE Branch_Name COLLATE NOCASE = ?`,
+      method,
+      lat,
+      lng,
+      radius,
+      current.Branch_Name
+    );
+  }
 }
 
 /** Rename a site and keep the denormalised Employees/Terminals in sync. */
@@ -1742,6 +1782,18 @@ export async function allEmployees(): Promise<EmployeeRow[]> {
   );
 }
 
+/** Look up an employee by their immutable primary key Employee_ID. */
+export async function employeeById(employeeId: number): Promise<EmployeeRow | null> {
+  if (!Number.isInteger(employeeId) || employeeId <= 0) return null;
+  return (
+    await queryOne<EmployeeRow>(
+      await getDb(),
+      "SELECT * FROM Employees WHERE Employee_ID = ?",
+      employeeId
+    ) ?? null
+  );
+}
+
 /**
  * Resolve a device/ERP/route reference to an employee.
  * Accepts ERP_User_ID ("ERP-1001"), the bare numeric id ("1", "1001" →
@@ -1751,6 +1803,7 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
   const value = ref.trim();
   if (!value) return null;
 
+  // 1. Direct match on ERP_User_ID
   const direct = await queryOne<EmployeeRow>(
     db,
     "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
@@ -1758,30 +1811,54 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
   );
   if (direct) return direct;
 
-  if (/^\d+$/.test(value)) {
+  // 2. Extract digits if present (e.g. "1001", "EMP-1001", "ERP-1001")
+  const digitsMatch = value.match(/\d+/);
+  const digits = digitsMatch ? digitsMatch[0] : "";
+
+  if (digits) {
     const byId = await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE Employee_ID = ?",
-      Number(value)
+      Number(digits)
     );
     if (byId) return byId;
 
-    const prefixed = await queryOne<EmployeeRow>(
+    const byErp = await queryOne<EmployeeRow>(
       db,
       "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `ERP-${value}`
+      `ERP-${digits}`
     );
-    if (prefixed) return prefixed;
+    if (byErp) return byErp;
+
+    const byEmp = await queryOne<EmployeeRow>(
+      db,
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+      `EMP-${digits}`
+    );
+    if (byEmp) return byEmp;
+
+    const byBare = await queryOne<EmployeeRow>(
+      db,
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+      digits
+    );
+    if (byBare) return byBare;
   }
 
-  const unprefixed = value.replace(/^ERP-/i, "");
-  return (
-    await queryOne<EmployeeRow>(
+  // 3. Try stripped common prefixes (ERP-, EMP-, ME-)
+  const stripped = value.replace(/^(ERP|EMP|ME)[-_ ]?/i, "");
+  if (stripped && stripped !== value) {
+    const byStripped = await queryOne<EmployeeRow>(
       db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `ERP-${unprefixed}`
-    ) ?? null
-  );
+      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ? OR ERP_User_ID COLLATE NOCASE = ?",
+      stripped,
+      `ERP-${stripped}`,
+      `EMP-${stripped}`
+    );
+    if (byStripped) return byStripped;
+  }
+
+  return null;
 }
 
 /** Extra columns the /employees directory and search type-ahead need. */
@@ -1972,6 +2049,204 @@ export async function deleteEmployee(employeeId: number): Promise<void> {
   const db = await getDb();
   await exec(db, "DELETE FROM Attendance_Logs WHERE Employee_ID = ?", employeeId);
   await exec(db, "DELETE FROM Employees WHERE Employee_ID = ?", employeeId);
+}
+
+/**
+ * Bind a physical mobile device (1-to-1) to an employee record on first login.
+ */
+export async function bindEmployeeDevice(
+  employeeId: number,
+  deviceId: string,
+  deviceName?: string | null
+): Promise<void> {
+  const db = await getDb();
+  await exec(
+    db,
+    "UPDATE Employees SET Bound_Device_ID = ?, Bound_Device_Name = ?, Bound_Device_At = ? WHERE Employee_ID = ?",
+    deviceId.trim(),
+    deviceName ? deviceName.trim() : null,
+    Date.now(),
+    employeeId
+  );
+}
+
+/**
+ * Unbind / reset an employee's mobile device so they can register a new phone.
+ */
+export async function unbindEmployeeDevice(employeeId: number): Promise<void> {
+  const db = await getDb();
+  await exec(
+    db,
+    "UPDATE Employees SET Bound_Device_ID = NULL, Bound_Device_Name = NULL, Bound_Device_At = NULL WHERE Employee_ID = ?",
+    employeeId
+  );
+}
+
+/**
+ * Find any employee already bound to a given hardware device ID.
+ */
+export async function findEmployeeByDeviceId(deviceId: string): Promise<EmployeeRow | null> {
+  const clean = deviceId.trim();
+  if (!clean) return null;
+  const db = await getDb();
+  return (
+    (await queryOne<EmployeeRow>(
+      db,
+      "SELECT * FROM Employees WHERE Bound_Device_ID = ?",
+      clean
+    )) ?? null
+  );
+}
+
+/**
+ * Bulk import employees from parsed spreadsheet records (CSV, XLSX, XLS).
+ * Supports upserting (updating existing records if ERP_User_ID already exists).
+ */
+export async function importEmployees(
+  items: EmployeeImportItem[],
+  options?: { updateExisting?: boolean }
+): Promise<EmployeeImportResult> {
+  const db = await getDb();
+  const updateExisting = options?.updateExisting ?? true;
+  const shifts = await listShifts();
+
+  const shiftMap = new Map<string, number>();
+  for (const s of shifts) {
+    shiftMap.set(String(s.Shift_ID), s.Shift_ID);
+    shiftMap.set(s.Name.toLowerCase().trim(), s.Shift_ID);
+  }
+
+  const result: EmployeeImportResult = {
+    total: items.length,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: [],
+  };
+
+  const now = Date.now();
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const rowNum = i + 1;
+    const erp = (item.erpUserId ?? "").toString().trim();
+    const name = (item.fullName ?? "").toString().trim();
+
+    if (!erp) {
+      result.errors.push({ row: rowNum, name, message: "Missing Employee Number / ID." });
+      continue;
+    }
+    if (!name) {
+      result.errors.push({ row: rowNum, erpUserId: erp, message: "Missing Full Name." });
+      continue;
+    }
+
+    // Resolve shift ID if specified
+    let shiftId: number | null = null;
+    if (item.shift !== undefined && item.shift !== null && item.shift !== "") {
+      const shiftStr = String(item.shift).trim().toLowerCase();
+      if (shiftMap.has(shiftStr)) {
+        shiftId = shiftMap.get(shiftStr)!;
+      } else {
+        const num = Number(shiftStr);
+        if (Number.isInteger(num) && shiftMap.has(String(num))) {
+          shiftId = num;
+        }
+      }
+    }
+
+    const dept = (item.department ?? "").toString().trim();
+    const pos = (item.position ?? "").toString().trim();
+    const branch = (item.branch ?? "").toString().trim();
+    const status = (item.status ?? "").toString().trim() || "Active";
+    const enrolled = Boolean(item.enrolled);
+    const mobilePin = item.mobilePin ? String(item.mobilePin).trim() : null;
+
+    try {
+      const existing = await queryOne<EmployeeRow>(
+        db,
+        "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+        erp
+      );
+
+      if (existing) {
+        if (!updateExisting) {
+          result.skipped++;
+          continue;
+        }
+
+        const updates: string[] = ["Full_Name = ?"];
+        const params: SQLInputValue[] = [name];
+
+        if (dept) {
+          updates.push("Department = ?");
+          params.push(dept);
+        }
+        if (pos) {
+          updates.push("Position = ?");
+          params.push(pos);
+        }
+        if (branch) {
+          updates.push("Branch_Name = ?");
+          params.push(branch);
+        }
+        if (shiftId !== null) {
+          updates.push("Shift_ID = ?");
+          params.push(shiftId);
+        }
+        if (status) {
+          updates.push("Status = ?");
+          params.push(status);
+        }
+        if (item.enrolled !== undefined) {
+          updates.push("Fingerprint_Enrolled = ?");
+          params.push(enrolled ? 1 : 0);
+          if (enrolled && !existing.Fingers_Enrolled) {
+            updates.push("Fingers_Enrolled = ?");
+            params.push("0,1,2,3,4");
+          }
+        }
+        if (mobilePin) {
+          updates.push("Mobile_PIN = ?");
+          params.push(mobilePin);
+        }
+
+        params.push(existing.Employee_ID);
+        await exec(db, `UPDATE Employees SET ${updates.join(", ")} WHERE Employee_ID = ?`, ...params);
+        result.updated++;
+      } else {
+        const fingers = enrolled ? "0,1,2,3,4" : "";
+        await exec(
+          db,
+          `INSERT INTO Employees
+             (ERP_User_ID, Full_Name, Fingerprint_Enrolled, Fingers_Enrolled,
+              Department, Position, Branch_Name, Shift_ID, Status, Mobile_PIN, Created_At)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          erp,
+          name,
+          enrolled ? 1 : 0,
+          fingers,
+          dept,
+          pos,
+          branch,
+          shiftId,
+          status,
+          mobilePin,
+          now
+        );
+        result.created++;
+      }
+    } catch (err) {
+      result.errors.push({
+        row: rowNum,
+        erpUserId: erp,
+        name,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2195,6 +2470,37 @@ export async function createTerminal({
     coerceCoord(longitude),
     coerceCoord(geofenceRadiusMeters)
   );
+
+  const cleanBranch = branch.trim();
+  const clockingTouched =
+    clockingMethod !== undefined ||
+    latitude !== undefined ||
+    longitude !== undefined ||
+    geofenceRadiusMeters !== undefined;
+  if (cleanBranch && clockingTouched) {
+    const existingBranch = await queryOne<BranchRow>(
+      db,
+      "SELECT * FROM Branches WHERE Branch_Name COLLATE NOCASE = ?",
+      cleanBranch
+    );
+    if (existingBranch) {
+      await exec(
+        db,
+        `UPDATE Branches
+            SET Clocking_Method = ?,
+                Latitude = COALESCE(?, Latitude),
+                Longitude = COALESCE(?, Longitude),
+                Geofence_Radius_Meters = COALESCE(?, Geofence_Radius_Meters)
+          WHERE Branch_ID = ?`,
+        method,
+        latitude === null ? null : coerceCoord(latitude),
+        longitude === null ? null : coerceCoord(longitude),
+        geofenceRadiusMeters === null ? null : coerceCoord(geofenceRadiusMeters),
+        existingBranch.Branch_ID
+      );
+    }
+  }
+
   return lastId;
 }
 
@@ -2258,6 +2564,38 @@ export async function updateTerminal(
   if (updates.length === 0) return;
   params.push(terminalId);
   await exec(db, `UPDATE Terminals SET ${updates.join(", ")} WHERE Terminal_ID = ?`, ...params);
+
+  const clockingTouched =
+    patch.clockingMethod !== undefined ||
+    patch.latitude !== undefined ||
+    patch.longitude !== undefined ||
+    patch.geofenceRadiusMeters !== undefined;
+  const updatedTerm = await queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE Terminal_ID = ?", terminalId);
+  if (clockingTouched && updatedTerm && updatedTerm.Branch_Name) {
+    const existingBranch = await queryOne<BranchRow>(
+      db,
+      "SELECT * FROM Branches WHERE Branch_Name COLLATE NOCASE = ?",
+      updatedTerm.Branch_Name
+    );
+    if (existingBranch) {
+      await exec(
+        db,
+        `UPDATE Branches
+            SET Clocking_Method = ?,
+                Latitude = ?,
+                Longitude = ?,
+                Geofence_Radius_Meters = ?
+          WHERE Branch_ID = ?`,
+        normalizeClockingMethod(updatedTerm.Clocking_Method),
+        patch.latitude !== undefined ? updatedTerm.Latitude : existingBranch.Latitude,
+        patch.longitude !== undefined ? updatedTerm.Longitude : existingBranch.Longitude,
+        patch.geofenceRadiusMeters !== undefined
+          ? updatedTerm.Geofence_Radius_Meters
+          : existingBranch.Geofence_Radius_Meters,
+        existingBranch.Branch_ID
+      );
+    }
+  }
 }
 
 export async function deleteTerminal(terminalId: number) {
@@ -2293,9 +2631,10 @@ export async function resolveGeofenceLocation(opts: {
   branchName?: string | null;
   employeeBranch?: string | null;
 }): Promise<GeofenceLocation | null> {
+  const db = await getDb();
   const mac = opts.terminalMac?.trim();
   if (mac) {
-    const t = await findTerminal(await getDb(), { mac });
+    const t = await findTerminal(db, { mac });
     if (t) {
       return {
         kind: "terminal",
@@ -2322,6 +2661,31 @@ export async function resolveGeofenceLocation(opts: {
       longitude: branch.Longitude,
       radiusMeters: branch.Geofence_Radius_Meters,
     };
+  }
+
+  // Fallback: if the branch was configured on a Terminal (e.g. Branch 1..17) without a Branches row
+  const targetBranch = (opts.branchName?.trim() || opts.employeeBranch?.trim() || "");
+  if (targetBranch) {
+    const term = await queryOne<TerminalRow>(
+      db,
+      `SELECT * FROM Terminals
+        WHERE Branch_Name COLLATE NOCASE = ?
+        ORDER BY (CASE WHEN Latitude IS NOT NULL AND Geofence_Radius_Meters IS NOT NULL THEN 0 ELSE 1 END), Terminal_ID
+        LIMIT 1`,
+      targetBranch
+    );
+    if (term) {
+      return {
+        kind: "terminal",
+        id: term.Terminal_ID,
+        label: term.Branch_Name || term.Location_Name,
+        branch: term.Branch_Name || null,
+        method: normalizeClockingMethod(term.Clocking_Method),
+        latitude: term.Latitude,
+        longitude: term.Longitude,
+        radiusMeters: term.Geofence_Radius_Meters,
+      };
+    }
   }
   return null;
 }
@@ -2370,9 +2734,13 @@ function finiteOrNull(value: number | null): number | null {
  * site that requires the fingerprint terminal").
  */
 export async function listConfiguredBranches(): Promise<MobileFence[]> {
-  const rows = await queryAll<BranchRow>(await getDb(), "SELECT * FROM Branches ORDER BY Branch_ID");
+  const db = await getDb();
+  const rows = await queryAll<BranchRow>(db, "SELECT * FROM Branches ORDER BY Branch_ID");
   const out: MobileFence[] = [];
+  const seenBranches = new Set<string>();
+
   for (const row of rows) {
+    seenBranches.add(row.Branch_Name.toLowerCase());
     const latitude = finiteOrNull(row.Latitude);
     const longitude = finiteOrNull(row.Longitude);
     const radiusMeters = finiteOrNull(row.Geofence_Radius_Meters);
@@ -2388,6 +2756,32 @@ export async function listConfiguredBranches(): Promise<MobileFence[]> {
       radiusMeters,
     });
   }
+
+  // Also include any geofenced sites registered as Terminals that are not yet covered
+  const termRows = await queryAll<TerminalRow>(
+    db,
+    "SELECT * FROM Terminals WHERE Latitude IS NOT NULL AND Longitude IS NOT NULL AND Geofence_Radius_Meters IS NOT NULL AND Geofence_Radius_Meters > 0"
+  );
+  for (const t of termRows) {
+    const branchName = (t.Branch_Name || t.Location_Name || `Terminal ${t.Terminal_ID}`).trim();
+    if (seenBranches.has(branchName.toLowerCase())) continue;
+    const latitude = finiteOrNull(t.Latitude);
+    const longitude = finiteOrNull(t.Longitude);
+    const radiusMeters = finiteOrNull(t.Geofence_Radius_Meters);
+    if (latitude === null || longitude === null || radiusMeters === null) continue;
+    if (radiusMeters <= 0) continue;
+
+    out.push({
+      id: 10000 + t.Terminal_ID,
+      branch: branchName,
+      method: normalizeClockingMethod(t.Clocking_Method),
+      latitude,
+      longitude,
+      radiusMeters,
+    });
+    seenBranches.add(branchName.toLowerCase());
+  }
+
   return out;
 }
 
@@ -2554,6 +2948,9 @@ export interface PunchInput {
    * employee's roster branch. Left NULL for terminal punches.
    */
   branchName?: string | null;
+  /** Hardware device identifier and model name for mobile punches (Phase 19). */
+  deviceId?: string | null;
+  deviceName?: string | null;
 }
 
 /**
@@ -2594,8 +2991,8 @@ export async function insertPunch(input: PunchInput): Promise<number> {
     db,
     `INSERT INTO Attendance_Logs
        (Employee_ID, Timestamp, Terminal_ID, ERP_Sync_Status, Verify_Result, Direction, Verify_Method, Raw_Payload,
-        Latitude, Longitude, Location_Accuracy_Meters, Geofence_Distance_Meters, Branch_Name, Created_At)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        Latitude, Longitude, Location_Accuracy_Meters, Geofence_Distance_Meters, Branch_Name, Device_ID, Device_Name, Created_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     employeeId,
     input.timestamp,
     input.terminalId,
@@ -2609,6 +3006,8 @@ export async function insertPunch(input: PunchInput): Promise<number> {
     input.locationAccuracyMeters ?? null,
     input.geofenceDistanceMeters ?? null,
     input.branchName ?? null,
+    input.deviceId ?? null,
+    input.deviceName ?? null,
     Date.now()
   );
   return lastId;

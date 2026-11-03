@@ -1,21 +1,7 @@
 /**
  * ============================================================================
- *  App.tsx — the shell: one context, two screens
+ *  App.tsx — Mine Eazy Mobile Shell
  * ============================================================================
- *
- *  Routing is deliberately state-based rather than a navigator. There are two
- *  destinations and the app is either authenticated or it is not, so a routing
- *  library would add a dependency, a config surface and a failure mode without
- *  buying anything. If a third screen ever appears, this is the single place
- *  that has to change.
- *
- *  The context holds exactly what the brief asks for — the authenticated
- *  employee's identity and the coordinates of their branch's target fence — and
- *  nothing else; the queue and dwell state live in storage, because the
- *  background tasks must be able to read them with no React runtime present.
- *
- *  `@/tasks/geofenceTask` is imported by index.ts, not here, so that the task
- *  definitions are registered before `registerRootComponent` runs.
  */
 
 import { StatusBar } from "expo-status-bar";
@@ -48,8 +34,6 @@ function Screens(): React.ReactElement {
 export default function App(): React.ReactElement {
   return (
     <AuthProvider>
-      {/* SDK 57 forces edge-to-edge, so expo-status-bar no longer takes a
-          backgroundColor: the app's own dark background shows through. */}
       <StatusBar style="light" />
       <Screens />
     </AuthProvider>
@@ -67,7 +51,7 @@ const styles = StyleSheet.create({
   brandMark: {
     fontSize: 30,
     fontWeight: "800",
-    letterSpacing: 5,
+    letterSpacing: 4,
     color: COLORS.neon,
   },
   spinner: {

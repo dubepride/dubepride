@@ -47,13 +47,14 @@ import { SESSION_COOKIE } from "@/lib/session";
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
 const PUBLIC_PREFIXES = [
   "/api/biometrics/push",
-  // Phase 15 — hands-free mobile clocking ingress. The mobile app cannot hold
-  // a session cookie, so the handler itself authenticates the shared
-  // MOBILE_PUNCH_KEY (or a signed-in admin session). See the route header.
+  // Phase 15 — mobile clocking ingress & geofence feeds. The mobile app cannot
+  // hold a session cookie, so these handlers authenticate the shared
+  // MOBILE_PUNCH_KEY (or a signed-in admin session).
   "/api/attendance/geopunch",
-  // Phase 16 — companion app sign-in (Employee ID + PIN → identity + the
-  // geofence to satisfy). Same shared-key rule as the punch ingress.
+  "/api/attendance/geofences",
+  // Phase 16 — companion app sign-in & live geofence sync.
   "/api/mobile/login",
+  "/api/mobile/geofences",
   // Serverless hosting — the scheduled ERP drain. A platform scheduler (Vercel
   // Cron / cron-job.org) has no session cookie, so this route authenticates
   // itself against the CRON_SECRET instead. See the route header.

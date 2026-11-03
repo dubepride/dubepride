@@ -2,22 +2,18 @@
 
 /**
  * ============================================================================
- *  GeofenceMapEditor — the Leaflet geofence picker (Phase 18)
+ *  GeofenceMapEditor — the Leaflet geofence picker & radius resizer
  * ============================================================================
  *
- *  The interactive half of Phase 2 (branch/site geofence management). It sits
+ *  The interactive half of branch/site geofence management. It sits
  *  under the numeric Latitude/Longitude/Radius inputs in `ClockingMethodFields`
- *  so the two admin surfaces that configure hands-free clocking (Settings →
+ *  so the two admin surfaces that configure mobile clocking (Settings →
  *  Branches and Clocking Devices) get the same map:
  *
- *    • drag the pin, or click the map, to set the site centre
- *    • watch the permitted-radius circle resize as the radius is typed
+ *    • drag the centre pin, or click the map, to set the site centre
+ *    • drag the edge pin on the circle rim (or use the slider/input) to resize
+ *      the geofence radius in metres
  *    • "Use my location" drops the pin where the admin is standing
- *
- *  The map only ever writes the SAME fields the text inputs already own
- *  (latitude / longitude / geofenceRadiusMeters as strings) — the server
- *  remains the sole validator (src/lib/geofence.ts), so a map mistake can
- *  never bypass server-side coordinate/radius validation.
  */
 
 import { useMemo, useState } from "react";
@@ -30,6 +26,7 @@ import type { ClockingFieldsValue } from "./ClockingMethodFields";
 const FALLBACK_CENTER = { latitude: -19.0154, longitude: 29.1549 };
 const FALLBACK_ZOOM = 7;
 const DEFAULT_RADIUS_PREVIEW = 150;
+const METRES_PER_DEG_LAT = 111_320;
 
 const LABEL = "mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase";
 
@@ -72,6 +69,7 @@ export default function GeofenceMapEditor({
   const latitude = toNumberOrNull(value.latitude);
   const longitude = toNumberOrNull(value.longitude);
   const radius = toNumberOrNull(value.geofenceRadiusMeters);
+  const activeRadius = Math.max(1, radius ?? DEFAULT_RADIUS_PREVIEW);
   const hasCentre = latitude !== null && longitude !== null;
 
   const center = hasCentre
@@ -79,27 +77,60 @@ export default function GeofenceMapEditor({
     : device ?? FALLBACK_CENTER;
 
   const zoom = useMemo(
-    () => (hasCentre ? zoomForRadius(radius ?? DEFAULT_RADIUS_PREVIEW) : FALLBACK_ZOOM),
-    [hasCentre, radius]
+    () => (hasCentre ? zoomForRadius(activeRadius) : FALLBACK_ZOOM),
+    [hasCentre, activeRadius]
   );
 
   const markers: MapMarker[] = [];
   if (hasCentre) {
-    markers.push({ id: "site", latitude, longitude, label: "Site centre", tone: "neon", draggable: true });
+    markers.push({
+      id: "site",
+      latitude,
+      longitude,
+      label: `Site centre (${activeRadius} m)`,
+      tone: "neon",
+      draggable: true,
+    });
+
+    // Place a draggable radius handle on the eastern edge of the geofence circle
+    const mPerDegLng =
+      METRES_PER_DEG_LAT * Math.max(0.05, Math.cos((latitude * Math.PI) / 180));
+    const edgeLng = longitude + activeRadius / mPerDegLng;
+    markers.push({
+      id: "radius-handle",
+      latitude,
+      longitude: edgeLng,
+      label: `Drag edge to resize (${activeRadius} m)`,
+      tone: "muted",
+      draggable: true,
+    });
   }
   if (device) {
     markers.push({ id: "device", latitude: device.latitude, longitude: device.longitude, label: "You", tone: "user" });
   }
 
   const circles: MapCircle[] = hasCentre
-    ? [{ id: "fence", latitude, longitude, radiusMeters: Math.max(1, radius ?? DEFAULT_RADIUS_PREVIEW), tone: "neon" }]
+    ? [{ id: "fence", latitude, longitude, radiusMeters: activeRadius, tone: "neon" }]
     : [];
 
   const distance =
     hasCentre && device ? haversineMetersRounded(device.latitude, device.longitude, latitude, longitude) : null;
 
   function place(lat: number, lng: number) {
-    onChange({ latitude: lat.toFixed(6), longitude: lng.toFixed(6) });
+    onChange({
+      latitude: lat.toFixed(6),
+      longitude: lng.toFixed(6),
+      ...(radius === null ? { geofenceRadiusMeters: String(DEFAULT_RADIUS_PREVIEW) } : {}),
+    });
+  }
+
+  function handleMarkerDrag(id: string, lat: number, lng: number) {
+    if (id === "radius-handle" && hasCentre) {
+      const nextRadius = Math.max(10, haversineMetersRounded(latitude, longitude, lat, lng));
+      onChange({ geofenceRadiusMeters: String(nextRadius) });
+      return;
+    }
+    place(lat, lng);
   }
 
   function useMyLocation() {
@@ -132,7 +163,7 @@ export default function GeofenceMapEditor({
   return (
     <div className={`space-y-2 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={LABEL}>Geofence map — drag the pin to set the centre</span>
+        <span className={LABEL}>Geofence map — drag centre pin to move, or drag rim pin to resize radius</span>
         <div className="flex flex-wrap items-center gap-2">
           {hasCentre ? (
             <button
@@ -167,7 +198,7 @@ export default function GeofenceMapEditor({
         height={300}
         ariaLabel="Geofence editor map"
         onMapClick={(lat, lng) => place(lat, lng)}
-        onMarkerDrag={(_id, lat, lng) => place(lat, lng)}
+        onMarkerDrag={handleMarkerDrag}
       />
 
       <p className="text-[11px] text-muted" aria-live="polite">
@@ -175,7 +206,7 @@ export default function GeofenceMapEditor({
           <>
             Centre <span className="font-mono text-ink/80">{latitude!.toFixed(5)}, {longitude!.toFixed(5)}</span>
             {" · "}
-            radius <span className="font-mono text-ink/80">{radius ?? DEFAULT_RADIUS_PREVIEW} m</span>
+            radius <span className="font-mono text-neon">{activeRadius} m</span>
             {distance !== null ? (
               <>
                 {" · "}

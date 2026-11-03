@@ -70,6 +70,9 @@ export async function GET(
       enrolled: employee.Fingerprint_Enrolled === 1,
       fingers: parseFingers(employee.Fingers_Enrolled),
       createdAt: employee.Created_At,
+      boundDeviceId: employee.Bound_Device_ID ?? null,
+      boundDeviceName: employee.Bound_Device_Name ?? null,
+      boundDeviceAt: employee.Bound_Device_At ?? null,
     },
     weeks,
     stats: {

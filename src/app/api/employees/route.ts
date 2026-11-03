@@ -25,6 +25,7 @@ import {
   deleteEmployee,
   listEmployees,
   parseFingers,
+  unbindEmployeeDevice,
   updateEmployee,
 } from "@/lib/db";
 import type { EmployeeDirectoryEntry, EmployeeDirectoryResponse } from "@/lib/types";
@@ -104,6 +105,9 @@ export async function GET(request: NextRequest): Promise<Response> {
       // Assigned branch wins; the punch branch covers legacy/blank records.
       branch: assigned || r.Punch_Branch || null,
       assignedBranch: assigned,
+      boundDeviceId: r.Bound_Device_ID ?? null,
+      boundDeviceName: r.Bound_Device_Name ?? null,
+      boundDeviceAt: r.Bound_Device_At ?? null,
     };
   });
 
@@ -171,6 +175,9 @@ export async function PUT(request: NextRequest): Promise<Response> {
   if (error) return bad(error);
 
   try {
+    if (body.unbindDevice === true || body.boundDeviceId === null) {
+      await unbindEmployeeDevice(id);
+    }
     await updateEmployee(id, value);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {

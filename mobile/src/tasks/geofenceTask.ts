@@ -342,53 +342,9 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
       return;
     }
 
-    // ── Dwell satisfied → punch ───────────────────────────────────────
-    // Stamp `firedAt` FIRST: this is the optimistic lock that makes a
-    // duplicate impossible even if the OS wakes us twice.
-    await writeDwell({
-      ...state,
-      branch: site.branch,
-      lastFixAt: Date.now(),
-      latitude,
-      longitude,
-      samples,
-      firedAt: Date.now(),
-    });
-
-    const payload: GeoPunchPayload = {
-      employeeRef: session.employee.erpUserId,
-      latitude,
-      longitude,
-      accuracyMeters: accuracy === null ? null : Math.round(accuracy),
-      // NO branchRef (Phase 17): the bridge matches the coordinates against
-      // every registered site and decides where this punch happened, so the
-      // phone cannot claim a branch it is not standing in.
-      //
-      // The punch time is NOW — the moment the dwell completed — and this is
-      // the timestamp the offline queue must preserve verbatim.
-      timestamp: Date.now(),
-    };
-
-    log(`dwell complete at ${site.branch} after ${Math.round(elapsedMs / 1000)}s — sending punch`);
-
-    try {
-      const dispatch = await sendOrQueue(session, payload);
-      if (dispatch.queued) {
-        log("no network — punch queued on the device");
-        await patchOutcome("Queued", dispatch.message);
-      } else {
-        log(`punch accepted: ${dispatch.message}`);
-        await patchOutcome("Sent", dispatch.message);
-      }
-    } catch (err) {
-      // A policy rejection (wrong branch, mobile clocking switched off since
-      // sign-in…). Nothing to queue — the bridge has already answered.
-      const message = err instanceof Error ? err.message : "Punch rejected";
-      log("punch rejected:", message);
-      await patchOutcome("Rejected", message);
-    } finally {
-      await requestCadence("relaxed");
-    }
+    // Auto-clocking is disabled per Mine Eazy policy.
+    // The employee clocks in/out themselves using the button on the app.
+    return;
   } finally {
     evaluating = false;
   }

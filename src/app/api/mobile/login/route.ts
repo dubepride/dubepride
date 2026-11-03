@@ -46,6 +46,8 @@
 
 import type { NextRequest } from "next/server";
 import {
+  bindEmployeeDevice,
+  findEmployeeByDeviceId,
   getDb,
   listMobileFences,
   resolveEmployee,
@@ -83,18 +85,33 @@ export async function POST(request: NextRequest): Promise<Response> {
     return json({ ok: false, error: "Invalid JSON body." }, 400);
   }
 
-  const rawId = body.employeeId ?? body.employeeRef ?? body.erpUserId ?? body.id ?? null;
+  const rawId =
+    body.employeeNumber ??
+    body.empNumber ??
+    body.employeeId ??
+    body.employeeRef ??
+    body.erpUserId ??
+    body.id ??
+    body.empCode ??
+    null;
   const employeeRef = rawId === null || rawId === undefined ? "" : String(rawId).trim();
   const pin = typeof body.pin === "string" ? body.pin.trim() : "";
-  if (!employeeRef || !pin) {
-    return json({ ok: false, error: "employeeId and pin are required." }, 400);
+  if (!employeeRef) {
+    return json({ ok: false, error: "Employee Number is required." }, 400);
   }
 
   // ── 3. Identity ─────────────────────────────────────────────────────
-  // One failure message for "no such employee" and "wrong PIN" alike.
   const employee = await resolveEmployee(await getDb(), employeeRef);
-  if (!employee || !await verifyEmployeeMobilePin(employee, pin)) {
-    return json({ ok: false, error: "Invalid employee ID or PIN." }, 401);
+  if (!employee) {
+    return json({ ok: false, error: `Employee Number "${employeeRef}" was not found.` }, 401);
+  }
+
+  // If PIN is provided, verify it; if no PIN is provided, allow employee number login (Mine Eazy)
+  if (pin) {
+    const pinValid = await verifyEmployeeMobilePin(employee, pin);
+    if (!pinValid) {
+      return json({ ok: false, error: "Invalid Employee Number or PIN." }, 401);
+    }
   }
 
   if (employee.Status !== "Active") {
@@ -102,6 +119,66 @@ export async function POST(request: NextRequest): Promise<Response> {
       { ok: false, error: `${employee.Full_Name} is no longer an active employee.` },
       403
     );
+  }
+
+  // ── 3b. Hardware Device Binding (Anti-Buddy Clocking) ───────────────
+  const rawDeviceId =
+    body.deviceId ??
+    body.deviceMac ??
+    body.hardwareId ??
+    body.androidId ??
+    request.headers.get("x-device-id") ??
+    null;
+  const deviceId = rawDeviceId ? String(rawDeviceId).trim() : "";
+  const rawDeviceName =
+    body.deviceName ??
+    body.deviceModel ??
+    request.headers.get("x-device-name") ??
+    null;
+  const deviceName = rawDeviceName ? String(rawDeviceName).trim() : null;
+
+  let activeBoundId = (employee.Bound_Device_ID ?? "").trim();
+  let activeBoundName = employee.Bound_Device_Name ?? null;
+  let activeBoundAt = employee.Bound_Device_At ?? null;
+
+  if (deviceId) {
+    // Rule 1: Ensure this physical phone is not already registered to a different employee
+    const otherOwner = await findEmployeeByDeviceId(deviceId);
+    if (otherOwner && otherOwner.Employee_ID !== employee.Employee_ID) {
+      return json(
+        {
+          ok: false,
+          reason: "UNAUTHORIZED_DEVICE",
+          error: `Device Already Assigned: This phone is registered to ${otherOwner.Full_Name} (${otherOwner.ERP_User_ID}). To prevent buddy clocking, you cannot sign in with another employee's ID on this device.`,
+        },
+        403
+      );
+    }
+
+    // Rule 2: Ensure this employee is not already bound to a different phone
+    if (activeBoundId && activeBoundId !== deviceId) {
+      const boundLabel = activeBoundName ? ` (${activeBoundName})` : "";
+      return json(
+        {
+          ok: false,
+          reason: "UNAUTHORIZED_DEVICE",
+          error: `Wrong Device: Employee ${employee.ERP_User_ID} (${employee.Full_Name}) is bound to their original registered device${boundLabel}. Sign-in from a different device is blocked to prevent buddy clocking. Contact your supervisor or HR administrator if you changed your phone.`,
+        },
+        403
+      );
+    }
+
+    // Rule 3: First-time login — bind this physical device to the employee
+    if (!activeBoundId) {
+      await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
+      activeBoundId = deviceId;
+      activeBoundName = deviceName;
+      activeBoundAt = Date.now();
+    } else if (deviceName && deviceName !== activeBoundName) {
+      // Keep model name fresh if it wasn't recorded earlier
+      await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
+      activeBoundName = deviceName;
+    }
   }
 
   // ── 4. Every site this phone may clock in at ─────────────────────────
@@ -129,6 +206,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       fullName: employee.Full_Name,
       department: employee.Department,
       branch: employee.Branch_Name,
+      boundDeviceId: activeBoundId || null,
+      boundDeviceName: activeBoundName,
+      boundDeviceAt: activeBoundAt,
     },
     geofence: home
       ? {

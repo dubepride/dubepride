@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BIOBRIDGE Mobile",
+    "name": "BioBridge Mobile",
     "slug": "biobridge-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,22 +9,18 @@
     "backgroundColor": "#0a0a0a",
     "primaryColor": "#00e676",
     "ios": {
-      "bundleIdentifier": "com.biobridge.mobileclocking",
+      "bundleIdentifier": "com.mineeazy.mobileclocking",
       "supportsTablet": false,
       "infoPlist": {
         "UIBackgroundModes": ["location"]
       }
     },
     "android": {
-      "package": "com.biobridge.mobileclocking",
+      "package": "com.mineeazy.mobileclocking",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
-        "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK"
       ],
       "predictiveBackGestureEnabled": false
@@ -34,22 +30,18 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "BIOBRIDGE uses your location to confirm you are inside your branch's geofence when you clock in or out.",
-          "locationAlwaysAndWhenInUsePermission": "BIOBRIDGE uses your location in the background so you can be clocked in and out automatically when you arrive at, and leave, your branch.",
-          "isIosBackgroundLocationEnabled": true,
-          "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "locationWhenInUsePermission": "Mine Eazy uses your location to confirm you are inside your branch's geofence when you clock in or out."
         }
       ]
     ],
     "extra": {
-      "_comment": "Base URL of the BIOBRIDGE bridge. The login screen can override it at runtime (persisted in the session), so a changed host needs no rebuild.",
+      "_comment": "Base URL of the bridge. The login screen can override it at runtime (persisted in the session), so a changed host needs no rebuild.",
       "apiUrl": "https://dubepride.vercel.app",
       "_comment_mobileKey": "Must match MOBILE_PUNCH_KEY on the server (default: biobridge-mobile).",
       "mobileKey": "biobridge-mobile",
-      "_comment_handsFree": "Automatic arrival/departure clocking via background geofencing. Off = button-only clocking (no background location, no persisted jobs).",
+      "_comment_handsFree": "Auto-clocking is disabled: employee clocks in/out directly via button.",
       "handsFree": false,
-      "_comment_cleartext": "RELEASE builds need android:usesCleartextTraffic=\"true\" on <application> (set by hand in android/app/src/main/AndroidManifest.xml). Without it Android blocks plain http:// and the app reports 'Cannot reach the bridge'. Re-running `expo prebuild` wipes that line; re-add it."
+      "_comment_cleartext": "RELEASE builds need android:usesCleartextTraffic=\"true\" on <application>."
     }
   }
 }

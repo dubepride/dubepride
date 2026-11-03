@@ -1,19 +1,12 @@
 /**
  * ============================================================================
- *  session.ts — the authenticated session, and the app's only context
+ *  session.tsx — the authenticated session for Mine Eazy Mobile
  * ============================================================================
  *
- *  As small as a context can be: who you are, which registered sites the phone
- *  may clock you in at, and whether the background tasks are running.
- *  Everything the background tasks need is ALSO persisted to SecureStore,
- *  because a React context cannot be read from a headless JS context — the
- *  store, not this provider, is what the background engine relies on.
- *
- *  Offline behaviour: sign-in normally requires the bridge, because only the
- *  bridge can verify the PIN and say where the employee's fence is. If the
- *  bridge is unreachable but this device already holds a verified session for
- *  the SAME employee and the same PIN, the app unlocks against that cached
- *  session and flags itself `offline`. Punches still work — they queue.
+ *  Manages employee-number login, offline session caching, and live background
+ *  synchronization (`refreshFences`) so any edits made on the web app (resizing
+ *  geofence radii, moving site pins, changing clocking methods, renaming/adding
+ *  branches, or editing employee details) accurately reflect on the mobile app.
  */
 
 import React, {
@@ -30,13 +23,14 @@ import {
   configuredApiUrl,
   configuredHandsFree,
   configuredMobileKey,
+  fetchMobileFences,
   HttpError,
   login as loginRequest,
   NetworkError,
   normaliseApiUrl,
 } from "./api";
+import { getDeviceIdentity } from "./device";
 import {
-  readPin,
   readSavedApiUrl,
   readSession,
   writePin,
@@ -53,8 +47,9 @@ import {
 export type AuthStatus = "restoring" | "signed-in" | "signed-out";
 
 export interface SignInInput {
-  employeeId: string;
-  pin: string;
+  employeeNumber?: string;
+  employeeId?: string;
+  pin?: string;
   apiUrl: string;
 }
 
@@ -69,24 +64,21 @@ export interface SignInOutcome {
 interface AuthContextValue {
   status: AuthStatus;
   session: MobileSession | null;
-  /** Outcome of the last attempt to arm the background tasks. */
   tracking: TrackingResult | null;
   /** Last base URL that worked — pre-fills the login screen. */
   initialApiUrl: string;
+  /** Persistent hardware device ID and handset model for anti-buddy clocking. */
+  deviceId: string | null;
+  deviceName: string | null;
   signIn: (input: SignInInput) => Promise<SignInOutcome>;
   signOut: () => Promise<void>;
-  /** Re-arm the background tasks after the employee fixes a permission. */
   retryTracking: () => Promise<void>;
+  /** Refresh active geofences, radii, employee profile & day status from the server. */
+  refreshFences: () => Promise<{ updated: boolean; count: number }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/**
- * Arm the background geofencing tasks only when hands-free clocking is
- * enabled in app.json (`extra.handsFree === true`). With it off the app is
- * button-only, needs no background location, and never schedules a persisted
- * geofencing job.
- */
 async function maybeStartTracking(session: MobileSession): Promise<TrackingResult | null> {
   if (!configuredHandsFree()) return null;
   try {
@@ -96,14 +88,21 @@ async function maybeStartTracking(session: MobileSession): Promise<TrackingResul
   }
 }
 
-/** Does a cached session belong to the ID the employee just typed? */
+/** Does a cached session belong to the Employee Number just typed? */
 function matchesEmployee(session: MobileSession, ref: string): boolean {
   const value = ref.trim().toLowerCase();
   if (!value) return false;
   const erp = session.employee.erpUserId.toLowerCase();
-  const erpDigits = erp.replace(/^erp-/, "");
   const id = String(session.employee.employeeId);
-  return value === erp || value === erpDigits || value === id || value === `erp-${id}`;
+  const valDigits = value.replace(/\D+/g, "");
+  const erpDigits = erp.replace(/\D+/g, "");
+  return (
+    value === erp ||
+    value === id ||
+    value === `emp-${id}` ||
+    value === `erp-${id}` ||
+    (valDigits !== "" && valDigits === erpDigits)
+  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }): React.ReactElement {
@@ -111,12 +110,22 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   const [session, setSession] = useState<MobileSession | null>(null);
   const [tracking, setTracking] = useState<TrackingResult | null>(null);
   const [initialApiUrl, setInitialApiUrl] = useState<string>(() => configuredApiUrl());
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
+  const sessionRef = React.useRef(session);
+  React.useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
-  // Restore a previous session on launch, and re-arm the background tasks —
-  // they do not survive a process restart on their own.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      const hw = await getDeviceIdentity();
+      if (!cancelled) {
+        setDeviceId(hw.deviceId);
+        setDeviceName(hw.deviceName);
+      }
+
       const savedUrl = await readSavedApiUrl();
       if (!cancelled && savedUrl) setInitialApiUrl(savedUrl);
 
@@ -135,31 +144,96 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
     };
   }, []);
 
+  const refreshFences = useCallback(async (): Promise<{ updated: boolean; count: number }> => {
+    const active = sessionRef.current;
+    if (!active) return { updated: false, count: 0 };
+    try {
+      const data = await fetchMobileFences(active, {
+        employeeId: active.employee.employeeId,
+        employeeRef: active.employee.erpUserId,
+      });
+
+      const nextEmployee = data.employee
+        ? { ...active.employee, ...data.employee }
+        : active.employee;
+
+      // If the employee was deactivated in the web admin, or bound to another device, sign out cleanly
+      const hw = await getDeviceIdentity();
+      if (
+        (nextEmployee.status && nextEmployee.status !== "Active") ||
+        (nextEmployee.boundDeviceId && nextEmployee.boundDeviceId !== hw.deviceId)
+      ) {
+        await stopGeofenceTracking();
+        await writeSession(null);
+        setSession(null);
+        setTracking(null);
+        setStatus("signed-out");
+        return { updated: true, count: 0 };
+      }
+
+      const nextFences = Array.isArray(data.fences) ? data.fences : active.fences;
+      const nextGeofence = data.geofence !== undefined ? data.geofence : active.geofence;
+      const nextDayStatus = data.dayStatus !== undefined ? data.dayStatus : active.dayStatus;
+
+      const next: MobileSession = {
+        ...active,
+        employee: nextEmployee,
+        fences: nextFences,
+        geofence: nextGeofence,
+        dayStatus: nextDayStatus,
+        offline: false,
+      };
+
+      const changed =
+        active.offline !== false ||
+        JSON.stringify(active.fences) !== JSON.stringify(next.fences) ||
+        JSON.stringify(active.geofence) !== JSON.stringify(next.geofence) ||
+        JSON.stringify(active.employee) !== JSON.stringify(next.employee) ||
+        JSON.stringify(active.dayStatus) !== JSON.stringify(next.dayStatus);
+
+      if (changed) {
+        sessionRef.current = next;
+        await writeSession(next);
+        setSession(next);
+      }
+      return { updated: changed, count: nextFences.length };
+    } catch {
+      // Keep existing cached session if server is temporarily unreachable
+    }
+    return { updated: false, count: active.fences?.length ?? 0 };
+  }, []);
+
   const signIn = useCallback(async (input: SignInInput): Promise<SignInOutcome> => {
     const base = normaliseApiUrl(input.apiUrl) || configuredApiUrl();
     const mobileKey = configuredMobileKey();
+    const empRef = (input.employeeNumber ?? input.employeeId ?? "").trim();
 
     try {
+      const hw = await getDeviceIdentity();
       const result = await loginRequest({
-        employeeId: input.employeeId,
-        pin: input.pin,
+        employeeNumber: empRef,
+        employeeId: empRef,
+        pin: input.pin || undefined,
+        deviceId: hw.deviceId,
+        deviceName: hw.deviceName,
         apiUrl: base,
         mobileKey,
       });
 
       const next: MobileSession = {
         employee: result.employee,
-        // Phase 17 — the phone watches every registered site, because an
-        // employee may travel and clock in wherever they are.
         fences: result.fences ?? [],
         geofence: result.geofence,
         apiUrl: base,
         mobileKey,
+        deviceId: hw.deviceId,
+        deviceName: hw.deviceName,
         signedInAt: Date.now(),
         offline: false,
       };
+      sessionRef.current = next;
       await writeSession(next);
-      await writePin(input.pin);
+      if (input.pin) await writePin(input.pin);
       await writeSavedApiUrl(base);
 
       setSession(next);
@@ -171,9 +245,9 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       // ── Offline: fall back to the session already verified on this device ──
       if (err instanceof NetworkError) {
         const cached = await readSession();
-        const cachedPin = await readPin();
-        if (cached && cachedPin === input.pin && matchesEmployee(cached, input.employeeId)) {
+        if (cached && matchesEmployee(cached, empRef)) {
           const next: MobileSession = { ...cached, apiUrl: base, offline: true };
+          sessionRef.current = next;
           await writeSession(next);
           await writeSavedApiUrl(base);
           setSession(next);
@@ -190,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
           ok: false,
           offline: false,
           error:
-            "Cannot reach the bridge, and this device has no saved session for that ID. Connect once to sign in.",
+            "Cannot reach the bridge, and this device has no saved session for that Employee Number. Connect once to sign in.",
           message: null,
         };
       }
@@ -210,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
 
   const signOut = useCallback(async (): Promise<void> => {
     await stopGeofenceTracking();
+    sessionRef.current = null;
     await writeSession(null);
     setSession(null);
     setTracking(null);
@@ -222,8 +297,30 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   }, [session]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, session, tracking, initialApiUrl, signIn, signOut, retryTracking }),
-    [status, session, tracking, initialApiUrl, signIn, signOut, retryTracking]
+    () => ({
+      status,
+      session,
+      tracking,
+      initialApiUrl,
+      deviceId,
+      deviceName,
+      signIn,
+      signOut,
+      retryTracking,
+      refreshFences,
+    }),
+    [
+      status,
+      session,
+      tracking,
+      initialApiUrl,
+      deviceId,
+      deviceName,
+      signIn,
+      signOut,
+      retryTracking,
+      refreshFences,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

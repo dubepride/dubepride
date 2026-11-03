@@ -1,23 +1,16 @@
 /**
  * ============================================================================
- *  SiteMap.tsx — the phone's Leaflet map inside a WebView (Phase 18)
+ *  SiteMap.tsx — the phone's Leaflet map inside a WebView
  * ============================================================================
  *
- *  Why a WebView? The app is a hand-written Expo build with no Google Maps key,
- *  and Leaflet is already the map stack used by the web dashboard. Reusing it
- *  keeps ONE tile policy (src/lib/maps.ts here; src/lib/maps.ts on the server)
- *  and means the phone shows exactly the same fences a browser does.
- *
  *  What it draws:
- *    · every registered site the phone may clock in at (neon circles),
+ *    · every registered site the phone may clock in at (neon circles + radius),
  *    · the employee's home site (white ring, labelled), and
  *    · the current GPS fix, when one is known (pulsing neon dot).
  *
- *  This is a courtesy display. The bridge re-derives the governing site from
- *  the coordinates on every punch, so nothing here — not even a tampered fence
- *  radius — can change where a punch lands. If tiles fail to load the map still
- *  shows the fences on a dark background; the distances in the status card are
- *  computed in JS and remain exact.
+ *  Whenever any site's radius or coordinates are edited in the web admin,
+ *  `fenceSignature` updates and the WebView immediately redraws the resized
+ *  geofence boundaries.
  */
 
 import React, { useMemo, useState } from "react";
@@ -31,6 +24,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 
+import { haversineMeters } from "@/lib/geo";
 import { isDemoTiles, mapAttribution, tileUrlTemplate, zoomForRadius } from "@/lib/maps";
 import type { GeofenceConfig, GeoFenceSite } from "@/lib/types";
 import { COLORS, FONT, RADIUS, SPACING } from "@/theme";
@@ -58,11 +52,6 @@ interface MapPayload {
   zoom: number;
 }
 
-/**
- * Embed a JSON payload into a <script> safely: the only dangerous sequences
- * inside a script element are `</script` and HTML comment openers, so a blanket
- * `<` → \u003c escape closes both off (branch names come from the database).
- */
 function safeJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
@@ -97,15 +86,32 @@ function buildPayload(props: SiteMapProps): MapPayload {
       ? { latitude: props.me.latitude, longitude: props.me.longitude }
       : null;
 
-  // Centre on the fix when we have one, else the home site, else the first
-  // site; the zoom follows that site's radius.
-  const anchor = me
-    ? { latitude: me.latitude, longitude: me.longitude, radiusMeters: 150 }
+  // If the employee is physically inside a site, centre on that site's fence;
+  // otherwise centre on their home site or the first configured site so the
+  // geofence circles and their radii are always visible on screen.
+  const insideSite = me
+    ? sites.find(
+        (s) => Math.round(haversineMeters(me.latitude, me.longitude, s.latitude, s.longitude)) <= s.radiusMeters
+      ) ?? null
+    : null;
+
+  const anchor = insideSite
+    ? {
+        latitude: insideSite.latitude,
+        longitude: insideSite.longitude,
+        radiusMeters: insideSite.radiusMeters,
+      }
     : home
       ? { latitude: home.latitude, longitude: home.longitude, radiusMeters: home.radiusMeters }
       : sites[0]
-        ? { latitude: sites[0].latitude, longitude: sites[0].longitude, radiusMeters: sites[0].radiusMeters }
-        : { latitude: -17.8292, longitude: 31.0522, radiusMeters: 1000 };
+        ? {
+            latitude: sites[0].latitude,
+            longitude: sites[0].longitude,
+            radiusMeters: sites[0].radiusMeters,
+          }
+        : me
+          ? { latitude: me.latitude, longitude: me.longitude, radiusMeters: 150 }
+          : { latitude: -20.1725, longitude: 28.5752, radiusMeters: 500 };
 
   return {
     tileUrl: tileUrlTemplate(),
@@ -119,11 +125,6 @@ function buildPayload(props: SiteMapProps): MapPayload {
   };
 }
 
-/**
- * The Leaflet document. Kept as one template literal so the whole map is a
- * single self-contained page: no bundler needed on the device, and the Android
- * WebView loads Leaflet from the CDN the same way a browser would.
- */
 function buildHtml(payload: MapPayload): string {
   return `<!doctype html>
 <html>
@@ -141,13 +142,18 @@ function buildHtml(payload: MapPayload): string {
   }
   .leaflet-control-attribution a { color: #00e676 !important; }
   .site-label {
-    background: rgba(10,10,10,0.82);
+    background: rgba(10,10,10,0.88);
     color: #ffffff;
-    border: 1px solid rgba(0,230,118,0.5);
+    border: 1px solid rgba(0,230,118,0.55);
     border-radius: 6px;
-    padding: 1px 5px;
+    padding: 2px 6px;
     font-size: 10px;
+    font-weight: 700;
     white-space: nowrap;
+  }
+  .site-label span {
+    color: #00e676;
+    font-family: monospace;
   }
   .me-dot {
     width: 16px; height: 16px; border-radius: 50%;
@@ -188,13 +194,13 @@ function buildHtml(payload: MapPayload): string {
   data.sites.forEach(function (site) {
     L.circle([site.latitude, site.longitude], {
       radius: site.radiusMeters,
-      color: '#00e676', weight: 2, fillColor: '#00e676', fillOpacity: 0.12
+      color: '#00e676', weight: 2, fillColor: '#00e676', fillOpacity: 0.14
     }).addTo(group);
     L.marker([site.latitude, site.longitude], {
       interactive: false,
       icon: L.divIcon({
         className: '',
-        html: '<div class="site-label">' + escapeHtml(site.branch) + '</div>',
+        html: '<div class="site-label">' + escapeHtml(site.branch) + ' <span>(' + site.radiusMeters + 'm)</span></div>',
         iconSize: [0, 0], iconAnchor: [0, 14]
       })
     }).addTo(group);
@@ -203,7 +209,7 @@ function buildHtml(payload: MapPayload): string {
   if (data.home) {
     L.circle([data.home.latitude, data.home.longitude], {
       radius: data.home.radiusMeters,
-      color: '#ffffff', weight: 1, dashArray: '4 4', fillOpacity: 0
+      color: '#ffffff', weight: 1.5, dashArray: '4 4', fillOpacity: 0
     }).addTo(group);
   }
 
@@ -212,10 +218,6 @@ function buildHtml(payload: MapPayload): string {
       interactive: false,
       icon: L.divIcon({ className: '', html: '<div class="me-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
     }).addTo(group);
-  }
-
-  if (!data.me && !data.home && data.sites.length > 0) {
-    map.fitBounds(group.getBounds().pad(0.25), { animate: false });
   }
 
   function escapeHtml(value) {
@@ -232,11 +234,24 @@ function buildHtml(payload: MapPayload): string {
 export function SiteMap({ sites, home, me, height = 260 }: SiteMapProps): React.ReactElement {
   const [failed, setFailed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+
+  // Signature of all fence radii & coordinates so WebView always remounts on any geofence edit
+  const fenceSignature = useMemo(() => {
+    const sitesSig = (sites ?? [])
+      .map((s) => `${s.branch}:${s.latitude}:${s.longitude}:${s.radiusMeters}`)
+      .join("|");
+    const homeSig = home
+      ? `${home.branch ?? ""}:${home.latitude ?? ""}:${home.longitude ?? ""}:${home.radiusMeters ?? ""}`
+      : "none";
+    return `${sitesSig}::${homeSig}`;
+  }, [sites, home]);
+
   const html = useMemo(() => buildHtml(buildPayload({ sites, home, me })), [sites, home, me]);
 
   const mapContent = (
     <>
       <WebView
+        key={fenceSignature}
         originWhitelist={["*"]}
         source={{ html }}
         style={styles.web}

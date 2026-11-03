@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import TimesheetExport from "./TimesheetExport";
 import TimesheetReport from "./TimesheetReport";
+import EmployeeImportModal from "./EmployeeImportModal";
 import { IconEdit, IconEye, IconFingerprint, IconPrint, IconSearch, IconTrash, IconX } from "./icons";
 
 /**
@@ -129,6 +130,7 @@ function EmployeeForm({
   );
   const [enrolled, setEnrolled] = useState(employee?.enrolled ?? false);
   const [status, setStatus] = useState(employee?.status === "Inactive" ? "Inactive" : "Active");
+  const [unbindDevice, setUnbindDevice] = useState(false);
   const [shifts, setShifts] = useState<ShiftRow[] | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -207,6 +209,7 @@ function EmployeeForm({
           shiftId: shiftId === "" ? null : Number(shiftId),
           enrolled,
           status,
+          ...(unbindDevice ? { unbindDevice: true } : {}),
         }),
       });
       const json = ((await res.json()).catch(() => null)) as {
@@ -401,6 +404,46 @@ function EmployeeForm({
               </p>
             )}
           </div>
+
+          {!isAdd && employee ? (
+            <div className="sm:col-span-2">
+              <span className={LABEL}>BioBridge Mobile Device Binding</span>
+              {employee.boundDeviceId && !unbindDevice ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-xs">
+                  <div>
+                    <span className="font-semibold text-neon">
+                      Bound to {employee.boundDeviceName || "Android Phone"}
+                    </span>
+                    <span className="ml-2 font-mono text-[11px] text-muted">
+                      ({employee.boundDeviceId})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUnbindDevice(true)}
+                    className="btn btn--ghost py-1! px-2.5! text-[10px]! text-amber-300 uppercase"
+                  >
+                    Unbind Device
+                  </button>
+                </div>
+              ) : unbindDevice ? (
+                <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">
+                  <span>Device will be unbound when you click Save Changes.</span>
+                  <button
+                    type="button"
+                    onClick={() => setUnbindDevice(false)}
+                    className="underline text-[11px]"
+                  >
+                    Undo
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5 text-xs text-muted">
+                  No phone bound yet — automatically locks to the employee&apos;s phone on first login.
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
         {formError ? (
@@ -539,6 +582,8 @@ export default function EmployeeDirectory() {
   const [modal, setModal] = useState<ModalState | null>(null);
   /** Timesheet Report overlay (custom period → print / save as PDF). */
   const [reportOpen, setReportOpen] = useState(false);
+  /** CSV / Excel employee bulk import modal */
+  const [importOpen, setImportOpen] = useState(false);
   /** Per-employee Timesheet Export overlay (custom period → print / CSV). */
   const [exportFor, setExportFor] = useState<EmployeeDirectoryEntry | null>(null);
 
@@ -632,6 +677,16 @@ export default function EmployeeDirectory() {
           >
             <IconPrint className="h-4 w-4" />
             Timesheet Report
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost px-3! py-2! text-[11px]! tracking-[0.14em]! uppercase text-cyan-300 hover:text-cyan-200"
+            onClick={() => setImportOpen(true)}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Import CSV / Excel
           </button>
           <button
             type="button"
@@ -916,6 +971,13 @@ export default function EmployeeDirectory() {
             erpUserId: exportFor.erpUserId,
           }}
           onClose={() => setExportFor(null)}
+        />
+      ) : null}
+
+      {importOpen ? (
+        <EmployeeImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={refresh}
         />
       ) : null}
     </div>

@@ -246,6 +246,17 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
     )
   );
 
+  useEffect(() => {
+    setClocking(
+      emptyClockingFields(
+        branch.clockingMethod,
+        branch.latitude,
+        branch.longitude,
+        branch.geofenceRadiusMeters
+      )
+    );
+  }, [branch.clockingMethod, branch.latitude, branch.longitude, branch.geofenceRadiusMeters]);
+
   async function saveRename() {
     const name = value.trim();
     if (!name || busy) return;

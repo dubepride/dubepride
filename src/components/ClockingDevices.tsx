@@ -106,18 +106,20 @@ const LABEL = "mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted u
 function DeviceForm({
   mode,
   device,
+  branches,
   onClose,
   onSaved,
 }: {
   mode: "add" | "edit";
   device: TerminalDto | null;
+  branches: string[];
   onClose: () => void;
   onSaved: (next: TerminalDto) => void;
 }) {
   const [mac, setMac] = useState(device?.mac ?? "");
   const [ip, setIp] = useState(device?.ip ?? "");
   const [name, setName] = useState(device?.location ?? "");
-  const [branch, setBranch] = useState(device?.branch || BRANCHES[0]);
+  const [branch, setBranch] = useState(device?.branch || branches[0] || BRANCHES[0]);
   const [status, setStatus] = useState<"Online" | "Offline">(device?.status ?? "Offline");
   const [clocking, setClocking] = useState<ClockingFieldsValue>(() =>
     emptyClockingFields(
@@ -263,7 +265,7 @@ function DeviceForm({
               value={branch}
               onChange={(e) => setBranch(e.target.value)}
             >
-              {BRANCHES.map((b) => (
+              {branches.map((b) => (
                 <option key={b} value={b}>
                   {b}
                 </option>
@@ -421,19 +423,29 @@ export default function ClockingDevices() {
     return data?.terminals ?? [];
   }, [data, override]);
 
+  const branchOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of data?.branches ?? []) {
+      if (b.trim()) set.add(b.trim());
+    }
+    for (const b of BRANCHES) set.add(b);
+    for (const t of terminals) {
+      if (t.branch?.trim()) set.add(t.branch.trim());
+    }
+    return [...set];
+  }, [data?.branches, terminals]);
+
   const groups = useMemo(() => {
     const map = new Map<string, TerminalDto[]>();
-    for (const b of BRANCHES) map.set(b, []);
+    for (const b of branchOptions) map.set(b, []);
     for (const t of terminals) {
       const key = t.branch || "Unassigned";
       const bucket = map.get(key);
       if (bucket) bucket.push(t);
       else map.set(key, [t]);
     }
-    // All 17 branches always render (even empty); any custom branch created
-    // via Add is appended after them in insertion order.
     return [...map.entries()];
-  }, [terminals]);
+  }, [branchOptions, terminals]);
 
   const online = terminals.filter((t) => t.status === "Online").length;
   const offline = terminals.length - online;
@@ -524,7 +536,7 @@ export default function ClockingDevices() {
             Devices by Branch
           </h2>
           <span className="font-mono text-[11px] tracking-wider text-muted">
-            {BRANCHES.length} BRANCHES · {terminals.length} DEVICES
+            {groups.length} BRANCHES · {terminals.length} DEVICES
           </span>
         </header>
 
@@ -673,6 +685,7 @@ export default function ClockingDevices() {
           key={`${modal.mode}-${modal.device?.id ?? "new"}`}
           mode={modal.mode}
           device={modal.device}
+          branches={branchOptions}
           onClose={() => setModal(null)}
           onSaved={handleSaved}
         />

@@ -38,6 +38,23 @@ export default function EmployeeProfile() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   /** Per-employee Timesheet Export overlay (custom period → print / CSV). */
   const [exportOpen, setExportOpen] = useState(false);
+  const [unbinding, setUnbinding] = useState(false);
+
+  async function handleUnbindDevice() {
+    if (!data?.employee.id || unbinding) return;
+    setUnbinding(true);
+    try {
+      const res = await fetch(
+        `/api/employees/${encodeURIComponent(String(data.employee.id))}/unbind-device`,
+        { method: "POST" }
+      );
+      if (res.ok) {
+        setRefreshNonce((n) => n + 1);
+      }
+    } finally {
+      setUnbinding(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +223,39 @@ export default function EmployeeProfile() {
             <HeaderStat label="Days" value={String(data.stats.daysPresent)} />
             <HeaderStat label="Hours" value={formatDuration(data.stats.workedMs)} />
           </div>
+        </div>
+
+        {/* Mobile Device Binding Bar (Anti-Buddy Clocking) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] bg-white/[0.02] px-5 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-bold tracking-[0.14em] text-muted uppercase">
+              📱 BioBridge Mobile Device:
+            </span>
+            {e.boundDeviceId ? (
+              <>
+                <span className="chip chip--neon">
+                  Bound · {e.boundDeviceName || "Android Handset"}
+                </span>
+                <span className="font-mono text-[11px] text-muted">
+                  ID: {e.boundDeviceId}
+                </span>
+              </>
+            ) : (
+              <span className="text-muted">
+                Unbound — will automatically lock to the first phone this employee signs into
+              </span>
+            )}
+          </div>
+          {e.boundDeviceId ? (
+            <button
+              type="button"
+              onClick={handleUnbindDevice}
+              disabled={unbinding}
+              className="btn btn--ghost py-1! px-3! text-[11px]! tracking-[0.14em]! text-amber-300 uppercase hover:text-amber-200"
+            >
+              {unbinding ? "Resetting…" : "Reset / Unbind Device"}
+            </button>
+          ) : null}
         </div>
       </section>
 

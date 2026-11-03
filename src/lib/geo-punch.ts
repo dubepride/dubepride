@@ -91,6 +91,9 @@ export interface GeoPunchInput {
   terminalRef?: string | null;
   /** Strict explicit site — an unknown name is a 404, never a fallback. */
   branchRef?: string | null;
+  /** Hardware device identifier and model name for anti-buddy clocking verification. */
+  deviceId?: string | null;
+  deviceName?: string | null;
   /**
    * Optional GPS accuracy ceiling in metres. 0 / undefined disables the gate
    * (the default, so existing behaviour is unchanged). When set and the
@@ -146,6 +149,19 @@ export async function performGeoPunch(input: GeoPunchInput): Promise<GeoPunchOut
   const accuracyMeters = input.accuracyMeters ?? null;
   const terminalRef = input.terminalRef?.trim() || null;
   const branchRef = input.branchRef?.trim() || null;
+  const deviceId = input.deviceId?.trim() || null;
+  const deviceName = input.deviceName?.trim() || null;
+
+  // ── 0a. Hardware Device Binding gate (Anti-Buddy Clocking) ───────────
+  const boundId = (employee.Bound_Device_ID ?? "").trim();
+  if (deviceId && boundId && boundId !== deviceId) {
+    const boundLabel = employee.Bound_Device_Name ? ` (${employee.Bound_Device_Name})` : "";
+    return refusal(
+      "UNAUTHORIZED_DEVICE",
+      `Wrong Device: ${employee.Full_Name} (${employee.ERP_User_ID}) is registered to another device${boundLabel}. Clocking from an unauthorized phone is blocked.`,
+      403
+    );
+  }
 
   // ── 0. Optional accuracy gate (off by default) ───────────────────────
   const maxAccuracy =
@@ -311,6 +327,8 @@ export async function performGeoPunch(input: GeoPunchInput): Promise<GeoPunchOut
       locationAccuracyMeters: accuracyMeters,
       geofenceDistanceMeters: distanceMeters,
       branchName: location.branch,
+      deviceId,
+      deviceName,
     });
 
     const payload: GeoPunchResponse = {
@@ -348,6 +366,8 @@ export async function performGeoPunch(input: GeoPunchInput): Promise<GeoPunchOut
     locationAccuracyMeters: accuracyMeters,
     geofenceDistanceMeters: distanceMeters,
     branchName: location.branch,
+    deviceId,
+    deviceName,
   });
 
   const payload: GeoPunchResponse = {

@@ -1,19 +1,13 @@
 /**
  * ============================================================================
- *  Login.tsx — Employee ID + PIN
+ *  Login.tsx — BioBridge Mobile Employee ID Sign-In & Hardware Device Binding
  * ============================================================================
  *
- *  Dark purple panel on a pitch-black page, neon "Authenticate" button.
- *
- *  The credentials are verified by the bridge (`POST /api/mobile/login`), not
- *  by the phone: the endpoint returns both the confirmed identity and the
- *  branch geofence the employee's punches will be judged against, so the app
- *  never has to guess where "work" is.
- *
- *  The server address is tucked behind a disclosure rather than shown by
- *  default — it is set once per deployment, and on a physical phone it is the
- *  only thing standing between a fresh build and a working demo, so it must
- *  be changeable without a rebuild.
+ *  Employees sign in using ONLY their Employee ID / Number (e.g. 1001 or EMP-1001).
+ *  Upon sign-in, BioBridge Mobile sends this phone's persistent Hardware Device ID
+ *  so the employee's ID is bound 1-to-1 to their phone on the main system.
+ *  If anyone tries to sign in with that Employee ID on another device, the server
+ *  rejects it with a clear "Wrong Device" error.
  */
 
 import React, { useState } from "react";
@@ -34,10 +28,9 @@ import { useAuth } from "@/lib/session";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
 
 export function Login(): React.ReactElement {
-  const { signIn, initialApiUrl } = useAuth();
+  const { signIn, initialApiUrl, deviceId, deviceName } = useAuth();
 
-  const [employeeId, setEmployeeId] = useState("");
-  const [pin, setPin] = useState("");
+  const [employeeNumber, setEmployeeNumber] = useState("");
   const [apiUrl, setApiUrl] = useState(initialApiUrl);
   const [showServer, setShowServer] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -47,26 +40,23 @@ export function Login(): React.ReactElement {
     if (busy) return;
     setError(null);
 
-    if (!employeeId.trim()) {
-      setError("Enter your Employee ID.");
-      return;
-    }
-    if (!pin.trim()) {
-      setError("Enter your PIN.");
+    const trimmed = employeeNumber.trim();
+    if (!trimmed) {
+      setError("Please enter your Employee ID.");
       return;
     }
 
     setBusy(true);
     const outcome = await signIn({
-      employeeId: employeeId.trim(),
-      pin: pin.trim(),
+      employeeNumber: trimmed,
+      employeeId: trimmed,
       apiUrl,
     });
     setBusy(false);
 
-    // On success this screen unmounts (the shell switches to the Dashboard), so
-    // only failures need rendering here.
-    if (!outcome.ok) setError(outcome.error);
+    if (!outcome.ok) {
+      setError(outcome.error ?? "Could not sign in with that Employee ID.");
+    }
   };
 
   return (
@@ -80,46 +70,45 @@ export function Login(): React.ReactElement {
       >
         <View style={styles.brand}>
           <Text style={styles.brandMark}>BIOBRIDGE</Text>
-          <Text style={styles.brandSub}>Hands-Free Mobile Clocking</Text>
+          <Text style={styles.brandSub}>BioBridge Mobile · Time & Attendance</Text>
         </View>
 
-        <Panel title="Sign in" subtitle="Use the Employee ID and PIN issued by your administrator.">
-          <Text style={styles.label}>Employee ID</Text>
+        <Panel
+          title="Employee Sign In"
+          subtitle="Enter your Employee ID to sign in. Your ID is locked to this device so no one else can clock in on your behalf."
+        >
+          <Text style={styles.label}>Employee ID / Number</Text>
           <TextInput
-            value={employeeId}
-            onChangeText={setEmployeeId}
-            placeholder="ERP-1001"
+            value={employeeNumber}
+            onChangeText={setEmployeeNumber}
+            placeholder="e.g. 1001 or EMP-1001"
             placeholderTextColor={COLORS.textFaint}
             autoCapitalize="characters"
             autoCorrect={false}
-            returnKeyType="next"
-            editable={!busy}
-            style={styles.input}
-          />
-
-          <Text style={styles.label}>PIN</Text>
-          <TextInput
-            value={pin}
-            onChangeText={setPin}
-            placeholder="••••"
-            placeholderTextColor={COLORS.textFaint}
-            keyboardType="number-pad"
-            secureTextEntry
-            maxLength={12}
             returnKeyType="go"
             editable={!busy}
             onSubmitEditing={() => void submit()}
             style={styles.input}
           />
 
+          <View style={styles.deviceBindBadge}>
+            <Text style={styles.deviceBindTitle}>
+              🔒 DEVICE BINDING ACTIVE
+            </Text>
+            <Text style={styles.deviceBindMeta}>
+              {deviceName ? `${deviceName} · ` : ""}ID: {deviceId ?? "Initializing…"}
+            </Text>
+          </View>
+
           {error ? (
             <View style={styles.errorBox}>
+              <Text style={styles.errorTitle}>⚠ Sign-In Rejected</Text>
               <Text style={styles.errorText}>{error}</Text>
             </View>
           ) : null}
 
           <PrimaryButton
-            label="AUTHENTICATE"
+            label="LOG IN"
             onPress={() => void submit()}
             loading={busy}
             style={styles.submit}
@@ -146,8 +135,8 @@ export function Login(): React.ReactElement {
                 style={styles.input}
               />
               <Text style={styles.hint}>
-                On the Android emulator the default 10.0.2.2:3000 reaches your
-                machine. On a real phone use your machine&apos;s LAN address.
+                On the Android emulator, http://10.0.2.2:3000 reaches your machine.
+                On a physical device, use your machine&apos;s LAN address or public server URL.
               </Text>
             </>
           ) : null}
@@ -173,13 +162,13 @@ const styles = StyleSheet.create({
   brandMark: {
     fontSize: 34,
     fontWeight: "800",
-    letterSpacing: 5,
+    letterSpacing: 4,
     color: COLORS.neon,
   },
   brandSub: {
     ...TEXT.caption,
     marginTop: SPACING.xs,
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
   },
   label: {
     ...TEXT.label,
@@ -195,6 +184,26 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
     fontSize: FONT.body,
     color: COLORS.white,
+  },
+  deviceBindBadge: {
+    marginTop: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelDeep,
+  },
+  deviceBindTitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.4,
+    color: COLORS.neon,
+  },
+  deviceBindMeta: {
+    fontSize: FONT.small,
+    color: COLORS.textMuted,
+    marginTop: 2,
   },
   submit: {
     marginTop: SPACING.lg,
@@ -218,6 +227,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.danger,
     backgroundColor: COLORS.dangerSoft,
+  },
+  errorTitle: {
+    fontSize: FONT.small,
+    fontWeight: "700",
+    color: COLORS.danger,
+    marginBottom: 4,
   },
   errorText: {
     fontSize: FONT.small,

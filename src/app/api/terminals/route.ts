@@ -9,6 +9,7 @@ import { requireAdmin } from "@/lib/auth";
 import {
   createTerminal,
   deleteTerminal,
+  listBranchNames,
   listTerminals,
   updateTerminal,
 } from "@/lib/db";
@@ -34,7 +35,8 @@ export async function GET(): Promise<Response> {
     geofenceRadiusMeters: t.Geofence_Radius_Meters,
   }));
 
-  const payload: TerminalsResponse = { terminals, generatedAt: Date.now() };
+  const branches = await listBranchNames();
+  const payload: TerminalsResponse = { terminals, branches, generatedAt: Date.now() };
   return Response.json(payload, { headers: { "Cache-Control": "no-store" } });
 }
 

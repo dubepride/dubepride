@@ -1,60 +1,27 @@
 /**
  * ============================================================================
- *  POST /api/attendance/geopunch — Hands-Free Geofenced Mobile Clocking
+ *  POST /api/attendance/geopunch — Geofenced Mobile Clocking
  * ============================================================================
  *
- *  The optional SECONDARY clock-in channel used by the companion app and by
- *  device-facing integrations. The client posts a background GPS fix; the
+ *  The mobile clock-in channel used by the companion app and by
+ *  device-facing integrations. The client posts a GPS fix; the
  *  bridge works out WHICH registered site that fix falls inside and writes an
  *  ordinary Pending punch for the ERP sync engine — exactly the row the
  *  fingerprint terminal would have produced.
- *
- *  An employee may travel, so the governing site is the one they are actually
- *  standing in, NOT the branch on their roster row. Resolution order:
- *
- *    1. an explicit device (`terminalRef`) — a device-level override;
- *    2. an explicit site (`branchRef`) — validated STRICTLY (an unknown name is
- *       a 404; the home branch is never substituted);
- *    3. otherwise the GPS fix is matched against EVERY registered mobile site.
- *
- *  All of the above — the site policy, the Haversine verdict and the audit
- *  write — now lives in src/lib/geo-punch.ts, shared with the browser
- *  self-clock route so the two can never disagree.
- *
- *  Body:
- *    {
- *      "employeeRef":  "ERP-1001",   // ERP id or Employee_ID (required)
- *      "direction":    "IN" | "OUT", // optional → inferred from today's seq
- *      "latitude":     -17.8292,     // required
- *      "longitude":    31.0522,      // required
- *      "accuracyMeters": 12,         // optional device-reported GPS accuracy
- *      "branchRef":    "Branch 5",   // optional explicit site
- *      "terminalRef":  "A4:1F:...",  // optional explicit device (MAC/SN)
- *      "timestamp":    1728748927000 // optional epoch ms (defaults to now)
- *    }
- *
- *  Outcomes (all JSON, no-store):
- *    • inside radius   → 200 { ok:true,  reason:"CLOCKED_IN|CLOCKED_OUT" }
- *    • outside radius  → 200 { ok:false, reason:"OUTSIDE_GEOFENCE" } (exception)
- *    • biometric-only  → 403 { ok:false, reason:"BIOMETRIC_ONLY" }  (no row)
- *    • not configured  → 409 { ok:false, reason:"GEOFENCE_NOT_CONFIGURED" }
- *    • bad payload     → 400 / 404
- *
- *  Auth: a device/mobile ingress (like /api/biometrics/push) — public at the
- *  proxy wall, so the handler authenticates EITHER a signed-in admin session
- *  (console testing) OR the shared `x-mobile-key` secret. The employee is
- *  named in the body here because the caller is a device, not a browser.
- *
- *  ─────────────────────────────────────────────────────────────────────
- *  The biometric listener (/api/biometrics/push) and the ERP engine are
- *  completely unaffected: this writes through the same insertPunch() path.
- *  ─────────────────────────────────────────────────────────────────────
  */
 
 import type { NextRequest } from "next/server";
-import { getDb, resolveEmployee } from "@/lib/db";
+import { after } from "next/server";
+import {
+  bindEmployeeDevice,
+  findEmployeeByDeviceId,
+  getDb,
+  resolveEmployee,
+} from "@/lib/db";
+import { runErpSync } from "@/lib/erp";
 import { isFiniteCoordinate } from "@/lib/geofence";
 import { DEFAULT_MOBILE_KEY, isMobileAuthorized } from "@/lib/mobile";
+import { isBackgroundServicesRunning } from "@/lib/mock-generator";
 import { clientKey, rateLimit } from "@/lib/rate-limit";
 import {
   optionalPositiveInt,
@@ -114,12 +81,58 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // ── 1. Employee ─────────────────────────────────────────────────────
   const rawRef =
-    body.employeeRef ?? body.employeeId ?? body.erpUserId ?? body.erp_user_id ?? body.id ?? null;
+    body.employeeRef ??
+    body.employeeNumber ??
+    body.empNumber ??
+    body.employeeId ??
+    body.erpUserId ??
+    body.erp_user_id ??
+    body.id ??
+    null;
   const ref = rawRef === null || rawRef === undefined ? "" : String(rawRef).trim();
   if (!ref) return json({ ok: false, error: "employeeRef is required." }, 400);
 
   const employee = await resolveEmployee(await getDb(), ref);
   if (!employee) return json({ ok: false, error: `No employee matches "${ref}".` }, 404);
+
+  // ── 1b. Hardware Device Verification (Anti-Buddy Clocking) ───────────
+  const rawDeviceId =
+    body.deviceId ??
+    body.deviceMac ??
+    body.hardwareId ??
+    request.headers.get("x-device-id") ??
+    null;
+  const deviceId = rawDeviceId ? String(rawDeviceId).trim() : null;
+  const rawDeviceName =
+    body.deviceName ??
+    body.deviceModel ??
+    request.headers.get("x-device-name") ??
+    null;
+  const deviceName = rawDeviceName ? String(rawDeviceName).trim() : null;
+
+  if (deviceId) {
+    const otherOwner = await findEmployeeByDeviceId(deviceId);
+    if (otherOwner && otherOwner.Employee_ID !== employee.Employee_ID) {
+      return json(
+        {
+          ok: false,
+          reason: "UNAUTHORIZED_DEVICE",
+          message: `Device Already Assigned: This phone is registered to ${otherOwner.Full_Name} (${otherOwner.ERP_User_ID}). Clocking in for another employee is blocked.`,
+          punch: null,
+          geo: null,
+          error: `This device belongs to ${otherOwner.Full_Name}.`,
+        },
+        403
+      );
+    }
+
+    const boundId = (employee.Bound_Device_ID ?? "").trim();
+    if (!boundId) {
+      await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
+      employee.Bound_Device_ID = deviceId;
+      employee.Bound_Device_Name = deviceName;
+    }
+  }
 
   // ── 2. Coordinates ──────────────────────────────────────────────────
   const latitude = typeof body.latitude === "number" ? body.latitude : Number(body.latitude);
@@ -150,7 +163,20 @@ export async function POST(request: NextRequest): Promise<Response> {
       (typeof body.terminalMac === "string" && body.terminalMac) ||
       null,
     branchRef: typeof body.branchRef === "string" ? body.branchRef : null,
+    deviceId,
+    deviceName,
   });
+
+  // Automatically drain Pending records to the ERP after acknowledging the punch
+  if (outcome.payload.ok && !isBackgroundServicesRunning()) {
+    after(async () => {
+      try {
+        await runErpSync("Auto");
+      } catch (err) {
+        console.error("[geopunch] post-ack ERP sync failed:", err);
+      }
+    });
+  }
 
   return json(outcome.payload, outcome.status);
 }

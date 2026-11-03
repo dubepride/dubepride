@@ -5,18 +5,13 @@
  *  ClockingMethodFields — the dynamic "Clocking Method" block (Phase 15)
  * ============================================================================
  *
- *  Shared by the two admin surfaces that configure hands-free geofenced
- *  mobile clocking:
- *    • Settings → Branches        (site-level method + geofence centre)
- *    • Clocking Devices → Add/Edit (device-level method + geofence centre)
+ *  Shared by the two admin surfaces that configure geofenced mobile clocking:
+ *    • Settings → Branches        (site-level method + geofence centre + radius)
+ *    • Clocking Devices → Add/Edit (device-level method + geofence centre + radius)
  *
- *  It renders the method selector and REVEALS the geofence inputs only when
- *  the chosen method actually uses GPS ("Geofence" / "Both"). Biometric stays
- *  the default so nothing changes for existing sites/devices until an admin
- *  opts in.
- *
- *  Styling reuses the app's design tokens (.glass surfaces, --color-neon
- *  accents, muted labels) so the new fields blend into the existing forms.
+ *  It renders the method selector and reveals the geofence inputs (including
+ *  numeric radius, slider, preset buttons, and interactive map editor) when
+ *  the chosen method uses GPS ("Geofence" / "Both").
  */
 
 import { useState } from "react";
@@ -27,6 +22,8 @@ import GeofenceMapEditor from "./GeofenceMapEditor";
 const LABEL = "mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase";
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-muted/60 focus:border-neon/50 focus:bg-white/[0.06]";
+
+const RADIUS_PRESETS = [50, 100, 150, 250, 500, 1000] as const;
 
 /** String-based form state (inputs are strings; converted on submit). */
 export interface ClockingFieldsValue {
@@ -97,6 +94,7 @@ export function ClockingMethodFields({
 }) {
   const needsGeo = value.clockingMethod !== "Biometric";
   const [mapOpen, setMapOpen] = useState(true);
+  const currentRadius = toNumberOrNull(value.geofenceRadiusMeters) ?? 150;
 
   return (
     <div className={className}>
@@ -136,9 +134,9 @@ export function ClockingMethodFields({
         <div className="mt-4 grid gap-4 rounded-xl border border-neon/20 bg-neon/[0.04] p-4 sm:grid-cols-3">
           <div className="sm:col-span-3">
             <p className="text-[11px] text-muted">
-              Hands-free check-ins are accepted only inside this radius of the stored GPS centre.
-              Coordinates are WGS-84 decimal degrees (e.g. Harare CBD&nbsp;
-              <span className="font-mono text-ink/80">-17.8292, 31.0522</span>).
+              Mobile GPS check-ins are accepted only inside this radius of the stored GPS centre.
+              Coordinates are WGS-84 decimal degrees (e.g. Bulawayo&nbsp;
+              <span className="font-mono text-ink/80">-20.1725, 28.5752</span>).
             </p>
           </div>
           <div>
@@ -150,7 +148,7 @@ export function ClockingMethodFields({
               className={`${INPUT} font-mono`}
               value={value.latitude}
               onChange={(e) => onChange({ latitude: e.target.value })}
-              placeholder="-17.8292"
+              placeholder="-20.1725"
               inputMode="decimal"
               autoComplete="off"
             />
@@ -164,7 +162,7 @@ export function ClockingMethodFields({
               className={`${INPUT} font-mono`}
               value={value.longitude}
               onChange={(e) => onChange({ longitude: e.target.value })}
-              placeholder="31.0522"
+              placeholder="28.5752"
               inputMode="decimal"
               autoComplete="off"
             />
@@ -185,11 +183,54 @@ export function ClockingMethodFields({
             />
           </div>
 
+          {/* Interactive Radius Resizer (Slider + Presets) */}
+          <div className="rounded-xl border border-white/10 bg-black/25 p-3 sm:col-span-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor={`${idPrefix}-radius-slider`}
+                className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase"
+              >
+                Resize Geofence Radius:{" "}
+                <span className="font-mono text-neon">{currentRadius} m</span>
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {RADIUS_PRESETS.map((preset) => {
+                  const isSelected = currentRadius === preset;
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => onChange({ geofenceRadiusMeters: String(preset) })}
+                      className={`rounded-lg border px-2 py-0.5 font-mono text-[10px] font-bold transition ${
+                        isSelected
+                          ? "border-neon/60 bg-neon/20 text-neon"
+                          : "border-white/10 bg-white/[0.04] text-muted hover:border-neon/40 hover:text-ink"
+                      }`}
+                    >
+                      {preset}m
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <input
+              id={`${idPrefix}-radius-slider`}
+              type="range"
+              min={10}
+              max={2000}
+              step={5}
+              value={Math.max(10, Math.min(2000, currentRadius))}
+              onChange={(e) => onChange({ geofenceRadiusMeters: e.target.value })}
+              className="w-full accent-[#00e676] cursor-pointer"
+              aria-label="Resize geofence radius in metres"
+            />
+          </div>
+
           {showMap ? (
             <div className="sm:col-span-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase">
-                  Pin the site on the map
+                  Pin the site &amp; resize boundary on the map
                 </span>
                 <button
                   type="button"
@@ -228,7 +269,7 @@ export function ClockingMethodBadge({
   return (
     <span className={`chip ${mobile ? "chip--neon" : "chip--muted"}`} title={
       mobile
-        ? `Biometric + hands-free GPS clocking${radiusMeters ? ` · ${radiusMeters} m` : ""}`
+        ? `Biometric + mobile GPS clocking${radiusMeters ? ` · ${radiusMeters} m` : ""}`
         : "Physical fingerprint terminal only"
     }>
       <span className={`status-dot ${mobile ? "status-dot--on" : "status-dot--off"}`} aria-hidden="true" />

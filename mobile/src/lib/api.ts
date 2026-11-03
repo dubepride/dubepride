@@ -1,35 +1,25 @@
 /**
  * ============================================================================
- *  api.ts — the app's only door to the BIOBRIDGE bridge
+ *  api.ts — the app's door to the Mine Eazy bridge
  * ============================================================================
  *
- *  Two endpoints are used, both shared-secret ingress points on the server:
- *
- *    POST /api/mobile/login          Employee ID + PIN → identity + geofence
- *    POST /api/attendance/geopunch   the actual GPS punch
- *
- *  Failure taxonomy (this is what makes the offline queue correct):
- *
- *    NetworkError — the request never reached the bridge (no route, DNS,
- *                   connection refused, timeout, dropped mid-response).
- *                   → the punch MUST be queued.
- *    HttpError    — the bridge answered, and said no (401/403/409/…).
- *                   → never queue a policy verdict; show it to the employee.
- *    5xx          — the bridge is reachable but unhealthy.
- *                   → queue and retry: the punch is still valid.
- *
- *  Configuration comes from `app.json` → `extra` (see README), which keeps it
- *  typed and identical in Expo Go and in a native dev build. The login screen
- *  can also override the base URL at runtime, so pointing a phone at a new
- *  server never requires a rebuild.
+ *  Endpoints used:
+ *    POST /api/mobile/login          Employee Number → identity + geofences
+ *    GET  /api/mobile/geofences      Live sync of geofences, radii & employee profile
+ *    POST /api/attendance/geopunch   The manual GPS punch & offline auto-sync
  */
 
 import Constants from "expo-constants";
 
+import { getDeviceIdentity } from "./device";
 import { enqueue, flushQueue, type FlushResult } from "./queue";
 import type {
+  GeoFenceSite,
   GeoPunchPayload,
   GeoPunchResponse,
+  GeofenceConfig,
+  MobileDayStatus,
+  MobileEmployee,
   MobileLoginResponse,
   MobileSession,
 } from "./types";
@@ -70,12 +60,6 @@ export function configuredMobileKey(): string {
   return extraString("mobileKey") || DEFAULT_MOBILE_KEY;
 }
 
-/**
- * Hands-free (background geofencing) is opt-in. Set `"handsFree": true` in
- * app.json `extra` to re-enable automatic arrival/departure clocking; when
- * false the app only clocks in/out from the button, so it needs no background
- * location permission and never schedules a geofencing job.
- */
 export function configuredHandsFree(): boolean {
   return extra()["handsFree"] === true;
 }
@@ -125,8 +109,6 @@ async function requestJson<T>(
   try {
     response = await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
-    // fetch() only rejects on transport-level failure — precisely the case the
-    // offline queue exists for.
     throw new NetworkError(err instanceof Error ? err.message : "Network request failed");
   } finally {
     clearTimeout(timer);
@@ -136,7 +118,6 @@ async function requestJson<T>(
   try {
     text = await response.text();
   } catch {
-    // Connection dropped after headers — still a transport failure.
     throw new NetworkError("Connection lost while reading the response");
   }
 
@@ -157,18 +138,25 @@ async function requestJson<T>(
 /* ------------------------------------------------------------------ */
 
 export interface LoginInput {
-  employeeId: string;
-  pin: string;
+  employeeNumber?: string;
+  employeeId?: string;
+  pin?: string;
+  deviceId?: string;
+  deviceName?: string;
   apiUrl: string;
   mobileKey: string;
 }
 
 /**
- * Exchange Employee ID + PIN for a verified identity and the sites it may
- * clock in at (Phase 17: every registered site, not just the home branch).
- * Throws NetworkError (offline) or HttpError (rejected) — never returns ok:false.
+ * Exchange Employee ID / Number + Hardware Device ID for a verified identity
+ * and all active site geofences.
  */
 export async function login(input: LoginInput): Promise<MobileLoginResponse> {
+  const empRef = (input.employeeNumber ?? input.employeeId ?? "").trim();
+  const hw = await getDeviceIdentity();
+  const deviceId = (input.deviceId ?? hw.deviceId).trim();
+  const deviceName = (input.deviceName ?? hw.deviceName).trim();
+
   const result = await requestJson<MobileLoginResponse>(
     `${input.apiUrl}/api/mobile/login`,
     {
@@ -176,8 +164,16 @@ export async function login(input: LoginInput): Promise<MobileLoginResponse> {
       headers: {
         "Content-Type": "application/json",
         "x-mobile-key": input.mobileKey,
+        "x-device-id": deviceId,
+        "x-device-name": deviceName,
       },
-      body: JSON.stringify({ employeeId: input.employeeId, pin: input.pin }),
+      body: JSON.stringify({
+        employeeNumber: empRef,
+        employeeId: empRef,
+        deviceId,
+        deviceName,
+        pin: input.pin && input.pin.trim() ? input.pin.trim() : undefined,
+      }),
     }
   );
 
@@ -187,25 +183,95 @@ export async function login(input: LoginInput): Promise<MobileLoginResponse> {
   return result.body;
 }
 
+/**
+ * Query the latest geofence configurations, employee profile, and day status
+ * from the server so that any edits (such as resized radius, moved pin,
+ * clocking method change, or employee/branch edit) reflect live on the mobile app.
+ */
+export async function fetchMobileFences(
+  target: PunchTarget,
+  opts?: { employeeId?: number; employeeRef?: string } | string
+): Promise<{
+  fences: GeoFenceSite[];
+  geofence: GeofenceConfig | null;
+  employee: MobileEmployee | null;
+  dayStatus: MobileDayStatus | null;
+}> {
+  const params = new URLSearchParams();
+  if (typeof opts === "string") {
+    if (opts.trim()) params.set("employeeRef", opts.trim());
+  } else if (opts) {
+    if (typeof opts.employeeId === "number" && opts.employeeId > 0) {
+      params.set("employeeId", String(opts.employeeId));
+    }
+    if (opts.employeeRef?.trim()) {
+      params.set("employeeRef", opts.employeeRef.trim());
+    }
+  }
+  params.set("_t", String(Date.now()));
+  const query = `?${params.toString()}`;
+
+  const result = await requestJson<{
+    ok: boolean;
+    fences?: GeoFenceSite[];
+    sites?: GeoFenceSite[];
+    geofence?: GeofenceConfig | null;
+    employee?: MobileEmployee | null;
+    dayStatus?: MobileDayStatus | null;
+  }>(`${target.apiUrl}/api/mobile/geofences${query}`, {
+    method: "GET",
+    headers: {
+      "x-mobile-key": target.mobileKey,
+      "Cache-Control": "no-cache",
+    },
+  });
+
+  if (result.ok && result.body && (Array.isArray(result.body.fences) || Array.isArray(result.body.sites))) {
+    return {
+      fences: result.body.fences ?? result.body.sites ?? [],
+      geofence: result.body.geofence ?? null,
+      employee: result.body.employee ?? null,
+      dayStatus: result.body.dayStatus ?? null,
+    };
+  }
+
+  // Fallback to /api/attendance/geofences
+  const fallback = await requestJson<{ ok: boolean; sites: GeoFenceSite[] }>(
+    `${target.apiUrl}/api/attendance/geofences?_t=${Date.now()}`,
+    {
+      method: "GET",
+      headers: {
+        "x-mobile-key": target.mobileKey,
+        "Cache-Control": "no-cache",
+      },
+    }
+  );
+  if (fallback.ok && Array.isArray(fallback.body?.sites)) {
+    return {
+      fences: fallback.body.sites,
+      geofence: null,
+      employee: null,
+      dayStatus: null,
+    };
+  }
+
+  throw new HttpError(result.status, "Could not fetch updated geofences.");
+}
+
 /* ------------------------------------------------------------------ */
 /* POST /api/attendance/geopunch                                      */
 /* ------------------------------------------------------------------ */
 
-/** The transport identity needed for a punch — a session satisfies it. */
 export type PunchTarget = Pick<MobileSession, "apiUrl" | "mobileKey">;
 
-/**
- * Send one GPS punch.
- *
- * Returns the bridge's verdict (including `ok:false` policy answers such as
- * OUTSIDE_GEOFENCE, which are meaningful results — the attempt is recorded as
- * an exception bridge-side). Throws NetworkError / HttpError for the cases
- * where nothing was decided.
- */
 export async function postGeoPunch(
   target: PunchTarget,
   payload: GeoPunchPayload
 ): Promise<GeoPunchResponse> {
+  const hw = await getDeviceIdentity();
+  const deviceId = (payload.deviceId ?? hw.deviceId).trim();
+  const deviceName = (payload.deviceName ?? hw.deviceName).trim();
+
   const result = await requestJson<GeoPunchResponse>(
     `${target.apiUrl}/api/attendance/geopunch`,
     {
@@ -213,6 +279,8 @@ export async function postGeoPunch(
       headers: {
         "Content-Type": "application/json",
         "x-mobile-key": target.mobileKey,
+        "x-device-id": deviceId,
+        "x-device-name": deviceName,
       },
       body: JSON.stringify({
         employeeRef: payload.employeeRef,
@@ -220,15 +288,13 @@ export async function postGeoPunch(
         longitude: payload.longitude,
         accuracyMeters: payload.accuracyMeters ?? null,
         branchRef: payload.branchRef ?? null,
+        deviceId,
+        deviceName,
         timestamp: payload.timestamp,
-        // `direction` is intentionally omitted: the bridge infers IN/OUT from
-        // the employee's punch sequence, which a hands-free punch cannot know.
       }),
     }
   );
 
-  // 401 = our shared key is wrong; 5xx = the bridge itself is unwell. Neither
-  // is a punch verdict, so neither is returned as one.
   if (result.status === 401) {
     throw new HttpError(401, result.body?.error ?? "Unauthorized — check the mobile key.");
   }
@@ -236,7 +302,6 @@ export async function postGeoPunch(
     throw new HttpError(result.status, result.body?.error ?? "Bridge error.");
   }
 
-  // Every other outcome is a real verdict, ok or not (see GeoPunchReason).
   if (result.body && typeof result.body === "object" && "reason" in result.body) {
     return result.body;
   }
@@ -255,9 +320,7 @@ export interface PunchDispatch {
 }
 
 /**
- * The one call the background task and the manual button both use: deliver the
- * punch, or park it safely. Only genuine transport/unavailability failures
- * queue — a policy rejection is surfaced immediately.
+ * Deliver the punch, or park it safely in the offline queue when offline.
  */
 export async function sendOrQueue(
   target: PunchTarget,

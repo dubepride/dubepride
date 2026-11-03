@@ -1,25 +1,17 @@
 /**
  * ============================================================================
- *  usePendingQueue.ts — the dashboard's window onto the offline queue
+ *  usePendingQueue.ts — Offline Punch Queue with Automatic Network Sync
  * ============================================================================
  *
- *  The queue is written by a headless background context, so the UI cannot be
- *  event-driven: it polls. A short interval (5 s) is plenty — a punch that
- *  just failed should show up in front of the employee almost immediately.
+ *  The app auto-detects internet connectivity:
+ *    • If the person clocked in whilst offline, punches are queued safely.
+ *    • As soon as internet is detected, the app automatically syncs with the
+ *      main system — the user never has to manually sync.
  *
- *  Automatic replay
- *  ----------------
- *  Punches are never lost while offline, but leaving them on the device until
- *  someone taps "Sync Now" is not good enough. The queue is therefore flushed
- *  automatically — silently, without stealing the button's spinner — whenever:
- *
- *    • the OS reports the network coming back (expo-network listener),
- *    • the app returns to the foreground (a phone that was asleep in a dead
- *      spot is usually online again by then), or
- *    • a 20 s backstop interval fires while the screen is open.
- *
- *  A transport failure aborts the walk inside `flushQueue`, so a still-offline
- *  phone costs one request every 20 s, not a storm.
+ *  Network auto-detection triggers:
+ *    1. Instant OS network recovery listener (expo-network).
+ *    2. App foreground / resume listener (AppState).
+ *    3. Periodic polling interval (10s) while pending punches exist.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -30,22 +22,22 @@ import { flushOfflineQueue } from "@/lib/api";
 import { listQueued } from "@/lib/queue";
 import type { MobileSession, QueuedPunch } from "@/lib/types";
 
-/** How often the screen re-reads the queue (cheap AsyncStorage read). */
-const POLL_MS = 5000;
+/** How often the screen re-reads the queue count (AsyncStorage read). */
+const POLL_MS = 4000;
 
-/** Backstop replay attempt while the app is open. */
-const AUTO_SYNC_MS = 20_000;
+/** Background backstop auto-sync cadence when items are queued. */
+const AUTO_SYNC_INTERVAL_MS = 10_000;
 
 export interface PendingQueueState {
   pending: QueuedPunch[];
   syncing: boolean;
-  /** Result line from the last flush — success or "still offline". */
+  /** Status line from the last sync */
   message: string | null;
   error: string | null;
-  /** True while an automatic (non-button) flush is in flight. */
+  /** True while an automatic sync is actively uploading */
   autoSyncing: boolean;
   refresh: () => Promise<void>;
-  syncNow: () => Promise<void>;
+  triggerAutoSync: () => Promise<void>;
 }
 
 export function usePendingQueue(
@@ -58,12 +50,8 @@ export function usePendingQueue(
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Guards against the poll timer, the network listener and the button all
-  // starting a flush at the same moment.
   const inFlight = useRef(false);
 
-  // The listeners are registered once per session; reading the session from a
-  // ref keeps them from re-subscribing every time the object identity changes.
   const sessionRef = useRef(session);
   useEffect(() => {
     sessionRef.current = session;
@@ -82,84 +70,86 @@ export function usePendingQueue(
   }, [refresh, pollMs]);
 
   /**
-   * One flush attempt. `silent` = automatic replay: no spinner on the button,
-   * and no error text for the ordinary "still offline" case.
+   * Flushes queued punches to the bridge. Always automatic — never requires user action.
    */
   const flush = useCallback(
-    async (silent: boolean): Promise<void> => {
+    async (): Promise<void> => {
       const active = sessionRef.current;
       if (!active || inFlight.current) return;
 
-      // Nothing queued — don't touch the network at all.
-      if ((await listQueued()).length === 0) return;
+      const currentQueue = await listQueued();
+      if (currentQueue.length === 0) return;
 
       inFlight.current = true;
-      if (silent) setAutoSyncing(true);
-      else {
-        setSyncing(true);
-        setError(null);
-      }
+      setAutoSyncing(true);
+      setSyncing(true);
 
       try {
         const result = await flushOfflineQueue(active);
-        setMessage(result.message);
-
-        // Surface anything that stayed queued with a reason worth showing.
-        const blocked = result.details.find((detail) => !detail.ok && detail.reason);
-        if (blocked) setError(blocked.message);
-        else if (!silent && result.remaining === 0) setError(null);
-      } catch (err) {
-        // A silent attempt that fails because we are still offline is normal.
-        if (!silent) {
-          setError(err instanceof Error ? err.message : "Sync failed.");
+        if (result.sent > 0) {
+          setMessage(`Auto-synced ${result.sent} offline punch${result.sent === 1 ? "" : "es"} to main system.`);
+        } else {
+          setMessage(result.message);
         }
+
+        const blocked = result.details.find((detail) => !detail.ok && detail.reason);
+        if (blocked) {
+          setError(blocked.message);
+        } else if (result.remaining === 0) {
+          setError(null);
+        }
+      } catch (err) {
+        // Still offline: quiet fail, will retry automatically when internet returns
       } finally {
         inFlight.current = false;
-        if (silent) setAutoSyncing(false);
-        else setSyncing(false);
+        setAutoSyncing(false);
+        setSyncing(false);
         await refresh();
       }
     },
     [refresh]
   );
 
-  const syncNow = useCallback(async (): Promise<void> => {
-    await flush(false);
+  const triggerAutoSync = useCallback(async (): Promise<void> => {
+    const state = await Network.getNetworkStateAsync().catch(() => null);
+    if (state && state.isConnected && state.isInternetReachable !== false) {
+      await flush();
+    }
   }, [flush]);
 
-  // Automatic replay: connectivity regained, app foregrounded, or backstop.
+  // Automatic internet detection
   useEffect(() => {
     if (!session) return;
 
     let cancelled = false;
 
-    const attempt = async (): Promise<void> => {
+    const checkAndSync = async (): Promise<void> => {
       if (cancelled) return;
-      // Confirm the radio really is usable before spending a request.
       const state = await Network.getNetworkStateAsync().catch(() => null);
-      if (state && state.isConnected === false) return;
-      if (state && state.isInternetReachable === false) return;
-      await flush(true);
+      if (state && state.isConnected && state.isInternetReachable !== false) {
+        await flush();
+      }
     };
 
-    // Fires the instant Wi-Fi/mobile data comes back.
+    // Instant Wi-Fi / Cellular network recovery
     const networkSub = Network.addNetworkStateListener((state) => {
       if (state.isConnected && state.isInternetReachable !== false) {
-        void attempt();
+        void checkAndSync();
       }
     });
 
-    // A phone that slept in a dead spot is usually online again on wake.
+    // App coming back from background
     const appSub = AppState.addEventListener("change", (status) => {
-      if (status === "active") void attempt();
+      if (status === "active") void checkAndSync();
     });
 
+    // Periodic backstop check
     const timer = setInterval(() => {
-      void attempt();
-    }, AUTO_SYNC_MS);
+      void checkAndSync();
+    }, AUTO_SYNC_INTERVAL_MS);
 
-    // Try once on mount (covers "reopened the app after a dead zone").
-    void attempt();
+    // Initial check on mount
+    void checkAndSync();
 
     return () => {
       cancelled = true;
@@ -169,5 +159,5 @@ export function usePendingQueue(
     };
   }, [session, flush]);
 
-  return { pending, syncing, message, error, autoSyncing, refresh, syncNow };
+  return { pending, syncing, message, error, autoSyncing, refresh, triggerAutoSync };
 }

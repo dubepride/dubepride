@@ -1,75 +1,34 @@
 /**
  * ============================================================================
- *  geo.ts — the geofence maths and the tunable timing constants
+ *  geo.ts — the geofence maths and site ranking
  * ============================================================================
  *
- *  Pure module: no React, no Expo, no I/O. Both the background task and the
- *  UI import it, so the fence verdict can never disagree between the two.
+ *  Pure module: no React, no Expo, no I/O. Uses the exact same Haversine
+ *  distance and radius comparison (`Math.round(distance) <= radiusMeters`) as
+ *  the server (`src/lib/geo-punch.ts`), so resizing a geofence radius on the
+ *  web app produces the exact same inside/outside boundary on the mobile app.
  */
 
 import type { GeofenceConfig, GeoFenceSite } from "./types";
 
 /* ------------------------------------------------------------------ */
-/* Task names — referenced by the definitions AND by the UI            */
+/* Task names                                                          */
 /* ------------------------------------------------------------------ */
 
-/** OS region monitor: an ENTER event only *arms* the dwell candidate. */
 export const GEOFENCE_TASK = "biobridge-geofence";
-/** Continuous background fixes: where the dwell is actually confirmed. */
 export const DWELL_TASK = "biobridge-dwell";
-
-/**
- * Region-id prefix. The OS hands the identifier back on every ENTER/EXIT, so
- * it has to carry both whose fence it is and which branch — that is what lets
- * a background wake-up know where it is standing without a DB round-trip.
- */
 export const REGION_PREFIX = "biobridge:";
 
 /* ------------------------------------------------------------------ */
-/* Timing + tolerance                                                  */
+/* Timing + constants                                                  */
 /* ------------------------------------------------------------------ */
 
-/** The dwell time: the employee must REMAIN inside for this long. */
 export const DWELL_MS = 3 * 60 * 1000;
-
-/**
- * How many inside fixes are required before the dwell counts as "still
- * inside". One fix arms the candidate (the ENTER event itself counts), so the
- * value 2 means "we looked again and they were still there" — exactly the
- * spec's "wait 3 minutes, check the location again". Raising it demands a
- * longer unbroken presence; lowering it to 1 removes the continuity proof.
- */
 export const DWELL_MIN_SAMPLES = 2;
-
-/**
- * Background fix cadence.
- *
- * The dwell is confirmed on the first fix whose elapsed time already exceeds
- * DWELL_MS, so the *sampling* interval — not DWELL_MS — is what quantises the
- * wall-clock delay. Running two speeds keeps the battery cost of idling low
- * while making the confirmation tight once someone is actually dwelling:
- *
- *   relaxed (idle)    every 120 s  → a punch lands 3:00–5:00 after entry
- *   armed  (dwelling) every  30 s  → a punch lands 3:00–3:30 after entry
- *
- * The ENTER event re-requests the armed cadence; the punch (or leaving the
- * fence) re-requests the relaxed one.
- */
 export const LOCATION_INTERVAL_RELAXED_MS = 120_000;
 export const LOCATION_INTERVAL_ARMED_MS = 30_000;
-
-/** Don't burn battery reporting near-stationary jitter. */
 export const LOCATION_DISTANCE_M = 25;
-
-/**
- * GPS jitter tolerance at the fence edge. A fix whose reported accuracy is
- * worse than the radius is inherently ambiguous, so we let the employee win by
- * this margin — the server re-computes the authoritative distance anyway and
- * records the exact metres on the row.
- */
-export const ACCURACY_SLACK_M = 25;
-
-/** Android's Geofence API rejects radii below 100 m. */
+export const ACCURACY_SLACK_M = 0;
 export const MIN_ANDROID_REGION_RADIUS_M = 100;
 
 /* ------------------------------------------------------------------ */
@@ -80,9 +39,8 @@ const EARTH_RADIUS_M = 6_371_008.8;
 const toRad = (deg: number): number => (deg * Math.PI) / 180;
 
 /**
- * Great-circle distance in metres (Haversine) — the same formula the bridge
- * applies server-side, so a client-side "inside" verdict and the server's
- * recorded Geofence_Distance_Meters agree to the metre.
+ * Great-circle distance in metres (Haversine) — identical to the bridge's
+ * server-side formula.
  */
 export function haversineMeters(
   lat1: number,
@@ -101,11 +59,6 @@ export function haversineMeters(
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
-/**
- * The minimum a fence needs to be measurable. Both a `GeofenceConfig` (a site
- * as reported at sign-in) and a `GeoFenceSite` (a site the engine watches)
- * satisfy it, so the maths below has exactly one implementation.
- */
 export interface FenceLike {
   latitude: number | null;
   longitude: number | null;
@@ -140,76 +93,60 @@ export function distanceToCentre(
   );
 }
 
-/** Jitter allowance: never let a shaky fix cost the employee a punch. */
-function slackFor(accuracyMeters?: number | null): number {
-  const accuracy = isFiniteNumber(accuracyMeters) ? accuracyMeters : 0;
-  return Math.max(0, Math.min(accuracy, ACCURACY_SLACK_M));
-}
-
 /**
- * Inside-or-not verdict, with a jitter allowance that scales down as the
- * reported accuracy improves. Never call this from the UI as the final word —
- * the bridge is authoritative; this only decides whether it's worth a request.
+ * Inside-or-not verdict matching the server's `haversineMetersRounded <= radiusMeters`
+ * to the exact metre.
  */
 export function isInsideFence(
   config: FenceLike | null | undefined,
   latitude: number,
   longitude: number,
-  accuracyMeters?: number | null
+  _accuracyMeters?: number | null
 ): boolean {
   const distance = distanceToCentre(config, latitude, longitude);
   if (distance === null) return false;
-  return distance <= Number(config!.radiusMeters) + slackFor(accuracyMeters);
+  return Math.round(distance) <= Number(config!.radiusMeters);
 }
 
-/**
- * The radius to hand to the OS region monitor. Android refuses anything under
- * 100 m, so a tighter configured radius is registered enlarged — the *verdict*
- * still uses the configured radius, so a 150 m zone behaves as 150 m even
- * though the OS was told 150 m and a 60 m zone is registered at 100 m but
- * judged at 60 m.
- */
 export function regionRadiusMeters(config: FenceLike): number {
   const configured = isFiniteNumber(config.radiusMeters) ? config.radiusMeters : 0;
   return Math.max(configured, MIN_ANDROID_REGION_RADIUS_M);
 }
 
 /* ------------------------------------------------------------------ */
-/* Many sites (Phase 17) — "clock in wherever you are"                  */
+/* Many sites — "clock in wherever you are"                            */
 /* ------------------------------------------------------------------ */
 
-/** One site plus how far a given fix sits from it. */
 export interface SiteMatch {
   site: GeoFenceSite;
   distanceMeters: number;
   withinGeofence: boolean;
 }
 
-/** A site is watchable only when its centre and radius are usable. */
 function isUsableSite(site: GeoFenceSite | null | undefined): site is GeoFenceSite {
   return !!site && hasFence(site) && typeof site.branch === "string" && site.branch.length > 0;
 }
 
 /**
- * Rank every site nearest-first for a fix. Ordering is deterministic — ties
- * fall back to branch name — because a verdict that flapped between two
- * overlapping fences would keep resetting the dwell.
+ * Rank every site nearest-first for a fix. Uses rounded distance in metres
+ * (`Math.round(distanceMeters) <= site.radiusMeters`) so client and server
+ * agree to the exact metre on every resized geofence radius.
  */
 export function rankSites(
   sites: readonly GeoFenceSite[] | null | undefined,
   latitude: number,
   longitude: number,
-  accuracyMeters?: number | null
+  _accuracyMeters?: number | null
 ): SiteMatch[] {
-  const slack = slackFor(accuracyMeters);
   return (sites ?? [])
     .filter(isUsableSite)
     .map((site) => {
-      const distanceMeters = haversineMeters(latitude, longitude, site.latitude, site.longitude);
+      const rawDistance = haversineMeters(latitude, longitude, site.latitude, site.longitude);
+      const distanceMeters = Math.round(rawDistance);
       return {
         site,
         distanceMeters,
-        withinGeofence: distanceMeters <= site.radiusMeters + slack,
+        withinGeofence: distanceMeters <= site.radiusMeters,
       };
     })
     .sort(
@@ -238,18 +175,10 @@ export function nearestSite(
   return rankSites(sites, latitude, longitude, accuracyMeters)[0] ?? null;
 }
 
-/**
- * Stable region identifier — one region per employee per site.
- *
- * The branch name is the payload: the OS hands it back on every ENTER/EXIT, so
- * a background wake-up can tell which fence it is standing in without a
- * database round-trip. Parsed back by `branchFromRegionIdentifier`.
- */
 export function regionIdentifier(site: GeoFenceSite, employeeId: number): string {
   return `${REGION_PREFIX}${employeeId}:${site.branch}`;
 }
 
-/** Recover the branch from a region id, or null when it isn't one of ours. */
 export function branchFromRegionIdentifier(identifier: string | null | undefined): string | null {
   if (!identifier || !identifier.startsWith(REGION_PREFIX)) return null;
   const rest = identifier.slice(REGION_PREFIX.length);
@@ -260,22 +189,19 @@ export function branchFromRegionIdentifier(identifier: string | null | undefined
 }
 
 /**
- * The sites a signed-in phone should watch (Phase 17).
- *
- * Normally `session.fences` — every registered, mobile-capable, geo-ready site.
- * A session cached by an older build has only its home site, so that is used as
- * the single-site fallback rather than leaving the phone monitoring nothing.
+ * The mobile-enabled sites a signed-in phone watches.
  */
 export function sessionSites(session: {
   fences?: readonly GeoFenceSite[] | null;
   geofence?: GeofenceConfig | null;
 } | null | undefined): GeoFenceSite[] {
   if (!session) return [];
-  const listed = (session.fences ?? []).filter(isUsableSite);
-  if (listed.length > 0) return listed;
+  if (Array.isArray(session.fences)) {
+    return session.fences.filter(isUsableSite);
+  }
 
   const home = session.geofence;
-  if (home && hasFence(home) && home.branch) {
+  if (home && home.method !== "Biometric" && hasFence(home) && home.branch) {
     return [
       {
         id: -1,
@@ -301,7 +227,6 @@ export function formatDistance(meters: number | null): string {
   return m < 1000 ? `${m} m` : `${(m / 1000).toFixed(2)} km`;
 }
 
-/** "2:14" — dwell time remaining, for the status card. */
 export function formatDwellRemaining(
   enteredAt: number | null,
   now: number = Date.now()
