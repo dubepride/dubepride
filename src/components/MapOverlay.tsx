@@ -24,6 +24,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/components/AuthProvider";
 import MapCanvas, { type MapCircle, type MapMarker } from "./MapCanvas";
 import { IconLocate, IconMap, IconX } from "./icons";
 import type { MapOverviewResponse } from "@/lib/types";
@@ -46,6 +48,7 @@ function relative(ms: number): string {
 }
 
 export default function MapOverlay({ hidden = false }: { hidden?: boolean }) {
+  const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [data, setData] = useState<MapOverviewResponse | null>(null);
@@ -252,6 +255,16 @@ export default function MapOverlay({ hidden = false }: { hidden?: boolean }) {
               <p className="bb-map-overlay__meta">
                 {data ? `Updated ${shortStamp(data.generatedAt)} · ${data.punches.length} shown` : ""}
               </p>
+              {can("can_view_live_map") ? (
+                <Link
+                  href="/field-tracker"
+                  onClick={() => setOpen(false)}
+                  className="btn btn--ghost btn--sm"
+                >
+                  <IconLocate className="h-4 w-4" />
+                  Open Field Tracker
+                </Link>
+              ) : null}
             </footer>
 
             {error && data ? (

@@ -1169,6 +1169,79 @@ export interface MapOverviewResponse {
   error?: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Field Tracker — live device map (dedicated can_view_live_map gate)  */
+/* ------------------------------------------------------------------ */
+
+/** Where a device's displayed position came from. */
+export type FieldTrackerSource = "live" | "punch" | "terminal" | "branch";
+
+/** "live" = a fresh phone fix; "stale" = old fix; "last-known" = punch/site. */
+export type FieldTrackerStatus = "live" | "stale" | "last-known";
+
+export interface FieldTrackerSite {
+  id: number;
+  branch: string;
+  method: ClockingMethod;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  /** False for biometric-only sites (drawn, but phones cannot punch there). */
+  mobile: boolean;
+  /** Tracked devices currently inside this fence. */
+  tracked: number;
+  /** Of those, how many are clocked in. */
+  clockedIn: number;
+}
+
+export interface FieldTrackerDevice {
+  employeeId: number;
+  /** The Mine Eazy employee number (`Employees.ERP_User_ID`). */
+  employeeNumber: string;
+  fullName: string;
+  department: string;
+  homeBranch: string;
+  deviceName: string | null;
+  /** Fence the device is standing in, else the last known site (may be null). */
+  branch: string | null;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  source: FieldTrackerSource;
+  status: FieldTrackerStatus;
+  /** When the displayed fix was captured (not when the page rendered). */
+  lastSeenAt: number;
+  clockedIn: boolean;
+  clockedInAt: number | null;
+  direction: PunchDirection | null;
+  insideFence: boolean;
+  /** Distance from the containing (or nearest) fence centre, in metres. */
+  distanceMeters: number | null;
+}
+
+export interface FieldTrackerCounts {
+  tracked: number;
+  clockedIn: number;
+  live: number;
+  stale: number;
+  offsite: number;
+  fences: number;
+}
+
+export interface FieldTrackerResponse {
+  ok: boolean;
+  scope: "org";
+  sites: FieldTrackerSite[];
+  devices: FieldTrackerDevice[];
+  counts: FieldTrackerCounts;
+  /** A fix older than this is drawn as stale (grey). */
+  staleAfterMs: number;
+  /** Presence rows older than this are no longer considered tracked. */
+  presenceWindowMs: number;
+  generatedAt: number;
+  error?: string;
+}
+
 
 
 /* ------------------------------------------------------------------ */

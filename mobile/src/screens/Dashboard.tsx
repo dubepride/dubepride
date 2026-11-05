@@ -321,6 +321,15 @@ export function Dashboard(): React.ReactElement {
             <Text style={styles.infoText}>{geofence.message}</Text>
           </View>
         ) : null}
+
+        <View style={styles.locationNotice}>
+          <Text style={styles.locationNoticeTitle}>📍 LOCATION SHARING ON</Text>
+          <Text style={styles.locationNoticeText}>
+            While you are signed in, this phone sends its latest location to the
+            office Field Tracker so the branch can see who is on site. Sharing
+            stops when you sign out.
+          </Text>
+        </View>
       </Panel>
 
       {/* ── 3. Site Map ───────────────────────────────────────────────── */}
@@ -584,6 +593,26 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.warningSoft,
   },
   infoText: {
+    fontSize: FONT.small,
+    color: COLORS.textMuted,
+    lineHeight: 19,
+  },
+  locationNotice: {
+    marginTop: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.neon,
+    backgroundColor: COLORS.panelDeep,
+  },
+  locationNoticeTitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    color: COLORS.neon,
+    marginBottom: 4,
+  },
+  locationNoticeText: {
     fontSize: FONT.small,
     color: COLORS.textMuted,
     lineHeight: 19,

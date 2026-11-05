@@ -104,6 +104,15 @@ export function Login(): React.ReactElement {
             </Text>
           </View>
 
+          <View style={styles.locationNotice}>
+            <Text style={styles.locationNoticeTitle}>📍 LOCATION SHARING</Text>
+            <Text style={styles.locationNoticeText}>
+              After you sign in, this phone shares its work location with your
+              employer so the office can see who is on site. Sharing runs in the
+              background and stops when you sign out.
+            </Text>
+          </View>
+
           {error ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorTitle}>⚠ Sign-In Rejected</Text>
@@ -208,6 +217,27 @@ const styles = StyleSheet.create({
     fontSize: FONT.small,
     color: COLORS.textMuted,
     marginTop: 2,
+  },
+  locationNotice: {
+    marginTop: SPACING.md,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.neon,
+    backgroundColor: COLORS.panelDeep,
+  },
+  locationNoticeTitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.4,
+    color: COLORS.neon,
+  },
+  locationNoticeText: {
+    fontSize: FONT.small,
+    color: COLORS.textMuted,
+    marginTop: 4,
+    lineHeight: 18,
   },
   submit: {
     marginTop: SPACING.lg,

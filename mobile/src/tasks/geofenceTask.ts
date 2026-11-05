@@ -86,7 +86,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { Platform } from "react-native";
 
-import { sendOrQueue } from "@/lib/api";
+import { reportPresence, sendOrQueue } from "@/lib/api";
 import {
   DWELL_MIN_SAMPLES,
   DWELL_MS,
@@ -263,6 +263,15 @@ if (!IS_WEB && !TaskManager.isTaskDefined(DWELL_TASK)) {
 /** Guards against two overlapping fixes racing into a double punch. */
 let evaluating = false;
 
+/**
+ * Field Tracker heartbeat: the app reports the latest fix while signed in, so
+ * the web map can show where each phone is. Latest-only, so it is throttled
+ * well above the server's 15 s guard; a missed report simply waits for the
+ * next fix. Reporting never blocks or aborts the punch state machine.
+ */
+const PRESENCE_REPORT_MS = 30_000;
+let lastPresenceAt = 0;
+
 async function onFix(fix: Location.LocationObject): Promise<void> {
   if (evaluating) return;
   evaluating = true;
@@ -274,6 +283,27 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
     if (sites.length === 0) return;
 
     const { latitude, longitude, accuracy } = fix.coords;
+
+    // ── Field Tracker heartbeat (signed in, in the background) ────────
+    const now = Date.now();
+    if (now - lastPresenceAt >= PRESENCE_REPORT_MS) {
+      lastPresenceAt = now;
+      const nearest = nearestSite(sites, latitude, longitude);
+      await reportPresence(
+        { apiUrl: session.apiUrl, mobileKey: session.mobileKey },
+        {
+          employeeRef: session.employee.erpUserId,
+          latitude,
+          longitude,
+          accuracyMeters: accuracy,
+          branch: nearest?.site.branch ?? null,
+          timestamp: fix.timestamp ?? now,
+          deviceId: session.deviceId ?? null,
+          deviceName: session.deviceName ?? null,
+        }
+      );
+    }
+
     // The site this fix lands in. The bridge re-derives the same answer and is
     // the final word — but the dwell needs it to know where "here" is, and to
     // notice when the employee has moved to a different branch.
@@ -384,11 +414,11 @@ function locationOptions(speed: "armed" | "relaxed"): Location.LocationTaskOptio
     showsBackgroundLocationIndicator: true,
     activityType: Location.ActivityType.Other,
     foregroundService: {
-      notificationTitle: "BIOBRIDGE clocking is on",
-      notificationBody: "Watching registered sites so you can be clocked in hands-free.",
+      notificationTitle: "Mine Eazy location sharing is on",
+      notificationBody: "Sharing your work location with your employer while you are signed in.",
       notificationColor: COLORS.neon,
       // Keep the service alive when the task is swiped away — otherwise
-      // hands-free clocking would stop exactly when the app isn't open.
+      // location sharing would stop exactly when the app isn't open.
       killServiceOnDestroy: false,
     },
   };
@@ -435,10 +465,10 @@ export async function startGeofenceTracking(
   session: MobileSession | null
 ): Promise<TrackingResult> {
   if (!session) {
-    return { ok: false, reason: "no-employee", message: "Sign in to start hands-free clocking." };
+    return { ok: false, reason: "no-employee", message: "Sign in to start location sharing." };
   }
   // Phase 17 — the phone watches EVERY registered site, not just the
-  // employee's roster branch: an employee may travel, and the punch is judged
+  // employee's roster branch: an employee may travel, and a punch is judged
   // against whichever fence they are physically inside.
   const sites = sessionSites(session);
   if (sites.length === 0) {
@@ -446,7 +476,7 @@ export async function startGeofenceTracking(
       ok: false,
       reason: "no-fence",
       message:
-        "No branch has mobile clocking set up yet — use the manual button or the fingerprint terminal.",
+        "No branch has mobile clocking set up yet — you can still clock in with the button or the fingerprint terminal.",
     };
   }
 
@@ -454,7 +484,7 @@ export async function startGeofenceTracking(
     return {
       ok: false,
       reason: "error",
-      message: "Hands-free clocking runs only on a phone — this browser preview shows the UI only.",
+      message: "Background location sharing runs only on a phone — this browser preview shows the UI only.",
     };
   }
 
@@ -463,7 +493,7 @@ export async function startGeofenceTracking(
       return {
         ok: false,
         reason: "location-off",
-        message: "Turn on Location Services to use hands-free clocking.",
+        message: "Turn on Location Services to share your work location while signed in.",
       };
     }
 
@@ -489,7 +519,7 @@ export async function startGeofenceTracking(
       return {
         ok: false,
         reason: "permission-denied",
-        message: 'Set location access to "Allow all the time" for automatic clocking.',
+        message: 'Set location access to "Allow all the time" to keep sharing your work location in the background.',
       };
     }
 
@@ -523,7 +553,7 @@ export async function startGeofenceTracking(
     return {
       ok: true,
       reason: "active",
-      message: `Watching ${sites.length} registered site${sites.length === 1 ? "" : "s"} — clock in wherever you are.`,
+      message: `Sharing your location while signed in — ${sites.length} registered site${sites.length === 1 ? "" : "s"}.`,
     };
   } catch (err) {
     return {

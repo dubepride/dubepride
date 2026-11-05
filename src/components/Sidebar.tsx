@@ -12,6 +12,7 @@ import {
   IconEye,
   IconFingerprint,
   IconHome,
+  IconLocate,
   IconScan,
   IconSchedule,
   IconSettings,
@@ -51,6 +52,7 @@ const PRIMARY: SidebarItem[] = [
   // Phase 7: every rail item now maps to its own route.
   { label: "Exceptions", href: "/exceptions", icon: <IconAlert />, perm: "can_view_exceptions" },
   { label: "Who's In", href: "/whos-in", icon: <IconEye />, perm: "can_view_whos_in" },
+  { label: "Field Tracker", href: "/field-tracker", icon: <IconLocate />, perm: "can_view_live_map" },
   { label: "Clocking Devices", href: "/clocking-devices", icon: <IconClock />, perm: "can_view_devices" },
 ];
 

@@ -30,7 +30,12 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Mine Eazy uses your location to confirm you are inside your branch's geofence when you clock in or out."
+          "locationWhenInUsePermission": "Mine Eazy uses your location to confirm you are inside your branch's geofence when you clock in or out.",
+          "locationAlwaysAndWhenInUsePermission": "Mine Eazy shares your work location with your employer while you are signed in, so the office can see who is on site. This keeps running in the background until you sign out.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isAndroidMotionActivityEnabled": false
         }
       ]
     ],
@@ -39,7 +44,7 @@
       "apiUrl": "https://dubepride.vercel.app",
       "_comment_mobileKey": "Must match MOBILE_PUNCH_KEY on the server (default: biobridge-mobile).",
       "mobileKey": "biobridge-mobile",
-      "_comment_handsFree": "Auto-clocking is disabled: employee clocks in/out directly via button.",
+      "_comment_handsFree": "Hands-free punching is disabled: the employee clocks in/out with the button. Background location sharing still runs while signed in.",
       "handsFree": false,
       "_comment_cleartext": "RELEASE builds need android:usesCleartextTraffic=\"true\" on <application>."
     }

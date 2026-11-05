@@ -1479,6 +1479,45 @@ select optgroup {
     0 0 0 4px rgba(0, 230, 118, 0.22),
     0 0 16px rgba(0, 230, 118, 0.7);
 }
+.bb-pin--selected {
+  outline: 2px solid #00e676;
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 4px rgba(0, 230, 118, 0.22),
+    0 0 20px rgba(0, 230, 118, 0.8);
+}
+.bb-pin--selected.bb-pin--danger {
+  outline-color: #ff5252;
+}
+.bb-pin--selected.bb-pin--muted {
+  outline-color: #ffffff;
+}
+
+/* Pin tooltip — employee number first, then name/place/freshness. */
+.bb-map-tip {
+  padding: 0.45rem 0.6rem !important;
+  border: 1px solid rgba(0, 230, 118, 0.35) !important;
+  border-radius: 0.5rem !important;
+  background: rgba(10, 10, 14, 0.96) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55) !important;
+}
+.bb-map-tip::before {
+  border-top-color: rgba(0, 230, 118, 0.35) !important;
+}
+.bb-map-tip__title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #00e676;
+}
+.bb-map-tip__line {
+  margin-top: 0.12rem;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: #d7dde6;
+}
 .bb-pin[data-draggable="true"],
 .leaflet-marker-draggable .bb-pin {
   cursor: grab;

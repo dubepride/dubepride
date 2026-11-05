@@ -40,6 +40,7 @@ export type PermissionKey =
   | "can_export_reports"
   | "can_view_exceptions"
   | "can_view_whos_in"
+  | "can_view_live_map"
   | "can_view_devices"
   | "can_config_devices"
   | "can_view_sync"
@@ -78,6 +79,7 @@ export const PERMISSION_KEYS: readonly PermissionKey[] = [
   "can_export_reports",
   "can_view_exceptions",
   "can_view_whos_in",
+  "can_view_live_map",
   "can_view_devices",
   "can_config_devices",
   "can_view_sync",
@@ -134,6 +136,15 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
   {
     module: "Who's In",
     perms: [{ key: "can_view_whos_in", label: "View Who's In" }],
+  },
+  {
+    module: "Field Tracker",
+    perms: [
+      {
+        key: "can_view_live_map",
+        label: "View live device locations on the Field Tracker map",
+      },
+    ],
   },
   {
     module: "Clocking Devices",

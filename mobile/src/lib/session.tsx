@@ -20,8 +20,8 @@ import React, {
 } from "react";
 
 import {
+  clearPresence,
   configuredApiUrl,
-  configuredHandsFree,
   configuredMobileKey,
   fetchMobileFences,
   HttpError,
@@ -80,7 +80,8 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function maybeStartTracking(session: MobileSession): Promise<TrackingResult | null> {
-  if (!configuredHandsFree()) return null;
+  // Always keep the background location stream running while signed in: it
+  // powers the Field Tracker heartbeat. Clocking itself stays manual.
   try {
     return await startGeofenceTracking(session);
   } catch {
@@ -321,7 +322,20 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   }, []);
 
   const signOut = useCallback(async (): Promise<void> => {
+    const current = sessionRef.current;
     await stopGeofenceTracking();
+    if (current) {
+      // Remove this phone from the Field Tracker immediately. Best effort and
+      // bounded: signing out must not hang on a flaky connection.
+      await Promise.race([
+        clearPresence(
+          { apiUrl: current.apiUrl, mobileKey: current.mobileKey },
+          current.employee.erpUserId,
+          current.deviceId ?? null
+        ).catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
+      ]);
+    }
     sessionRef.current = null;
     await writeSession(null);
     setSession(null);
@@ -330,7 +344,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   }, []);
 
   const retryTracking = useCallback(async (): Promise<void> => {
-    if (!session || !configuredHandsFree()) return;
+    if (!session) return;
     setTracking(await startGeofenceTracking(session));
   }, [session]);
 

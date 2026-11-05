@@ -55,6 +55,8 @@ const PUBLIC_PREFIXES = [
   // Phase 16 — companion app sign-in & live geofence sync.
   "/api/mobile/login",
   "/api/mobile/geofences",
+  // Field Tracker — background location heartbeat from the signed-in phone.
+  "/api/mobile/presence",
   // Serverless hosting — the scheduled ERP drain. A platform scheduler (Vercel
   // Cron / cron-job.org) has no session cookie, so this route authenticates
   // itself against the CRON_SECRET instead. See the route header.
@@ -75,6 +77,7 @@ const ROUTE_PERMISSION: ReadonlyArray<readonly [string, PermissionKey]> = [
   ["/timesheets", "can_view_attendance"],
   ["/exceptions", "can_view_exceptions"],
   ["/whos-in", "can_view_whos_in"],
+  ["/field-tracker", "can_view_live_map"],
   ["/clocking-devices", "can_view_devices"],
   ["/terminals", "can_view_devices"],
   ["/sync", "can_view_sync"],

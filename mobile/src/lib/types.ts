@@ -111,6 +111,26 @@ export interface MobileSession {
 }
 
 /* ------------------------------------------------------------------ */
+/* POST /api/mobile/presence — Field Tracker heartbeat                 */
+/* ------------------------------------------------------------------ */
+
+/** Latest location reported by a signed-in phone (no history). */
+export interface PresencePayload {
+  /** ERP_User_ID — the ref the bridge resolves to a roster row. */
+  employeeRef: string;
+  latitude: number;
+  longitude: number;
+  /** Device-reported GPS accuracy in metres. */
+  accuracyMeters?: number | null;
+  /** Display hint only — the server decides fence containment. */
+  branch?: string | null;
+  /** epoch ms of the fix (clamped server-side). */
+  timestamp?: number;
+  deviceId?: string | null;
+  deviceName?: string | null;
+}
+
+/* ------------------------------------------------------------------ */
 /* POST /api/attendance/geopunch                                       */
 /* ------------------------------------------------------------------ */
 

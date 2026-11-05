@@ -41,9 +41,13 @@ export interface MapMarker {
   latitude: number;
   longitude: number;
   label?: string;
+  /** Extra plain-text tooltip lines shown beneath the label. */
+  lines?: string[];
   tone?: MapTone;
   /** When true (and interactive) the pin can be dragged; fires onMarkerDrag. */
   draggable?: boolean;
+  /** Draw a highlight ring (used by the Field Tracker directory). */
+  selected?: boolean;
 }
 
 export interface MapCircle {
@@ -68,6 +72,10 @@ export interface MapCanvasProps {
   focus?: { latitude: number; longitude: number; zoom?: number } | null;
   /** Enables drag-to-position on markers flagged `draggable`. */
   onMarkerDrag?: (id: string, latitude: number, longitude: number) => void;
+  /** Fired when a pin is clicked (e.g. select it in a directory). */
+  onMarkerClick?: (id: string) => void;
+  /** Fired when a fence circle is clicked (e.g. filter to that branch). */
+  onCircleClick?: (id: string) => void;
   /** Enables click-to-position anywhere on the map. */
   onMapClick?: (latitude: number, longitude: number) => void;
   height?: number | string;
@@ -113,7 +121,15 @@ function SchematicMap({
       }),
       ...(markers ?? []).map((m) => {
         const p = project(m.latitude, m.longitude);
-        return { kind: "marker" as const, ...p, r: 0, tone: m.tone ?? "muted", label: m.label ?? "" };
+        return {
+          kind: "marker" as const,
+          ...p,
+          r: 0,
+          tone: m.tone ?? "muted",
+          label: m.label ?? "",
+          lines: m.lines ?? [],
+          selected: Boolean(m.selected),
+        };
       }),
     ];
     const extent = built.reduce((acc, it) => Math.max(acc, Math.abs(it.x) + it.r, Math.abs(it.y) + it.r), 1);
@@ -151,6 +167,17 @@ function SchematicMap({
             />
           ) : (
             <g key={`m${i}`}>
+              <title>{[it.label, ...it.lines].filter(Boolean).join(" — ")}</title>
+              {it.selected ? (
+                <circle
+                  cx={it.x * scale}
+                  cy={it.y * scale}
+                  r={7}
+                  fill="none"
+                  stroke="#00e676"
+                  strokeWidth="1.4"
+                />
+              ) : null}
               <circle
                 cx={it.x * scale}
                 cy={it.y * scale}
@@ -200,6 +227,8 @@ export default function MapCanvas(props: MapCanvasProps) {
     fit = true,
     focus = null,
     onMarkerDrag,
+    onMarkerClick,
+    onCircleClick,
     onMapClick,
     height,
     className = "",
@@ -208,17 +237,24 @@ export default function MapCanvas(props: MapCanvasProps) {
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletNS.Map | null>(null);
-  const layerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const circleLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
+  const markerLayerRef = useRef<LeafletNS.LayerGroup | null>(null);
   const leafletRef = useRef<typeof LeafletNS | null>(null);
+  const markerPoolRef = useRef<Map<string, LeafletNS.Marker>>(new Map());
+  const lastFitKeyRef = useRef<string | null>(null);
   const [tilesFailed, setTilesFailed] = useState(false);
   const [ready, setReady] = useState(false);
 
   // Keep the latest callbacks without forcing the map to rebuild.
   const dragCb = useRef(onMarkerDrag);
   const clickCb = useRef(onMapClick);
+  const markerClickCb = useRef(onMarkerClick);
+  const circleClickCb = useRef(onCircleClick);
   useEffect(() => {
     dragCb.current = onMarkerDrag;
     clickCb.current = onMapClick;
+    markerClickCb.current = onMarkerClick;
+    circleClickCb.current = onCircleClick;
   });
 
   const configured = useMemo(() => isMapConfigured(), []);
@@ -269,7 +305,8 @@ export default function MapCanvas(props: MapCanvasProps) {
         });
       }
 
-      layerRef.current = L.layerGroup().addTo(map);
+      circleLayerRef.current = L.layerGroup().addTo(map);
+      markerLayerRef.current = L.layerGroup().addTo(map);
       setReady(true);
       // Recompute layout once the container has its final size.
       requestAnimationFrame(() => map.invalidateSize());
@@ -279,59 +316,107 @@ export default function MapCanvas(props: MapCanvasProps) {
       cancelled = true;
       mapRef.current?.remove();
       mapRef.current = null;
-      layerRef.current = null;
+      circleLayerRef.current = null;
+      markerLayerRef.current = null;
+      markerPoolRef.current.clear();
+      lastFitKeyRef.current = null;
       setReady(false);
     };
     // Mount once — overlays are handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured]);
 
+  // Fence geometry — NOT live markers — decides the initial viewport, so a
+  // 10-second poll can never yank the user's pan/zoom while they explore.
+  const fitKey = useMemo(
+    () =>
+      circles
+        .map((c) => `${c.id}:${c.latitude.toFixed(6)}:${c.longitude.toFixed(6)}:${c.radiusMeters}`)
+        .join("|"),
+    [circles]
+  );
+
   // ── (Re)draw overlays whenever the data changes ─────────────────────
   useEffect(() => {
     const L = leafletRef.current;
     const map = mapRef.current;
-    const group = layerRef.current;
-    if (!ready || !L || !map || !group) return;
+    const circleGroup = circleLayerRef.current;
+    const markerGroup = markerLayerRef.current;
+    if (!ready || !L || !map || !circleGroup || !markerGroup) return;
 
-    group.clearLayers();
-
+    // Circles are cheap and few — redraw them each time.
+    circleGroup.clearLayers();
     for (const c of circles) {
       const neon = (c.tone ?? "neon") === "neon";
-      L.circle([c.latitude, c.longitude], {
+      const circle = L.circle([c.latitude, c.longitude], {
         radius: c.radiusMeters,
         color: neon ? "#00e676" : "rgba(160,174,192,0.65)",
         weight: neon ? 2 : 1,
         fillColor: neon ? "#00e676" : "#a0aec0",
         fillOpacity: neon ? 0.12 : 0.06,
-      }).addTo(group);
+      });
+      circle.on("click", () => circleClickCb.current?.(c.id));
+      circle.addTo(circleGroup);
     }
 
+    // Markers are pooled by id: a poll updates position/tooltip in place
+    // instead of destroying and recreating every pin (which would close a
+    // hover tooltip mid-read).
+    const seen = new Set<string>();
     for (const m of markers) {
+      seen.add(m.id);
       const tone = m.tone ?? "muted";
+      const selected = m.selected ? " bb-pin--selected" : "";
       const icon = L.divIcon({
         className: "bb-pin-wrap",
-        html: `<span class="bb-pin bb-pin--${tone}" title="${escapeHtml(m.label ?? "")}"></span>`,
+        html: `<span class="bb-pin bb-pin--${tone}${selected}" title="${escapeHtml(m.label ?? "")}"></span>`,
         iconSize: [18, 18],
         iconAnchor: [9, 9],
       });
-      const marker = L.marker([m.latitude, m.longitude], {
-        icon,
-        draggable: Boolean(m.draggable && interactive),
-        keyboard: false,
-      });
-      if (m.label) {
-        marker.bindTooltip(escapeHtml(m.label), { direction: "top", offset: [0, -10] });
-      }
-      if (m.draggable && interactive) {
-        marker.on("dragend", () => {
-          const ll = marker.getLatLng();
-          dragCb.current?.(m.id, ll.lat, ll.lng);
+      const tip = tooltipHtml(m);
+
+      let marker = markerPoolRef.current.get(m.id);
+      if (!marker) {
+        marker = L.marker([m.latitude, m.longitude], {
+          icon,
+          draggable: Boolean(m.draggable && interactive),
+          keyboard: false,
         });
+        if (tip) {
+          marker.bindTooltip(tip, {
+            direction: "top",
+            offset: [0, -10],
+            className: "bb-map-tip",
+            opacity: 1,
+          });
+        }
+        marker.on("click", () => markerClickCb.current?.(m.id));
+        marker.addTo(markerGroup);
+        markerPoolRef.current.set(m.id, marker);
+      } else {
+        marker.setLatLng([m.latitude, m.longitude]);
+        marker.setIcon(icon);
+        if (tip) marker.setTooltipContent(tip);
       }
-      marker.addTo(group);
+
+      if (m.draggable && interactive) {
+        const current = marker;
+        if (!current.listens("dragend")) {
+          current.on("dragend", () => {
+            const ll = current.getLatLng();
+            dragCb.current?.(m.id, ll.lat, ll.lng);
+          });
+        }
+      }
     }
 
-    // Viewport
+    for (const [id, marker] of markerPoolRef.current) {
+      if (seen.has(id)) continue;
+      markerGroup.removeLayer(marker);
+      markerPoolRef.current.delete(id);
+    }
+
+    // Viewport — fit once per fence geometry, not on every poll.
     const bounds: LeafletNS.LatLngExpression[] = [];
     for (const c of circles) {
       // Approximate the circle's bounding box with its cardinal points.
@@ -342,12 +427,16 @@ export default function MapCanvas(props: MapCanvasProps) {
     }
     for (const m of markers) bounds.push([m.latitude, m.longitude]);
 
+    const key = `${fit ? "fit" : "view"}:${fitKey}`;
+    if (lastFitKeyRef.current === key) return;
+    lastFitKeyRef.current = key;
+
     if (fit && bounds.length > 0) {
       map.fitBounds(L.latLngBounds(bounds).pad(0.25), { animate: false });
     } else {
       map.setView([center.latitude, center.longitude], zoom ?? zoomForRadius(circles[0]?.radiusMeters ?? 0));
     }
-  }, [ready, circles, markers, fit, center.latitude, center.longitude, zoom, interactive]);
+  }, [ready, circles, markers, fit, fitKey, center.latitude, center.longitude, zoom, interactive]);
 
   // ── Pan/zoom to an explicit focus point (e.g. "centre on me") ───────
   useEffect(() => {
@@ -381,6 +470,19 @@ export default function MapCanvas(props: MapCanvasProps) {
       ) : null}
     </div>
   );
+}
+
+function tooltipHtml(marker: MapMarker): string {
+  const lines = [marker.label, ...(marker.lines ?? [])].filter(
+    (line): line is string => typeof line === "string" && line.trim() !== ""
+  );
+  if (lines.length === 0) return "";
+  return lines
+    .map(
+      (line, index) =>
+        `<div class="${index === 0 ? "bb-map-tip__title" : "bb-map-tip__line"}">${escapeHtml(line)}</div>`
+    )
+    .join("");
 }
 
 function escapeHtml(value: string): string {

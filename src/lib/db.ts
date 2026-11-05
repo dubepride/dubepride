@@ -79,6 +79,9 @@ import type {
   ExceptionType,
   FeedEntry,
   FeedRow,
+  FieldTrackerCounts,
+  FieldTrackerDevice,
+  FieldTrackerSite,
   MyPortalPunch,
   PermissionKey,
   PermissionsMap,
@@ -195,6 +198,7 @@ async function bootstrap(client: Client): Promise<void> {
   }
   await seedBranches(client);
   await seedAccessLevels(client);
+  await ensureLiveMapPermission(client);
   if (seedDemoData()) await ensureBranchCoverage(client);
   await backfillEmployeeMeta(client);
   await seedSystemAccounts(client);
@@ -336,10 +340,26 @@ async function migrate(db: Client): Promise<void> {
       Value TEXT NOT NULL
     );
 
+    -- Field Tracker: the latest location reported by a signed-in phone.
+    -- Deliberately NOT a history table — one row per employee, overwritten.
+    CREATE TABLE IF NOT EXISTS Employee_Presence (
+      Employee_ID      INTEGER PRIMARY KEY,
+      Latitude         REAL    NOT NULL,
+      Longitude        REAL    NOT NULL,
+      Accuracy_Meters  REAL,
+      Branch_Name      TEXT,
+      Device_ID        TEXT,
+      Device_Name      TEXT,
+      Source           TEXT    NOT NULL DEFAULT 'mobile',
+      Last_Seen        INTEGER NOT NULL,
+      Updated_At       INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_logs_emp  ON Attendance_Logs (Employee_ID, Timestamp);
     CREATE INDEX IF NOT EXISTS idx_logs_sync ON Attendance_Logs (ERP_Sync_Status, Log_ID);
     CREATE INDEX IF NOT EXISTS idx_logs_ts   ON Attendance_Logs (Timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_tor_emp   ON Time_Off_Requests (Employee_ID);
+    CREATE INDEX IF NOT EXISTS idx_presence_seen ON Employee_Presence (Last_Seen DESC);
   `);
 
   // Columns introduced by later phases — upgrade older data files in place.
@@ -914,6 +934,7 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
       "can_export_reports",
       "can_view_exceptions",
       "can_view_whos_in",
+      "can_view_live_map",
       "can_view_devices",
       "can_view_sync",
       "can_view_settings",
@@ -957,6 +978,52 @@ async function seedAccessLevels(db: Client): Promise<void> {
       sql: "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
       args: [lvl.name, serializePermissions(lvl.perms), SEED_CREATED_AT],
     }))
+  );
+}
+
+/**
+ * Field Tracker is gated by a NEW capability (`can_view_live_map`). Existing
+ * databases already hold a serialised permissions JSON without that key, and
+ * `parsePermissions` defaults unknown keys to false — so an already-seeded IT
+ * Administrator would silently lose access to the new page.
+ *
+ * Grant it to the built-in administrator exactly once (App_Meta marker). Other
+ * levels stay untouched: an admin can switch it on per level in Settings →
+ * Access Levels, which is the point of a dedicated permission.
+ */
+const LIVE_MAP_PERMISSION_MARKER = "perm_live_map_v1";
+
+async function ensureLiveMapPermission(db: Client): Promise<void> {
+  const done = await queryOne<{ v: string }>(
+    db,
+    "SELECT Value AS v FROM App_Meta WHERE Key = ?",
+    LIVE_MAP_PERMISSION_MARKER
+  );
+  if (done) return;
+
+  const admin = await queryOne<{ id: number; json: string }>(
+    db,
+    "SELECT Access_Level_ID AS id, Permissions_JSON AS json FROM Access_Levels WHERE Level_Name = ?",
+    "IT Administrator"
+  );
+  if (admin) {
+    const perms = parsePermissions(admin.json);
+    if (!perms.can_view_live_map) {
+      perms.can_view_live_map = true;
+      await run(
+        db,
+        "UPDATE Access_Levels SET Permissions_JSON = ? WHERE Access_Level_ID = ?",
+        serializePermissions(perms),
+        admin.id
+      );
+    }
+  }
+
+  await run(
+    db,
+    "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
+    LIVE_MAP_PERMISSION_MARKER,
+    String(Date.now())
   );
 }
 
@@ -2113,8 +2180,385 @@ export async function listWhoIsIn(): Promise<WhoIsInRow[]> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Employee CRUD (Phase 11 — /employees management)                    */
+/* Field Tracker — latest device positions + live map snapshot         */
 /* ------------------------------------------------------------------ */
+
+/** A phone fix older than this is drawn grey ("stale"). */
+export const PRESENCE_STALE_MS = 5 * 60_000;
+/** Presence rows older than this are no longer shown as tracked devices. */
+export const PRESENCE_WINDOW_MS = 30 * 60_000;
+/** Keep the latest fix, but drop rows for employees gone for a day. */
+const PRESENCE_PURGE_MS = 24 * 60 * 60_000;
+/** Ignore duplicate fixes arriving within this window (battery / spam guard). */
+export const PRESENCE_MIN_INTERVAL_MS = 15_000;
+
+export interface PresenceInput {
+  employeeId: number;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  branchName: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+  timestamp: number;
+}
+
+/**
+ * Store the latest location reported by a signed-in phone. Upsert — there is
+ * deliberately no history. Out-of-order or too-frequent fixes are dropped.
+ */
+export async function upsertEmployeePresence(
+  input: PresenceInput
+): Promise<{ recorded: boolean; reason?: "throttled" }> {
+  const db = await getDb();
+  const existing = await queryOne<{ last: number }>(
+    db,
+    "SELECT Last_Seen AS last FROM Employee_Presence WHERE Employee_ID = ?",
+    input.employeeId
+  );
+  if (existing && input.timestamp <= existing.last + PRESENCE_MIN_INTERVAL_MS) {
+    return { recorded: false, reason: "throttled" };
+  }
+
+  await run(
+    db,
+    `INSERT INTO Employee_Presence
+       (Employee_ID, Latitude, Longitude, Accuracy_Meters, Branch_Name,
+        Device_ID, Device_Name, Source, Last_Seen, Updated_At)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'mobile', ?, ?)
+     ON CONFLICT(Employee_ID) DO UPDATE SET
+       Latitude = excluded.Latitude,
+       Longitude = excluded.Longitude,
+       Accuracy_Meters = excluded.Accuracy_Meters,
+       Branch_Name = excluded.Branch_Name,
+       Device_ID = excluded.Device_ID,
+       Device_Name = excluded.Device_Name,
+       Source = excluded.Source,
+       Last_Seen = excluded.Last_Seen,
+       Updated_At = excluded.Updated_At`,
+    input.employeeId,
+    input.latitude,
+    input.longitude,
+    input.accuracyMeters,
+    input.branchName,
+    input.deviceId,
+    input.deviceName,
+    input.timestamp,
+    Date.now()
+  );
+  return { recorded: true };
+}
+
+/** Remove an employee's row immediately (used on mobile sign-out). */
+export async function clearEmployeePresence(employeeId: number): Promise<void> {
+  await run(await getDb(), "DELETE FROM Employee_Presence WHERE Employee_ID = ?", employeeId);
+}
+
+/** Opportunistic retention sweep — safe to call on every map request. */
+export async function purgeEmployeePresence(now = Date.now()): Promise<void> {
+  await run(
+    await getDb(),
+    "DELETE FROM Employee_Presence WHERE Last_Seen < ?",
+    now - PRESENCE_PURGE_MS
+  );
+}
+
+interface PresenceJoinedRow {
+  Employee_ID: number;
+  Latitude: number;
+  Longitude: number;
+  Accuracy_Meters: number | null;
+  Branch_Name: string | null;
+  Device_ID: string | null;
+  Device_Name: string | null;
+  Source: string;
+  Last_Seen: number;
+  ERP_User_ID: string;
+  Full_Name: string;
+  Department: string;
+  Home_Branch: string | null;
+}
+
+interface LatestPunchJoinedRow {
+  Employee_ID: number;
+  Timestamp: number;
+  Direction: PunchDirection;
+  Verify_Result: VerifyResult;
+  Latitude: number | null;
+  Longitude: number | null;
+  Location_Accuracy_Meters: number | null;
+  Punch_Branch: string | null;
+  Device_Name: string | null;
+  ERP_User_ID: string;
+  Full_Name: string;
+  Department: string;
+  Home_Branch: string | null;
+  Terminal_Branch: string | null;
+  Location_Name: string | null;
+  Terminal_Lat: number | null;
+  Terminal_Lng: number | null;
+}
+
+export interface FieldTrackerSnapshot {
+  sites: FieldTrackerSite[];
+  devices: FieldTrackerDevice[];
+  counts: FieldTrackerCounts;
+  staleAfterMs: number;
+  presenceWindowMs: number;
+}
+
+export interface FieldTrackerFilters {
+  /** Only devices geometrically inside this fence (case-insensitive). */
+  branch?: string | null;
+  /** Free text over employee number and name. */
+  query?: string | null;
+  /** When false (default) only devices inside a fence are returned. */
+  includeOffsite?: boolean;
+  now?: number;
+}
+
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * One read-only snapshot for the Field Tracker: every configured fence plus
+ * every tracked device, with the server — not the phone — deciding which fence
+ * a position falls inside.
+ *
+ * Position priority:
+ *   1. latest phone presence (live ≤ staleAfterMs, otherwise stale),
+ *   2. the latest GPS punch,
+ *   3. the latest terminal's coordinates,
+ *   4. the centre of the employee's known branch.
+ *
+ * Fences are read live from `Branches`/`Terminals`, so an edited radius or pin
+ * is reflected on the very next request.
+ */
+export async function listFieldTracker(
+  filters: FieldTrackerFilters = {}
+): Promise<FieldTrackerSnapshot> {
+  const db = await getDb();
+  const now = filters.now ?? Date.now();
+
+  const sites = (await listConfiguredBranches()).map<FieldTrackerSite>((site) => ({
+    id: site.id,
+    branch: site.branch,
+    method: site.method,
+    latitude: site.latitude,
+    longitude: site.longitude,
+    radiusMeters: site.radiusMeters,
+    mobile: methodAllowsMobile(site.method),
+    tracked: 0,
+    clockedIn: 0,
+  }));
+
+  const presenceRows = await queryAll<PresenceJoinedRow>(
+    db,
+    `SELECT p.Employee_ID, p.Latitude, p.Longitude, p.Accuracy_Meters,
+            p.Branch_Name, p.Device_ID, p.Device_Name, p.Source, p.Last_Seen,
+            e.ERP_User_ID, e.Full_Name, e.Department, e.Branch_Name AS Home_Branch
+       FROM Employee_Presence p
+       JOIN Employees e ON e.Employee_ID = p.Employee_ID
+      WHERE p.Last_Seen >= ?
+        AND e.Status = 'Active'`,
+    now - PRESENCE_WINDOW_MS
+  );
+
+  const punchRows = await queryAll<LatestPunchJoinedRow>(
+    db,
+    `WITH latest AS (
+        SELECT l.*, ROW_NUMBER() OVER (
+                 PARTITION BY l.Employee_ID ORDER BY l.Timestamp DESC, l.Log_ID DESC
+               ) AS rn
+          FROM Attendance_Logs l
+         WHERE l.Employee_ID IS NOT NULL
+           AND l.Timestamp >= ?
+      )
+      SELECT l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result,
+             l.Latitude, l.Longitude, l.Location_Accuracy_Meters,
+             l.Branch_Name AS Punch_Branch, l.Device_Name,
+             e.ERP_User_ID, e.Full_Name, e.Department, e.Branch_Name AS Home_Branch,
+             t.Branch_Name AS Terminal_Branch, t.Location_Name,
+             t.Latitude AS Terminal_Lat, t.Longitude AS Terminal_Lng
+        FROM latest l
+        JOIN Employees e ON e.Employee_ID = l.Employee_ID
+        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
+       WHERE l.rn = 1
+         AND e.Status = 'Active'`,
+    startOfTodayMs(now)
+  );
+
+  const punchByEmployee = new Map(punchRows.map((row) => [row.Employee_ID, row]));
+  const presenceByEmployee = new Map(presenceRows.map((row) => [row.Employee_ID, row]));
+  const employeeIds = new Set<number>([...punchByEmployee.keys(), ...presenceByEmployee.keys()]);
+
+  const siteByName = new Map(sites.map((site) => [site.branch.toLowerCase(), site]));
+
+  const devices: FieldTrackerDevice[] = [];
+  for (const employeeId of employeeIds) {
+    const presence = presenceByEmployee.get(employeeId);
+    const punch = punchByEmployee.get(employeeId);
+
+    const identity = presence ?? punch;
+    if (!identity) continue;
+
+    const homeBranch = (identity.Home_Branch ?? "").trim();
+    const clockedIn = Boolean(
+      punch && punch.Direction === "IN" && punch.Verify_Result === "Verified"
+    );
+
+    // ── Resolve the displayed fix ──────────────────────────────────────
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    let accuracyMeters: number | null = null;
+    let lastSeenAt = 0;
+    let source: FieldTrackerDevice["source"] = "branch";
+    let branchHint: string | null = null;
+
+    if (presence) {
+      latitude = finite(presence.Latitude);
+      longitude = finite(presence.Longitude);
+      accuracyMeters = finite(presence.Accuracy_Meters);
+      lastSeenAt = presence.Last_Seen;
+      source = "live";
+      branchHint = presence.Branch_Name?.trim() || null;
+    } else if (punch) {
+      const pLat = finite(punch.Latitude);
+      const pLng = finite(punch.Longitude);
+      if (pLat !== null && pLng !== null) {
+        latitude = pLat;
+        longitude = pLng;
+        accuracyMeters = finite(punch.Location_Accuracy_Meters);
+        lastSeenAt = punch.Timestamp;
+        source = "punch";
+        branchHint = punch.Punch_Branch?.trim() || null;
+      } else {
+        const tLat = finite(punch.Terminal_Lat);
+        const tLng = finite(punch.Terminal_Lng);
+        if (tLat !== null && tLng !== null) {
+          latitude = tLat;
+          longitude = tLng;
+          lastSeenAt = punch.Timestamp;
+          source = "terminal";
+          branchHint = punch.Terminal_Branch?.trim() || punch.Punch_Branch?.trim() || null;
+        } else {
+          const fallbackBranch =
+            punch.Punch_Branch?.trim() ||
+            punch.Terminal_Branch?.trim() ||
+            homeBranch ||
+            null;
+          const site = fallbackBranch ? siteByName.get(fallbackBranch.toLowerCase()) : undefined;
+          if (site) {
+            latitude = site.latitude;
+            longitude = site.longitude;
+            lastSeenAt = punch.Timestamp;
+            source = "branch";
+            branchHint = site.branch;
+          }
+        }
+      }
+    }
+
+    if (latitude === null || longitude === null) continue;
+
+    // ── Which fence geometrically contains this fix? ──────────────────
+    let containing: FieldTrackerSite | null = null;
+    let containingDistance: number | null = null;
+    for (const site of sites) {
+      const distance = haversineMetersRounded(latitude, longitude, site.latitude, site.longitude);
+      if (distance <= site.radiusMeters) {
+        if (!containing || distance < (containingDistance ?? Infinity)) {
+          containing = site;
+          containingDistance = distance;
+        }
+      }
+    }
+
+    const resolvedBranch = containing?.branch ?? branchHint ?? (homeBranch || null);
+    const knownSite =
+      containing ?? (resolvedBranch ? siteByName.get(resolvedBranch.toLowerCase()) ?? null : null);
+    const distanceMeters = knownSite
+      ? haversineMetersRounded(latitude, longitude, knownSite.latitude, knownSite.longitude)
+      : null;
+
+    const age = Math.max(0, now - lastSeenAt);
+    const status: FieldTrackerDevice["status"] =
+      source === "live" ? (age <= PRESENCE_STALE_MS ? "live" : "stale") : "last-known";
+
+    devices.push({
+      employeeId,
+      employeeNumber: identity.ERP_User_ID,
+      fullName: identity.Full_Name,
+      department: identity.Department ?? "",
+      homeBranch,
+      deviceName: presence?.Device_Name ?? punch?.Device_Name ?? null,
+      branch: resolvedBranch,
+      latitude,
+      longitude,
+      accuracyMeters,
+      source,
+      status,
+      lastSeenAt,
+      clockedIn,
+      clockedInAt: clockedIn && punch ? punch.Timestamp : null,
+      direction: punch?.Direction ?? null,
+      insideFence: Boolean(containing),
+      distanceMeters,
+    });
+  }
+
+  // Compute per-fence counts from every tracked device (before filtering) so
+  // the fence rail keeps its totals while one fence is selected.
+  for (const site of sites) {
+    const inside = devices.filter(
+      (device) => device.insideFence && device.branch?.toLowerCase() === site.branch.toLowerCase()
+    );
+    site.tracked = inside.length;
+    site.clockedIn = inside.filter((device) => device.clockedIn).length;
+  }
+
+  const branchFilter = (filters.branch ?? "").trim().toLowerCase();
+  const text = (filters.query ?? "").trim().toLowerCase();
+  const includeOffsite = filters.includeOffsite === true;
+
+  const visible = devices
+    .filter((device) => {
+      if (!includeOffsite && !device.insideFence) return false;
+      if (branchFilter && device.branch?.toLowerCase() !== branchFilter) return false;
+      if (branchFilter && !device.insideFence) return false;
+      if (
+        text &&
+        !device.employeeNumber.toLowerCase().includes(text) &&
+        !device.fullName.toLowerCase().includes(text)
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .sort(
+      (a, b) =>
+        Number(b.clockedIn) - Number(a.clockedIn) ||
+        a.employeeNumber.localeCompare(b.employeeNumber)
+    );
+
+  const counts: FieldTrackerCounts = {
+    tracked: visible.length,
+    clockedIn: visible.filter((device) => device.clockedIn).length,
+    live: visible.filter((device) => device.status === "live").length,
+    stale: visible.filter((device) => device.status === "stale").length,
+    offsite: visible.filter((device) => !device.insideFence).length,
+    fences: sites.length,
+  };
+
+  return {
+    sites,
+    devices: visible,
+    counts,
+    staleAfterMs: PRESENCE_STALE_MS,
+    presenceWindowMs: PRESENCE_WINDOW_MS,
+  };
+}
 
 export interface EmployeeInput {
   erpUserId: string;

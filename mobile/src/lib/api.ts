@@ -22,6 +22,7 @@ import type {
   MobileEmployee,
   MobileLoginResponse,
   MobileSession,
+  PresencePayload,
 } from "./types";
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +321,86 @@ export async function postGeoPunch(
     return result.body;
   }
   throw new HttpError(result.status, "Unexpected response from the bridge.");
+}
+
+/* ------------------------------------------------------------------ */
+/* POST/DELETE /api/mobile/presence — Field Tracker heartbeat          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Report the latest fix so the web Field Tracker can show this phone.
+ * Latest-position-only: the server overwrites the single row per employee.
+ */
+export async function postPresence(
+  target: PunchTarget,
+  payload: PresencePayload
+): Promise<void> {
+  const hw = await getDeviceIdentity();
+  const deviceId = (payload.deviceId ?? hw.deviceId).trim();
+  const deviceName = (payload.deviceName ?? hw.deviceName).trim();
+
+  const result = await requestJson<{ ok: boolean; error?: string }>(
+    `${target.apiUrl}/api/mobile/presence`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-mobile-key": target.mobileKey,
+        "x-device-id": deviceId,
+        "x-device-name": deviceName,
+      },
+      body: JSON.stringify({
+        employeeRef: payload.employeeRef,
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        accuracyMeters: payload.accuracyMeters ?? null,
+        branch: payload.branch ?? null,
+        timestamp: payload.timestamp,
+        deviceId,
+        deviceName,
+      }),
+    }
+  );
+
+  if (!result.ok || !result.body?.ok) {
+    throw new HttpError(result.status, result.body?.error ?? "Presence report failed.");
+  }
+}
+
+/**
+ * Best-effort presence report for the background fix stream. Never throws:
+ * a missed heartbeat must not interrupt the dwell/punch state machine.
+ */
+export async function reportPresence(
+  target: PunchTarget,
+  payload: PresencePayload
+): Promise<boolean> {
+  try {
+    await postPresence(target, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Drop this employee's presence immediately (called on sign-out). */
+export async function clearPresence(
+  target: PunchTarget,
+  employeeRef: string,
+  deviceId?: string | null
+): Promise<void> {
+  const params = new URLSearchParams({ employeeRef: employeeRef.trim() });
+  if (deviceId?.trim()) params.set("deviceId", deviceId.trim());
+  const result = await requestJson<{ ok: boolean; error?: string }>(
+    `${target.apiUrl}/api/mobile/presence?${params.toString()}`,
+    {
+      method: "DELETE",
+      headers: { "x-mobile-key": target.mobileKey },
+    }
+  );
+  if (!result.ok || !result.body?.ok) {
+    throw new HttpError(result.status, result.body?.error ?? "Could not clear presence.");
+  }
 }
 
 /* ------------------------------------------------------------------ */
