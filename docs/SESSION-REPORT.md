@@ -6,8 +6,8 @@
 | **Repository** | `https://github.com/dubepride/dubepride.git` |
 | **Local path** | `C:\Users\pryd\Documents\Default Project\dubepride` |
 | **Branch** | `master` |
-| **Session dates** | 30 October – 2 November 2026 |
-| **Report date** | 2 November 2026 |
+| **Session dates** | 30 October – 5 November 2026 |
+| **Report date** | 5 November 2026 |
 | **Production URL** | `https://dubepride.vercel.app` |
 | **Local URL** | `http://localhost:3000` |
 
@@ -30,9 +30,11 @@ deployment, and change the administrator login to:
 |---|---|
 | Project runs locally | ✅ Complete |
 | Production build succeeds | ✅ Complete |
-| Unit tests pass | ✅ 15/15 |
+| Unit tests pass | ✅ 32/32 |
 | Admin login changed to `admin@biobridge.com` / `admin` | ✅ Complete |
 | Credentials work on an existing database | ✅ Complete (self-healing seed) |
+| Mobile companion app (employee-number login, manual clocking, offline queue, live geofences) | ✅ Complete |
+| Field Tracker live map with background phone presence | ✅ Complete (APK rebuild pending) |
 | Changes committed and pushed to GitHub | ✅ Complete |
 | Vercel deployment updated automatically | ✅ Complete |
 | Production login verified | ✅ HTTP 200 |
@@ -116,6 +118,62 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 
 ---
 
+### 3.6 Mobile companion app (employee-number login, manual clocking, offline queue)
+
+- **Sign-in** uses the Mine Eazy employee number only (`POST /api/mobile/login`,
+  `x-mobile-key`). A successful sign-in binds this handset to the employee
+  1-to-1; a second phone quoting the same number gets `403 UNAUTHORIZED_DEVICE`
+  ("Wrong Device").
+- **Clocking is manual.** The button is the only punch path; the background
+  geofence engine never punches, and no "auto clock" wording remains in the app.
+- **Live geofences.** `GET /api/mobile/geofences` returns every mobile-capable
+  site with its current coordinates/radius plus the employee's profile and day
+  status, so edits made in the web console are reflected on the phone.
+- **Offline queue.** Punches made without network are queued locally with their
+  original timestamp and flushed automatically once connectivity returns.
+- **Tables/endpoints:** `GET /api/mobile/geofences`, `POST /api/mobile/login`,
+  `POST /api/attendance/geopunch`, `POST/DELETE /api/mobile/presence`.
+
+### 3.7 Field Tracker (Phase 19) — live map of tracked phones
+
+- New page **`/field-tracker`** (`src/components/FieldTracker.tsx`,
+  `FieldTrackerDirectory.tsx`, `src/app/field-tracker/page.tsx`) showing every
+  tracked phone inside the organisation's geofences, with a branch rail that
+  navigates to any site, a searchable employee-number-first directory and a
+  shared `MapCanvas` surface.
+- **Permission:** new capability **`can_view_live_map`** (`src/lib/rbac.ts`),
+  enforced both by `src/proxy.ts` for the page and by
+  `requirePermission("can_view_live_map")` in the API. A one-time migration
+  (`App_Meta` marker `perm_live_map_v1`) grants it to IT Administrator; the HR
+  Manager seed includes it, Sales Manager does not.
+- **API:** `GET /api/field-tracker` → `listFieldTracker()` builds one snapshot:
+  every geo-ready branch (including biometric-only) plus every active employee
+  with a position. Priority: fresh presence → stale presence → latest GPS punch
+  → terminal coordinates → branch centre. Containment is computed **server-side**
+  with Haversine against live `Branches`/`Terminals` geometry; overlaps resolve
+  to the nearest centre. Default scope is devices *inside* a fence.
+- **Presence heartbeat:** `POST/DELETE /api/mobile/presence` writes the
+  **latest position only** to the new `Employee_Presence` table (one row per
+  employee, no history), throttled to one write per 15 s server-side and one
+  report per 30 s on the phone. Rows are treated as stale after 5 minutes,
+  ignored outside a 30-minute window, and purged after 24 hours.
+- **Mobile lifecycle:** background location tracking now starts on sign-in
+  regardless of the `handsFree` flag; sign-out stops tracking and clears the
+  presence row. `app.json` now enables iOS background location, Android
+  background location and the Android foreground service with location-sharing
+  permission copy.
+- **Map behaviour:** employee number is always the first tooltip line;
+  clocked-in is a badge, never a filter; the marker pool updates pins in place
+  and the viewport only re-fits when fence geometry changes, so polling never
+  interrupts the user's pan/zoom.
+- **Verification:** 11 new pure-helper tests (`tests/field-tracker.test.ts`);
+  suite total 32/32. Type-check and production build clean, including
+  `/field-tracker`, `/api/field-tracker` and `/api/mobile/presence`.
+- **Known limitation:** the Android APK must be rebuilt (Android SDK or EAS
+  Build) before the new background-location flags reach devices.
+
+
+
 ## 4. Commits produced
 
 | Commit | Description |
@@ -123,6 +181,8 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 | `b88d39e` | Fix build: disable security-upgrade nudge blocking builds |
 | `aa72cd4` | Change admin login to `admin@biobridge.com` / `admin` |
 | `9ed8611` | Self-heal admin login seed to `admin@biobridge.com` / `admin` |
+| `71d0f3c` | Session report and documentation alignment |
+| `a66d8c2` | Field Tracker live map, `can_view_live_map`, background phone presence |
 
 All commits were pushed to `origin/master`. The repository is in sync with
 GitHub and the working tree is clean.
@@ -133,9 +193,10 @@ GitHub and the working tree is clean.
 
 | Check | Result |
 |---|---|
-| `tsc --noEmit` | Pass |
-| `node --test "tests/*.test.ts"` | 15/15 pass |
-| `next build` | Pass |
+| `tsc --noEmit` (web) | Pass |
+| `tsc --noEmit` (mobile) | Pass |
+| `node --test "tests/*.test.ts"` | 32/32 pass |
+| `next build` | Pass (incl. `/field-tracker`, `/api/field-tracker`, `/api/mobile/presence`) |
 | Local `/login` | HTTP 200 |
 | Local login (`admin@biobridge.com` / `admin`) | HTTP 200 |
 | Local login, blank email + `admin` | HTTP 200 |
@@ -156,6 +217,9 @@ GitHub and the working tree is clean.
 | 4 | ESLint fails on missing `zod/v4/index.cjs` | Identified as dependency issue (not fixed) |
 | 5 | Git push required credentials | Used the stored GitHub credential |
 | 6 | Production login returned 401 after deploy | Added the self-healing admin seed |
+| 7 | `Date.now()` in a client component aborted prerendering `/field-tracker` | Uses the snapshot `generatedAt` (falling back to `0`) instead of render time |
+| 8 | Mixed `??`/`||` broke the TypeScript build | Parenthesised the branch fallback |
+| 9 | Android APK cannot be rebuilt locally (no SDK / EAS) | Deferred; web + JS unchanged and verified, native build required for the new background-location flags |
 
 ---
 
@@ -172,11 +236,15 @@ GitHub and the working tree is clean.
 
 ## 8. Current state
 
-- Local dev server running at `http://localhost:3000`.
+- Local dev server available at `http://localhost:3000`.
 - Production live at `https://dubepride.vercel.app`.
 - Login: `admin@biobridge.com` / `admin`.
+- Field Tracker available to accounts holding `can_view_live_map`
+  (IT Administrator and HR Manager by default).
 - Git `master` in sync with `origin/master`; working tree clean.
-- Type-check, tests and production build all green.
+- Type-check (web + mobile), tests (32/32) and production build all green.
+- **Outstanding:** rebuild the Android APK (Android SDK or EAS Build) so the
+  new background-location configuration in `mobile/app.json` reaches devices.
 
 ### Operational commands
 

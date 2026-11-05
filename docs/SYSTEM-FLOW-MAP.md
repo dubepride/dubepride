@@ -133,8 +133,9 @@ Entry points: roster row / search result / drawer "View Timesheet" (see above). 
 
 | Source | Target |
 |---|---|
-| Sidebar | `/`, `/#exceptions`, `/#whos-in`, `/terminals`, `/sync` (+ 4 SOON stubs) |
+| Sidebar | `/`, `/#exceptions`, `/#whos-in`, `/whos-in`, `/field-tracker`, `/terminals`, `/sync` (+ 4 SOON stubs) |
 | Nav | `/` (brand), `/login` (after Sign Out) |
+| MapOverlay footer ("Open Field Tracker", gated by `can_view_live_map`) | `/field-tracker` |
 | LoginForm | `/?welcome=1` (on success) |
 | EmployeeStatusCard roster row / search result | `/employees/{id}` |
 | ExceptionDrawer "View Timesheet" | `/employees/{id}` |
@@ -355,6 +356,9 @@ Full lifecycle of one fingerprint scan, e.g. `ERP-1001 (Amara Okafor)` badge at 
 | `SyncConsole` (`/sync`) | `GET /api/erp/sync` (+ `refresh()` after Force Sync) | **4 000 ms** |
 | `EmployeeStatusCard` search | `GET /api/employees/search?q=` | 250 ms debounce |
 | `EmployeeProfile` | `GET /api/employees/{id}` | mount + manual refresh |
+| `WhosIn` (`/whos-in`) | `GET /api/whos-in` | **5 000 ms** |
+| `FieldTracker` (`/field-tracker`) | `GET /api/field-tracker` | **10 000 ms** |
+| `MapOverlay` (floating map) | `GET /api/map/overview` | on open |
 
 So a punch pushed in Step 1 is visible in the Live Feed within ~2.5 s, and its terminal's `Last_Ping` keeps the device Online in the pulse panel.
 
@@ -401,6 +405,52 @@ So a punch pushed in Step 1 is visible in the Live Feed within ~2.5 s, and its t
 ```
 
 **Configuration surface (env):** `SESSION_SECRET`, `ERP_API_URL`, `ERP_API_KEY`, `ERP_MOCK_MODE`, `ERP_MOCK_FAIL_EVERY` (default 5), `SIMULATOR_ENABLED`, `SIMULATOR_MIN_MS`/`SIMULATOR_MAX_MS`.
+
+---
+
+## 5. Field Tracker — live phone locations inside the fences (Phase 19)
+
+### 5.1 The page — `/field-tracker`
+
+**Files:** `src/app/field-tracker/page.tsx` → `src/components/FieldTracker.tsx` (client, polls `GET /api/field-tracker` every **10 s** via `usePoll`), `FieldTrackerDirectory.tsx`, and the shared `MapCanvas.tsx`.
+
+- **Access:** dedicated capability **`can_view_live_map`** (`src/lib/rbac.ts`). The proxy gates `/field-tracker` on it (`src/proxy.ts`) *and* the route handler calls `requirePermission("can_view_live_map")`, so the API also answers **403** for a valid session without the capability. The MapOverlay footer link ("Open Field Tracker") is hidden without it.
+- **Branch rail:** every geo-ready branch from `listConfiguredBranches()` — including biometric-only sites (grey ring, `mobile:false`), so people who never clock on a phone still appear at their site. Clicking a branch filters the dots and pans/zooms the map; clicking again clears the filter.
+- **Map:** `MapCanvas` draws one circle per fence (green = accepts mobile clocking, grey = biometric-only) plus one dot per tracked phone. Hovering a dot shows a structured tooltip whose **first line is always the Mine Eazy employee number**, followed by name, place/freshness, clocked-in state and GPS accuracy. Clicking a dot selects it (highlight ring + selection strip); clicking a circle toggles that branch filter. The map redraws overlays in place (marker pool keyed by employee) and only re-fits the viewport when fence **geometry** changes, so a 10 s poll never yanks the user's pan/zoom.
+- **Directory:** employee-number-first rows with `In`/`Out`, `Live`/`Stale`/`Last known`, site, department, device, distance from the fence centre and freshness. Clocked-in sorts first. Clicking a row spotlights its dot; `Open` jumps to `/employees/{id}`.
+- **Counts:** tracked / live / stale / fences; search filters by employee number, name or department (client-side).
+- **No indicator filter:** clocked-in is an attribute (chip) only — the map shows **any** tracked phone inside the selected fence.
+
+### 5.2 The data — `GET /api/field-tracker`
+
+**Handler:** `src/app/api/field-tracker/route.ts` → `listFieldTracker()` + `purgeEmployeePresence()` in `src/lib/db.ts`. Read-only, `Cache-Control: no-store`. Query params: `branch=`, `q=`, `includeOffsite=1`.
+
+Position priority per employee (server-derived, never client-reported):
+
+1. **`Employee_Presence`** — the latest background heartbeat (`live` if seen ≤ `PRESENCE_STALE_MS` = 5 min, otherwise `stale`);
+2. the **latest GPS punch** today (`Attendance_Logs.Latitude/Longitude`);
+3. the **terminal coordinates** of that punch (biometric-only staff);
+4. the **centre of the employee's branch** (`Employees.Branch_Name` → `Branches`).
+
+Fence containment is computed **server-side** with Haversine against the live `Branches`/`Terminals` geometry, so an edited radius or moved pin is reflected on the very next request. Overlapping fences resolve to the nearest centre. Only rows with `Last_Seen` inside `PRESENCE_WINDOW_MS` (**30 min**) and `Employees.Status = 'Active'` are considered; by default only devices *inside* a fence are returned. "Clocked in" = the latest punch today is `IN` + `Verified` (same rule as Who's In). Retention: rows older than **24 h** are purged opportunistically by the route.
+
+### 5.3 The heartbeat — `POST/DELETE /api/mobile/presence`
+
+**Handler:** `src/app/api/mobile/presence/route.ts`; public prefix in `src/proxy.ts`, authenticated by the shared **`x-mobile-key`** secret (same as the other mobile endpoints).
+
+- `POST { employeeRef, latitude, longitude, accuracyMeters?, branch?, timestamp?, deviceId?, deviceName? }` → `upsertEmployeePresence()` writes **one row per employee** (latest-position-only, **no movement history**). The reported `branch` is a **display hint only** — containment is re-derived from the coordinates. Future timestamps are clamped to now; fixes older than the 30 min window are ignored (`{ ok:true, recorded:false, reason:"stale" }`). The server throttles to one write per **15 s** per employee.
+- `DELETE { employeeRef, deviceId? }` (or query string) → `clearEmployeePresence()`; the app calls this on sign-out (bounded to 4 s so a flaky network cannot hang the sign-out).
+- Device binding is enforced: a phone bound to another employee's handset gets **403 `UNAUTHORIZED_DEVICE`** (same "Wrong Device" rule as the punch endpoint).
+
+### 5.4 Mobile behaviour (`mobile/`)
+
+- `src/lib/api.ts` — `postPresence()`, best-effort `reportPresence()` (never throws, so the dwell state machine is never interrupted) and `clearPresence()`.
+- `src/tasks/geofenceTask.ts` — `onFix()` reports at most every **30 s** while a session exists, *before* the (now disabled) auto-punch evaluation. **Manual clock in/out remains the only punch path**; the background stream exists for presence.
+- `src/lib/session.tsx` — tracking now starts on sign-in/restore **regardless of `handsFree`** (`maybeStartTracking` no longer gates on it), and sign-out stops the task + clears presence.
+- `app.json` — `expo-location` plugin enabled with iOS background location, Android background location and the Android foreground service; permission copy describes **location sharing while signed in**, not automatic clocking.
+- `Login.tsx` / `Dashboard.tsx` — visible "location sharing" notices so staff know the phone reports while signed in.
+
+> **Rebuild required:** the background-location configuration lives in `app.json`, so a new Android/iOS build (SDK or EAS Build) is needed before these flags take effect on devices.
 
 ---
 
