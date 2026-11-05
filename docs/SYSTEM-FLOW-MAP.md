@@ -50,7 +50,7 @@ Next 16's `proxy.ts` (middleware successor) runs before every route:
 | Dashboard | `/` | Client navigation to dashboard (active state: exact `/` match) |
 | My Portal | — | **Inert `<span>` "SOON" chip** — [Pending Implementation] |
 | Employees | — | **Inert `<span>` "SOON" chip** — [Pending Implementation] (no `/employees` index page exists) |
-| Reports | — | **Inert `<span>` "SOON" chip** — [Pending Implementation] |
+| Reports | `/reports` | Client navigation to Reports & Analytics (live `/api/reports` aggregate) |
 | Exceptions | `/#exceptions` | Navigates to dashboard and scrolls to the Exceptions widget (`id="exceptions"` in `ExceptionsCard.tsx`) |
 | Timesheets | — | **Inert `<span>` "SOON" chip** — [Pending Implementation] (timesheets only reachable per-employee) |
 | Who's In | `/#whos-in` | Navigates to dashboard and scrolls to Employee Status (`id="whos-in"` in `EmployeeStatusCard.tsx`) |
@@ -144,7 +144,7 @@ Entry points: roster row / search result / drawer "View Timesheet" (see above). 
 | SyncMini footer | `/sync` |
 | WelcomeToast | `history.replaceState` (query scrub, not a navigation) |
 
-**Pending Implementation (routes/pages referenced or implied but absent):** `/employees` (list page — sidebar *Employees* is a SOON stub), *My Portal*, *Reports*, *Timesheets* (dedicated page), terminal mutate actions on `/terminals`, persisted Time-Off approvals, OvertimeCard row deep-links. In-code "WIRE HERE LATER" hooks also exist in `src/app/api/biometrics/push/route.ts` (Userinfo/template sync, device command queue on handshake).
+**Pending Implementation (routes/pages referenced or implied but absent):** `/employees` (list page — sidebar *Employees* is a SOON stub), *My Portal*, *Timesheets* (dedicated page), terminal mutate actions on `/terminals`, persisted Time-Off approvals, OvertimeCard row deep-links. In-code "WIRE HERE LATER" hooks also exist in `src/app/api/biometrics/push/route.ts` (Userinfo/template sync, device command queue on handshake).
 
 ---
 

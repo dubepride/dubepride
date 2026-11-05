@@ -37,6 +37,7 @@ deployment, and change the administrator login to:
 | Field Tracker live map with background phone presence | ✅ Complete |
 | App icon, splash, web favicon and sidebar mark | ✅ Complete (brand v1.2.0) |
 | Branded cold-start opening animation | ✅ Complete (brand v1.2.0) |
+| Reports & Analytics on live database data | ✅ Complete |
 | Android release APK rebuilt and verified | ✅ v1.2.0 (versionCode 3) |
 | Changes committed and pushed to GitHub | ✅ Complete |
 | Vercel deployment updated automatically | ✅ Complete |
@@ -206,6 +207,38 @@ and `docs/SYSTEM-FLOW-MAP.md`.
   presence permissions. The bundle contains the intro strings and the
   `drawable-mdpi/assets_icon.png` used by the overlay.
 
+### 3.9 Reports & Analytics on live data
+
+- **Problem:** `/reports` still rendered `src/lib/mock-reports.ts` — a fixed
+  October 2026 trend series, five branch totals and twelve fabricated events —
+  while only the four quick-stat tiles came from `/api/dashboard`.
+- **Server aggregate:** `getReports(days)` in `src/lib/db.ts` reads
+  `Attendance_Logs` (verified punches only), `Employees`, `Terminals` and
+  `Shifts` for a rolling 1–31 day window (default 7) and returns:
+  trends per calendar day (arrived early/late, left early/late, missing punch,
+  no-show), exception totals per branch, the most recent 250 events, every
+  employee-day attendance row (for the exports) and headline KPIs.
+- **Baselines** come from each employee's own shift (`Start_Time`/`End_Time`/
+  `Days`) with an 08:00–17:00 Mon–Fri fallback, so a night-shift arrival is no
+  longer scored as late by nine hours. Departures keep the widget's one-hour
+  grace window (`end → end + 60 min`). Branch priority is punch branch →
+  terminal branch → employee branch → "Unassigned".
+- **No-shows** are scheduled employee-days with no verified punch. Today only
+  starts counting once the shift begins, employees are never counted before
+  `Created_At`, and inactive employees are skipped.
+- **API:** `GET /api/reports?days=7` (`requireAdmin`, `Cache-Control:
+  no-store`) returns the `ReportsResponse` typed payload.
+- **UI:** `ReportsDashboard.tsx` now polls `/api/reports` every 60 s (quick
+  stats continue on `/api/dashboard` every 10 s). Charts, the recent-events
+  table and all four CSV exports are built from the live payload; loading,
+  refresh-error and empty states were added, and `src/lib/mock-reports.ts` was
+  deleted.
+- **Verification:** local login → `/api/reports` HTTP 200 with 7 trends,
+  1 branch, 3 events and 3 attendance rows from the real database; `/reports`
+  rendered those values with no console errors, and the attendance CSV
+  downloaded with the same rows. Web type-check, 32/32 tests and
+  `next build` (including `/api/reports`) are clean.
+
 
 
 ## 4. Commits produced
@@ -219,6 +252,9 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 | `a66d8c2` | Field Tracker live map, `can_view_live_map`, background phone presence |
 | `00c37fa` | Mobile version bump to 1.1.0 for the Field Tracker build |
 | `09382a0` | Pin-bridge brand icon, web favicons, sidebar mark and opening animation |
+| `3497c3b` | Session report and system-flow docs for brand v1.2.0 |
+| `34a43d3` | Opening tagline reduced to `TIME & ATTENDANCE` |
+| `6fa6b32` | Reports & Analytics moved from mock data to live `/api/reports` |
 
 All commits were pushed to `origin/master`. The repository is in sync with
 GitHub and the working tree is clean.
@@ -232,7 +268,10 @@ GitHub and the working tree is clean.
 | `tsc --noEmit` (web) | Pass |
 | `tsc --noEmit` (mobile) | Pass |
 | `node --test "tests/*.test.ts"` | 32/32 pass |
-| `next build` | Pass (incl. `/field-tracker`, `/api/field-tracker`, `/api/mobile/presence`, `/icon.svg`, `/apple-icon.png`) |
+| `next build` | Pass (incl. `/reports`, `/api/reports`, `/field-tracker`, `/api/field-tracker`, `/api/mobile/presence`, `/icon.svg`, `/apple-icon.png`) |
+| `/api/reports` (local, signed in) | HTTP 200 · 7 trends · 1 branch · 3 events · 3 attendance rows |
+| `/reports` live render | No console errors; KPIs, charts, table and CSV match the API |
+| Attendance CSV download | `biobridge-attendance-report-2026-11-05.csv` with live rows |
 | Android release `assembleRelease` | BUILD SUCCESSFUL in 4m 51s |
 | APK badging | `com.mineeazy.mobileclocking` · versionCode 3 · versionName 1.2.0 |
 | APK permissions | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, location foreground service |
@@ -282,6 +321,8 @@ GitHub and the working tree is clean.
 - Login: `admin@biobridge.com` / `admin`.
 - Field Tracker available to accounts holding `can_view_live_map`
   (IT Administrator and HR Manager by default).
+- Reports & Analytics (`/reports`) now uses the live `/api/reports` aggregate;
+  no mock report data remains in the repository.
 - Git `master` in sync with `origin/master`; working tree clean.
 - Type-check (web + mobile), tests (32/32) and production build all green.
 - Mobile release **v1.2.0** (versionCode 3) rebuilt with the pin-bridge icon,
