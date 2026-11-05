@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  api.ts — the app's door to the Mine Eazy bridge
+ *  api.ts — the app's door to the BioBridge server
  * ============================================================================
  *
  *  Endpoints used:

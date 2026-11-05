@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  index.ts — entry point of the Mine Eazy Mobile app
+ *  index.ts — entry point of the BioBridge Mobile app
  * ============================================================================
  */
 

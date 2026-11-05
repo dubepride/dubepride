@@ -3,7 +3,7 @@
 /**
  * FieldTrackerDirectory — the roster half of the Field Tracker page.
  *
- * Every tracked phone inside a fence appears here with its Mine Eazy employee
+ * Every tracked phone inside a fence appears here with its BioBridge employee
  * number FIRST (matches the map hover tooltip), then name, site, freshness and
  * clocked-in state. Clicking a row selects the pin on the map; the small
  * "Open" affordance jumps to the employee's timesheet.

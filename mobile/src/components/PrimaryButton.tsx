@@ -10,7 +10,7 @@ import {
 
 import { COLORS, FONT, GLOW, RADIUS, SPACING } from "@/theme";
 
-export type ButtonVariant = "neon" | "ghost" | "danger";
+export type ButtonVariant = "neon" | "soft" | "ghost" | "danger";
 
 export interface PrimaryButtonProps {
   label: string;
@@ -22,8 +22,9 @@ export interface PrimaryButtonProps {
 }
 
 /**
- * The one button style in the app. `neon` is the call to action (Authenticate,
- * Sync Now, Clock In / Out); `ghost` is a secondary action; `danger` is sign-out.
+ * The one button style in the app. `neon` is the filled call to action
+ * (Clock In / Out); `soft` is the translucent outline used on the sign-in
+ * screen; `ghost` is a quiet secondary action; `danger` is sign-out.
  */
 export function PrimaryButton({
   label,
@@ -34,6 +35,7 @@ export function PrimaryButton({
   style,
 }: PrimaryButtonProps): React.ReactElement {
   const inert = disabled || loading;
+  const filled = variant === "neon";
 
   return (
     <Pressable
@@ -45,6 +47,7 @@ export function PrimaryButton({
         styles.base,
         variant === "neon" && styles.neon,
         variant === "neon" && !inert && GLOW,
+        variant === "soft" && styles.soft,
         variant === "ghost" && styles.ghost,
         variant === "danger" && styles.danger,
         inert && styles.disabled,
@@ -53,15 +56,13 @@ export function PrimaryButton({
       ]}
     >
       {loading ? (
-        <ActivityIndicator
-          color={variant === "neon" ? COLORS.background : COLORS.neon}
-          size="small"
-        />
+        <ActivityIndicator color={filled ? COLORS.background : COLORS.neon} size="small" />
       ) : (
         <Text
           style={[
             styles.label,
-            variant === "neon" ? styles.labelOnNeon : styles.labelOnPanel,
+            filled ? styles.labelOnNeon : styles.labelOnPanel,
+            variant === "danger" && styles.labelDanger,
           ]}
         >
           {label}
@@ -85,13 +86,17 @@ const styles = StyleSheet.create({
   neon: {
     backgroundColor: COLORS.neon,
   },
+  soft: {
+    backgroundColor: COLORS.neonSoft,
+    borderColor: COLORS.neonBorder,
+  },
   ghost: {
     backgroundColor: "transparent",
     borderColor: COLORS.border,
   },
   danger: {
     backgroundColor: "transparent",
-    borderColor: COLORS.danger,
+    borderColor: "rgba(255, 92, 92, 0.45)",
   },
   disabled: {
     opacity: 0.45,
@@ -102,12 +107,15 @@ const styles = StyleSheet.create({
   label: {
     fontSize: FONT.body,
     fontWeight: "700",
-    letterSpacing: 1,
+    letterSpacing: 1.2,
   },
   labelOnNeon: {
     color: COLORS.background,
   },
   labelOnPanel: {
     color: COLORS.neon,
+  },
+  labelDanger: {
+    color: COLORS.danger,
   },
 });

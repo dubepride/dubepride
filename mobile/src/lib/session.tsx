@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  session.tsx — the authenticated session for Mine Eazy Mobile
+ *  session.tsx — the authenticated session for BioBridge Mobile
  * ============================================================================
  *
  *  Manages employee-number login, offline session caching, and live background

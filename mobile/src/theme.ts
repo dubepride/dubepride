@@ -7,8 +7,9 @@
  *  provider): the palette is fixed and small, and keeping it as plain objects
  *  means background-task code can import it without pulling in React.
  *
- *  The four required anchors match the Next.js dashboard exactly:
- *    background #0a0a0a  ·  panel #2d1b4e  ·  text #ffffff  ·  accent #00e676
+ *  The palette follows the opening screen: near-black canvas, quiet charcoal
+ *  surfaces, soft hairlines, and a single neon-green accent. There is no
+ *  purple in the product chrome — the brand is BIOBRIDGE, full stop.
  */
 
 import type { TextStyle, ViewStyle } from "react-native";
@@ -16,29 +17,33 @@ import type { TextStyle, ViewStyle } from "react-native";
 export const COLORS = {
   /** Pitch black page background. */
   background: "#0a0a0a",
-  /** Deep purple panel surface. */
-  panel: "#2d1b4e",
-  /** Recessed panel (inputs, nested cards) — one step deeper than `panel`. */
-  panelDeep: "#1d1233",
-  /** Hairline border around panels. */
-  border: "#452f6b",
+  /** Raised card surface — one step above the canvas. */
+  panel: "#121218",
+  /** Recessed surface (inputs, nested cards) — one step below `panel`. */
+  panelDeep: "#0d0d12",
+  /** Hairline border around panels and inputs. */
+  border: "#2b2b38",
+  /** Even quieter divider used inside cards. */
+  borderSoft: "rgba(255, 255, 255, 0.06)",
   /** Neon green accent — buttons, active states, focus rings. */
   neon: "#00e676",
-  /** 18% neon, for chips/pills that shouldn't shout. */
-  neonSoft: "rgba(0, 230, 118, 0.16)",
-  white: "#ffffff",
-  /** Secondary body copy on purple panels. */
-  textMuted: "#c9bce4",
+  /** 14% neon, for chips/pills that shouldn't shout. */
+  neonSoft: "rgba(0, 230, 118, 0.14)",
+  /** 45% neon, for outlined neon controls. */
+  neonBorder: "rgba(0, 230, 118, 0.45)",
+  white: "#f4f4f7",
+  /** Secondary body copy. */
+  textMuted: "#b9b3c6",
   /** Tertiary / caption copy. */
-  textFaint: "#9086ad",
-  /** "Searching…" idle grey. */
-  idle: "#7b7b8f",
-  danger: "#ff5252",
-  dangerSoft: "rgba(255, 82, 82, 0.16)",
+  textFaint: "#7d748f",
+  /** "Locating…" idle grey. */
+  idle: "#6e6781",
+  danger: "#ff5c5c",
+  dangerSoft: "rgba(255, 92, 92, 0.12)",
   warning: "#ffb300",
-  warningSoft: "rgba(255, 179, 0, 0.16)",
+  warningSoft: "rgba(255, 179, 0, 0.12)",
   black: "#000000",
-  /** Accent for labels/badges. */
+  /** Accent used by the map chrome. */
   accent: "#7c3aed",
 } as const;
 
@@ -53,9 +58,9 @@ export const SPACING = {
 } as const;
 
 export const RADIUS = {
-  sm: 8,
-  md: 12,
-  lg: 18,
+  sm: 10,
+  md: 14,
+  lg: 20,
   pill: 999,
 } as const;
 
@@ -69,13 +74,13 @@ export const FONT = {
   display: 30,
 } as const;
 
-/** Neon glow used on the primary button + active chip dot (iOS shadow / Android elevation). */
+/** Neon glow used on the primary button + active chip dot. */
 export const GLOW: ViewStyle = {
   shadowColor: COLORS.neon,
-  shadowOpacity: 0.45,
-  shadowRadius: 12,
+  shadowOpacity: 0.32,
+  shadowRadius: 14,
   shadowOffset: { width: 0, height: 0 },
-  elevation: 6,
+  elevation: 4,
 };
 
 export const TEXT = {
@@ -86,9 +91,9 @@ export const TEXT = {
   body: { fontSize: FONT.body, color: COLORS.textMuted } as TextStyle,
   /** All-caps field label above an input. */
   label: {
-    fontSize: FONT.caption,
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 1.2,
+    letterSpacing: 1.4,
     textTransform: "uppercase",
     color: COLORS.textFaint,
   } as TextStyle,

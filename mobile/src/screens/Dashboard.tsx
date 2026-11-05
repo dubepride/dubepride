@@ -1,26 +1,24 @@
 /**
  * ============================================================================
- *  Dashboard.tsx — Mine Eazy Mobile Attendance
+ *  Dashboard.tsx — BioBridge Mobile Attendance
  * ============================================================================
  *
  *  The employee screen:
- *   1. Primary Action: Clock In / Clock Out. The worker clocks in/out themselves
- *      by pressing the button. There is no auto-clock.
- *   2. Live Geofence & Profile Monitoring: Polls every 4s and on app resume so
- *      all geofence edits (resizing geofence radius, moving coordinates,
- *      changing clocking methods) and employee/branch edits done on the web app
- *      accurately reflect on the mobile app in real time.
- *   3. Site Map: Visualizes authorized site fences with live radii and
- *      the worker's GPS fix.
- *   4. Offline Queue & Automatic Sync: When punches occur while offline, they
- *      are saved locally. The app auto-detects internet connectivity and
- *      automatically syncs with the main system — the user never manually syncs.
+ *   1. Primary action: Clock In / Clock Out. The worker clocks in/out
+ *      themselves by pressing the button. There is no auto-clock.
+ *   2. Live geofence & profile monitoring: polls every 4s and on app resume so
+ *      geofence edits (radius, coordinates, clocking methods) and employee or
+ *      branch edits made on the web app reflect on the phone in real time.
+ *   3. Site map: authorised site fences with live radii and the worker's fix.
+ *   4. Offline queue & automatic sync: punches recorded offline are stored
+ *      locally and uploaded automatically when internet returns.
  */
 
 import * as Location from "expo-location";
 import React, { useEffect, useState } from "react";
 import {
   AppState,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -38,6 +36,8 @@ import { formatDistance, sessionSites } from "@/lib/geo";
 import { useAuth } from "@/lib/session";
 import type { GeoPunchPayload } from "@/lib/types";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
+
+import LOGO from "../../assets/icon.png";
 
 /** "14:07" format */
 function timeLabel(timestamp: number): string {
@@ -70,7 +70,8 @@ export function Dashboard(): React.ReactElement {
   const [clockMessage, setClockMessage] = useState<string | null>(null);
   const [clockError, setClockError] = useState<string | null>(null);
 
-  // Live 4s sync with server so web console geofence radius edits and employee/branch edits reflect immediately
+  // Live 4s sync with the server so web-console geofence and employee edits
+  // reflect immediately.
   useEffect(() => {
     void refreshFences();
 
@@ -93,11 +94,13 @@ export function Dashboard(): React.ReactElement {
   const { employee, dayStatus } = session;
   const homeSite = employee.branch || "Unassigned";
   const homeRadius =
-    session.geofence?.radiusMeters ??
-    sitesRadiusForBranch(session.fences, homeSite);
+    session.geofence?.radiusMeters ?? sitesRadiusForBranch(session.fences, homeSite);
   const sites = sessionSites(session);
   const displayedRadius =
     geofence.radiusMeters ?? homeRadius ?? sites[0]?.radiusMeters ?? null;
+  const onSite = geofence.inside;
+  const hasFix = geofence.hasFix;
+  const noFence = sites.length === 0;
 
   const handleClock = async (): Promise<void> => {
     if (clockBusy) return;
@@ -124,13 +127,15 @@ export function Dashboard(): React.ReactElement {
 
       const dispatch = await sendOrQueue(session, payload);
       if (dispatch.queued) {
-        setClockMessage("Punch recorded offline — will automatically sync to main system when internet connects.");
+        setClockMessage("Punch recorded offline — it will sync automatically when internet returns.");
         void queue.triggerAutoSync();
       } else if (dispatch.response?.ok) {
         setClockMessage(dispatch.response.message ?? "Punch recorded successfully.");
         void refreshFences();
       } else {
-        setClockError(dispatch.response?.message ?? "Punch rejected outside authorized geofence.");
+        setClockError(
+          dispatch.response?.message ?? "Punch rejected outside the authorised geofence."
+        );
       }
     } catch (err) {
       setClockError(err instanceof Error ? err.message : "Could not complete punch.");
@@ -146,74 +151,114 @@ export function Dashboard(): React.ReactElement {
       contentContainerStyle={styles.scroll}
       keyboardShouldPersistTaps="handled"
     >
-      {/* ── Employee Identity ─────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.hello}>{employee.fullName}</Text>
-          <Text style={styles.subHello}>
-            Emp ID: {employee.erpUserId}
-            {employee.department ? ` · ${employee.department}` : ""} · Site: {homeSite}
-            {session.offline ? " · offline session" : ""}
+      {/* ── Brand bar ───────────────────────────────────────────────── */}
+      <View style={styles.topBar}>
+        <Image source={LOGO} style={styles.topLogo} resizeMode="cover" />
+        <View style={styles.topBrandBlock}>
+          <Text style={styles.topBrand}>BIOBRIDGE</Text>
+          <Text style={styles.topTagline}>TIME &amp; ATTENDANCE</Text>
+        </View>
+        <View style={[styles.livePill, onSite ? styles.livePillOn : styles.livePillOff]}>
+          <View
+            style={[
+              styles.liveDot,
+              onSite
+                ? styles.liveDotOn
+                : hasFix && !noFence
+                  ? styles.liveDotWarn
+                  : styles.liveDotIdle,
+            ]}
+          />
+          <Text
+            style={[
+              styles.liveLabel,
+              onSite
+                ? styles.liveLabelOn
+                : hasFix && !noFence
+                  ? styles.liveLabelWarn
+                  : styles.liveLabelIdle,
+            ]}
+          >
+            {onSite ? "ON SITE" : noFence ? "NO FENCE" : hasFix ? "OUTSIDE" : "LOCATING"}
           </Text>
-          <Text style={styles.subHello}>
-            🔒 Bound Device: {session.deviceName ? `${session.deviceName} · ` : ""}
-            {session.deviceId ?? employee.boundDeviceId ?? "Verified"}
-          </Text>
-          {dayStatus?.lastPunchAt ? (
-            <Text style={styles.dayStatusLine}>
-              Today:{" "}
-              <Text style={dayStatus.clockedIn ? styles.statusIn : styles.statusOut}>
-                {dayStatus.clockedIn ? "CLOCKED IN" : "CLOCKED OUT"}
-              </Text>{" "}
-              (last punch {timeLabel(dayStatus.lastPunchAt)})
-            </Text>
-          ) : null}
         </View>
       </View>
 
-      {/* ── 1. Primary Action: Clock In / Clock Out ─────────────────────── */}
-      <Panel
-        title="Record Attendance"
-        subtitle="Verify your position inside your authorized site geofence and clock in or out."
-        style={styles.card}
-      >
-        <View style={styles.statusBox}>
-          {geofence.inside ? (
-            <View style={[styles.badgeContainer, styles.badgeInside]}>
-              <Text style={styles.badgeTextInside}>
-                ✓ INSIDE GEOFENCE · READY TO CLOCK
+      {/* ── Identity ────────────────────────────────────────────────── */}
+      <View style={styles.identity}>
+        <Text style={styles.hello}>{employee.fullName}</Text>
+        <Text style={styles.meta}>
+          {employee.erpUserId}
+          {employee.department ? ` · ${employee.department}` : ""} · {homeSite}
+          {session.offline ? " · offline session" : ""}
+        </Text>
+
+        <View style={styles.dayRow}>
+          <Text style={styles.dayLabel}>TODAY</Text>
+          {dayStatus?.lastPunchAt ? (
+            <Text style={styles.dayValue}>
+              <Text style={dayStatus.clockedIn ? styles.statusIn : styles.statusOut}>
+                {dayStatus.clockedIn ? "CLOCKED IN" : "CLOCKED OUT"}
               </Text>
-              <Text style={styles.badgeSubText}>
-                {geofence.siteBranch} ({geofence.distanceMeters ?? 0}m from centre · radius: {geofence.radiusMeters ?? 150}m)
+              <Text style={styles.dayMeta}>
+                {" "}
+                · last punch {timeLabel(dayStatus.lastPunchAt)}
               </Text>
-            </View>
+            </Text>
           ) : (
-            <View style={[styles.badgeContainer, styles.badgeOutside]}>
-              <Text style={styles.badgeTextOutside}>
-                {geofence.hasFix ? "OUTSIDE SITE GEOFENCE" : "ACQUIRING GPS FIX…"}
-              </Text>
-              {geofence.siteBranch ? (
-                <Text style={styles.badgeSubText}>
-                  Nearest: {geofence.siteBranch} ({geofence.distanceMeters ?? 0}m away · radius: {geofence.radiusMeters ?? 150}m)
-                </Text>
-              ) : displayedRadius !== null ? (
-                <Text style={styles.badgeSubText}>
-                  Configured radius: {displayedRadius}m · Waiting for device GPS…
-                </Text>
-              ) : null}
-            </View>
+            <Text style={styles.dayValueMuted}>No punch yet</Text>
           )}
+        </View>
+      </View>
+
+      {/* ── 1. Primary action: Clock In / Clock Out ─────────────────── */}
+      <Panel
+        title="Attendance"
+        subtitle="Clock in or out yourself. Every punch is checked against your site geofence."
+      >
+        <View
+          style={[styles.statusBox, onSite ? styles.statusInside : styles.statusOutside]}
+        >
+          <View
+            style={[styles.statusDot, onSite ? styles.statusDotInside : styles.statusDotOutside]}
+          />
+          <View style={styles.statusText}>
+            <Text style={[styles.statusTitle, onSite ? styles.textInside : styles.textOutside]}>
+              {onSite
+                ? "Inside geofence · ready to clock"
+                : hasFix
+                  ? "Outside site geofence"
+                  : "Acquiring GPS fix…"}
+            </Text>
+            {onSite ? (
+              <Text style={styles.statusSub}>
+                {geofence.siteBranch} · {geofence.distanceMeters ?? 0}m from centre · radius{" "}
+                {geofence.radiusMeters ?? 150}m
+              </Text>
+            ) : geofence.siteBranch ? (
+              <Text style={styles.statusSub}>
+                Nearest: {geofence.siteBranch} · {geofence.distanceMeters ?? 0}m away · radius{" "}
+                {geofence.radiusMeters ?? 150}m
+              </Text>
+            ) : displayedRadius !== null ? (
+              <Text style={styles.statusSub}>
+                Configured radius: {displayedRadius}m · waiting for device GPS
+              </Text>
+            ) : null}
+          </View>
         </View>
 
         <PrimaryButton
-          label={dayStatus?.clockedIn ? "CLOCK OUT" : "CLOCK IN / OUT"}
+          label={
+            dayStatus ? (dayStatus.clockedIn ? "CLOCK OUT" : "CLOCK IN") : "CLOCK IN / OUT"
+          }
           onPress={() => void handleClock()}
           loading={clockBusy}
-          style={styles.clockButton}
         />
 
         <Text style={styles.note}>
-          Tap the button to clock in or out yourself. The main system records your attendance and direction.
+          Tap the button to clock in or out yourself. The main system records your
+          attendance and direction.
         </Text>
 
         {clockMessage ? (
@@ -228,22 +273,18 @@ export function Dashboard(): React.ReactElement {
         ) : null}
       </Panel>
 
-      {/* ── 2. Live Geofence Monitoring ───────────────────────────────── */}
-      <Panel
-        title="Geofence Monitoring"
-        subtitle="Live boundary status reflecting current web admin configuration and radius."
-        style={styles.card}
-      >
+      {/* ── 2. Live geofence monitoring ─────────────────────────────── */}
+      <Panel title="Geofence" subtitle="Live boundary and GPS status from the main system.">
         <StatusChip
           active={geofence.active}
-          activeLabel={geofence.inside ? "Inside Geofence" : "Geofence Active"}
-          idleLabel={sites.length > 0 ? "Geofence Ready · Locating GPS" : "No Mobile Fence"}
+          activeLabel={geofence.inside ? "Inside geofence" : "Geofence active"}
+          idleLabel={sites.length > 0 ? "Locating GPS" : "No mobile fence"}
         />
 
         <View style={styles.rows}>
-          <Row label="Home Site" value={homeSite} />
+          <Row label="Home site" value={homeSite} />
           <Row
-            label="Home Site Radius"
+            label="Home radius"
             value={
               homeRadius !== null
                 ? `${homeRadius} m${session.geofence?.method ? ` (${session.geofence.method})` : ""}`
@@ -253,33 +294,34 @@ export function Dashboard(): React.ReactElement {
             }
           />
           <Row
-            label="Nearest / Active Site"
+            label="Active site"
             value={
-              geofence.siteBranch ?? (geofence.hasFix ? "Outside all sites" : sites[0]?.branch ?? "Locating…")
+              geofence.siteBranch ??
+              (geofence.hasFix ? "Outside all sites" : sites[0]?.branch ?? "Locating…")
             }
           />
           <Row
-            label="Distance to Centre"
+            label="Distance to centre"
             value={
               geofence.distanceMeters === null
                 ? geofence.hasFix
                   ? "—"
                   : "Locating…"
                 : `${formatDistance(geofence.distanceMeters)}${
-                    geofence.inside ? " (Inside)" : " (Outside)"
+                    geofence.inside ? " (inside)" : " (outside)"
                   }`
             }
           />
           <Row
-            label="Active Geofence Radius"
+            label="Active radius"
             value={displayedRadius === null ? "—" : `${displayedRadius} m`}
           />
           <Row
-            label="Active Mobile Sites"
+            label="Mobile sites"
             value={`${sites.length} registered site${sites.length === 1 ? "" : "s"}`}
           />
           <Row
-            label="GPS Accuracy"
+            label="GPS accuracy"
             value={
               geofence.accuracyMeters === null
                 ? "—"
@@ -290,7 +332,7 @@ export function Dashboard(): React.ReactElement {
 
         {sites.length > 0 ? (
           <View style={styles.siteListBox}>
-            <Text style={styles.siteListHeading}>LIVE CONFIGURED SITE RADII</Text>
+            <Text style={styles.siteListHeading}>Configured site radii</Text>
             <View style={styles.siteListGrid}>
               {sites.map((s) => {
                 const isHome = s.branch.toLowerCase() === homeSite.toLowerCase();
@@ -300,10 +342,7 @@ export function Dashboard(): React.ReactElement {
                 return (
                   <View
                     key={`${s.id}-${s.branch}`}
-                    style={[
-                      styles.sitePill,
-                      (isHome || isCurrent) && styles.sitePillHighlight,
-                    ]}
+                    style={[styles.sitePill, (isHome || isCurrent) && styles.sitePillHighlight]}
                   >
                     <Text style={styles.sitePillName} numberOfLines={1}>
                       {s.branch}
@@ -323,7 +362,10 @@ export function Dashboard(): React.ReactElement {
         ) : null}
 
         <View style={styles.locationNotice}>
-          <Text style={styles.locationNoticeTitle}>📍 LOCATION SHARING ON</Text>
+          <View style={styles.locationNoticeHeader}>
+            <View style={styles.locationDot} />
+            <Text style={styles.locationNoticeTitle}>Location sharing on</Text>
+          </View>
           <Text style={styles.locationNoticeText}>
             While you are signed in, this phone sends its latest location to the
             office Field Tracker so the branch can see who is on site. Sharing
@@ -332,15 +374,14 @@ export function Dashboard(): React.ReactElement {
         </View>
       </Panel>
 
-      {/* ── 3. Site Map ───────────────────────────────────────────────── */}
+      {/* ── 3. Site map ─────────────────────────────────────────────── */}
       <Panel
-        title="Site Map"
+        title="Site map"
         subtitle={
           sites.length === 0
             ? "No geofenced sites configured yet."
-            : `${sites.length} site${sites.length === 1 ? "" : "s"} with geofence · neon dot is your position.`
+            : `${sites.length} site${sites.length === 1 ? "" : "s"} with geofence · the neon dot is you.`
         }
-        style={styles.card}
       >
         <SiteMap
           sites={sites}
@@ -353,19 +394,19 @@ export function Dashboard(): React.ReactElement {
           height={260}
         />
         <Text style={styles.note}>
-          Geofence circles reflect real-time radii and coordinates configured on the main system.
+          Fence circles reflect the live radii and coordinates configured on the
+          main system.
         </Text>
       </Panel>
 
-      {/* ── 4. Offline Punches & Auto-Sync (User does not sync) ────────── */}
+      {/* ── 4. Offline punches & automatic sync ─────────────────────── */}
       <Panel
-        title="Offline Attendance"
+        title="Offline attendance"
         subtitle={
           queue.pending.length === 0
-            ? "All attendance records synchronized with main system."
-            : `${queue.pending.length} punch${queue.pending.length === 1 ? "" : "es"} stored offline · Auto-sync active`
+            ? "All attendance records are synchronized."
+            : `${queue.pending.length} punch${queue.pending.length === 1 ? "" : "es"} stored offline · auto-sync active`
         }
-        style={styles.card}
       >
         {queue.pending.length > 0 ? (
           <View style={styles.queue}>
@@ -383,7 +424,8 @@ export function Dashboard(): React.ReactElement {
 
             <View style={styles.autoSyncNotice}>
               <Text style={styles.autoSyncNoticeText}>
-                The app automatically detects internet connectivity and uploads all offline punches to the main system. No manual action is needed.
+                The app automatically detects internet connectivity and uploads all
+                offline punches. No manual action is needed.
               </Text>
             </View>
           </View>
@@ -391,7 +433,9 @@ export function Dashboard(): React.ReactElement {
 
         {queue.autoSyncing ? (
           <View style={[styles.infoBox, styles.infoOk]}>
-            <Text style={styles.infoText}>Internet detected — automatically syncing punches with main system…</Text>
+            <Text style={styles.infoText}>
+              Internet detected — automatically syncing punches with the main system…
+            </Text>
           </View>
         ) : null}
         {queue.message && queue.pending.length === 0 ? (
@@ -406,13 +450,18 @@ export function Dashboard(): React.ReactElement {
         ) : null}
       </Panel>
 
-      {/* ── Sign Out ─────────────────────────────────────────────────── */}
-      <PrimaryButton
-        label="SIGN OUT"
-        variant="danger"
-        onPress={() => void signOut()}
-        style={styles.signOut}
-      />
+      {/* ── Sign out ────────────────────────────────────────────────── */}
+      <View style={styles.footer}>
+        <PrimaryButton
+          label="SIGN OUT"
+          variant="danger"
+          onPress={() => void signOut()}
+          style={styles.signOut}
+        />
+        <Text style={styles.footerMeta}>
+          Device locked{session.deviceName ? ` · ${session.deviceName}` : ""}
+        </Text>
+      </View>
     </ScrollView>
   );
 }
@@ -443,28 +492,122 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   scroll: {
-    padding: SPACING.lg,
+    padding: SPACING.lg + 2,
     paddingBottom: SPACING.xxl,
     gap: SPACING.lg,
   },
-  header: {
-    marginTop: SPACING.sm,
+
+  /* Brand bar ---------------------------------------------------------- */
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    marginTop: SPACING.xs,
   },
-  headerText: {
-    gap: 2,
+  topLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+  },
+  topBrandBlock: {
+    flex: 1,
+  },
+  topBrand: {
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 3.4,
+    color: COLORS.white,
+  },
+  topTagline: {
+    marginTop: 2,
+    fontSize: 8,
+    fontWeight: "600",
+    letterSpacing: 1.8,
+    color: COLORS.textFaint,
+  },
+  livePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+  },
+  livePillOn: {
+    backgroundColor: COLORS.neonSoft,
+    borderColor: COLORS.neonBorder,
+  },
+  livePillOff: {
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderColor: COLORS.border,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  liveDotOn: {
+    backgroundColor: COLORS.neon,
+  },
+  liveDotWarn: {
+    backgroundColor: COLORS.warning,
+  },
+  liveDotIdle: {
+    backgroundColor: COLORS.idle,
+  },
+  liveLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  liveLabelOn: {
+    color: COLORS.neon,
+  },
+  liveLabelWarn: {
+    color: COLORS.warning,
+  },
+  liveLabelIdle: {
+    color: COLORS.idle,
+  },
+
+  /* Identity ----------------------------------------------------------- */
+  identity: {
+    gap: 4,
+    marginTop: SPACING.xs,
   },
   hello: {
-    ...TEXT.display,
-    fontSize: 26,
+    fontSize: 28,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+    color: COLORS.white,
   },
-  subHello: {
-    ...TEXT.caption,
-    letterSpacing: 0.3,
+  meta: {
+    fontSize: FONT.small,
+    color: COLORS.textMuted,
+    letterSpacing: 0.2,
   },
-  dayStatusLine: {
+  dayRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    marginTop: SPACING.xs,
+  },
+  dayLabel: {
+    ...TEXT.label,
+    fontSize: 9,
+    letterSpacing: 1.2,
+  },
+  dayValue: {
     fontSize: FONT.caption,
     color: COLORS.textMuted,
-    marginTop: 2,
+  },
+  dayMeta: {
+    color: COLORS.textFaint,
+  },
+  dayValueMuted: {
+    fontSize: FONT.caption,
+    color: COLORS.textFaint,
   },
   statusIn: {
     color: COLORS.neon,
@@ -474,57 +617,81 @@ const styles = StyleSheet.create({
     color: COLORS.warning,
     fontWeight: "800",
   },
-  card: {
-    marginBottom: 0,
-  },
+
+  /* Clock card --------------------------------------------------------- */
   statusBox: {
-    marginBottom: SPACING.md,
-  },
-  badgeContainer: {
-    padding: SPACING.md,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: SPACING.md + 2,
     borderRadius: RADIUS.md,
     borderWidth: 1,
+    marginBottom: SPACING.lg,
   },
-  badgeInside: {
-    backgroundColor: "rgba(0, 230, 118, 0.08)",
-    borderColor: COLORS.neon,
+  statusInside: {
+    backgroundColor: "rgba(0, 230, 118, 0.07)",
+    borderColor: COLORS.neonBorder,
   },
-  badgeOutside: {
-    backgroundColor: "rgba(255, 171, 0, 0.08)",
-    borderColor: COLORS.warning,
+  statusOutside: {
+    backgroundColor: "rgba(255, 179, 0, 0.06)",
+    borderColor: "rgba(255, 179, 0, 0.45)",
   },
-  badgeTextInside: {
-    fontSize: FONT.small,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  statusDotInside: {
+    backgroundColor: COLORS.neon,
+  },
+  statusDotOutside: {
+    backgroundColor: COLORS.warning,
+  },
+  statusText: {
+    flex: 1,
+  },
+  statusTitle: {
+    fontSize: FONT.caption,
     fontWeight: "800",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  textInside: {
     color: COLORS.neon,
-    letterSpacing: 0.5,
   },
-  badgeTextOutside: {
-    fontSize: FONT.small,
-    fontWeight: "800",
+  textOutside: {
     color: COLORS.warning,
-    letterSpacing: 0.5,
   },
-  badgeSubText: {
+  statusSub: {
+    marginTop: 3,
     fontSize: FONT.caption,
     color: COLORS.textMuted,
-    marginTop: 3,
   },
-  clockButton: {
-    marginTop: SPACING.xs,
+  note: {
+    fontSize: FONT.caption,
+    lineHeight: 18,
+    color: COLORS.textFaint,
+    marginTop: SPACING.md,
   },
+
+  /* Geofence rows ------------------------------------------------------ */
   rows: {
     marginTop: SPACING.lg,
-    gap: SPACING.sm,
   },
   row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: SPACING.md,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderSoft,
   },
   rowLabel: {
     ...TEXT.label,
+    fontSize: 9,
+    letterSpacing: 1.1,
   },
   rowValue: {
     flexShrink: 1,
@@ -537,13 +704,12 @@ const styles = StyleSheet.create({
     marginTop: SPACING.lg,
     paddingTop: SPACING.md,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: COLORS.borderSoft,
   },
   siteListHeading: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-    color: COLORS.textMuted,
+    ...TEXT.label,
+    fontSize: 9,
+    letterSpacing: 1.1,
     marginBottom: SPACING.sm,
   },
   siteListGrid: {
@@ -563,7 +729,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.panelDeep,
   },
   sitePillHighlight: {
-    borderColor: COLORS.neon,
+    borderColor: COLORS.neonBorder,
     backgroundColor: "rgba(0, 230, 118, 0.08)",
   },
   sitePillName: {
@@ -577,6 +743,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.neon,
   },
+
+  /* Info / notices ----------------------------------------------------- */
   infoBox: {
     marginTop: SPACING.md,
     padding: SPACING.md,
@@ -586,10 +754,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.panelDeep,
   },
   infoOk: {
-    borderColor: COLORS.neon,
+    borderColor: COLORS.neonBorder,
   },
   infoWarn: {
-    borderColor: COLORS.warning,
+    borderColor: "rgba(255, 179, 0, 0.45)",
     backgroundColor: COLORS.warningSoft,
   },
   infoText: {
@@ -598,32 +766,41 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   locationNotice: {
-    marginTop: SPACING.md,
+    marginTop: SPACING.lg,
     padding: SPACING.md,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: COLORS.neon,
+    borderColor: COLORS.borderSoft,
     backgroundColor: COLORS.panelDeep,
+  },
+  locationNoticeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 5,
+  },
+  locationDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: COLORS.neon,
   },
   locationNoticeTitle: {
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 1.2,
+    textTransform: "uppercase",
     color: COLORS.neon,
-    marginBottom: 4,
   },
   locationNoticeText: {
     fontSize: FONT.small,
     color: COLORS.textMuted,
     lineHeight: 19,
   },
-  note: {
-    ...TEXT.caption,
-    marginTop: SPACING.sm,
-    lineHeight: 17,
-  },
+
+  /* Offline queue ------------------------------------------------------ */
   queue: {
-    marginTop: SPACING.sm,
+    marginTop: SPACING.xs,
   },
   queueRow: {
     flexDirection: "row",
@@ -631,7 +808,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: SPACING.md,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: COLORS.borderSoft,
     gap: SPACING.md,
   },
   queueText: {
@@ -647,7 +824,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   queueBadge: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "800",
     letterSpacing: 1,
     color: COLORS.warning,
@@ -656,14 +833,26 @@ const styles = StyleSheet.create({
     marginTop: SPACING.md,
     padding: SPACING.md,
     borderRadius: RADIUS.sm,
-    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    backgroundColor: "rgba(255, 255, 255, 0.035)",
   },
   autoSyncNoticeText: {
     fontSize: FONT.caption,
     color: COLORS.textMuted,
-    lineHeight: 16,
+    lineHeight: 17,
+  },
+
+  /* Footer ------------------------------------------------------------- */
+  footer: {
+    marginTop: SPACING.sm,
+    alignItems: "center",
+    gap: SPACING.sm,
   },
   signOut: {
-    marginTop: SPACING.sm,
+    alignSelf: "stretch",
+  },
+  footerMeta: {
+    fontSize: FONT.tiny,
+    color: COLORS.textFaint,
+    textAlign: "center",
   },
 });

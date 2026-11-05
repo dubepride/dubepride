@@ -372,7 +372,7 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
       return;
     }
 
-    // Auto-clocking is disabled per Mine Eazy policy.
+    // Auto-clocking is disabled by product policy.
     // The employee clocks in/out themselves using the button on the app.
     return;
   } finally {
@@ -414,7 +414,7 @@ function locationOptions(speed: "armed" | "relaxed"): Location.LocationTaskOptio
     showsBackgroundLocationIndicator: true,
     activityType: Location.ActivityType.Other,
     foregroundService: {
-      notificationTitle: "Mine Eazy location sharing is on",
+      notificationTitle: "BioBridge location sharing is on",
       notificationBody: "Sharing your work location with your employer while you are signed in.",
       notificationColor: COLORS.neon,
       // Keep the service alive when the task is swiped away — otherwise

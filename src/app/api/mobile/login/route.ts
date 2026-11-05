@@ -105,7 +105,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return json({ ok: false, error: `Employee Number "${employeeRef}" was not found.` }, 401);
   }
 
-  // If PIN is provided, verify it; if no PIN is provided, allow employee number login (Mine Eazy)
+  // If PIN is provided, verify it; if no PIN is provided, allow employee number login (BioBridge)
   if (pin) {
     const pinValid = await verifyEmployeeMobilePin(employee, pin);
     if (!pinValid) {

@@ -2,7 +2,7 @@
   "expo": {
     "name": "BioBridge Mobile",
     "slug": "biobridge-mobile",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "scheme": "biobridge",
     "icon": "./assets/icon.png",
@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.mineeazy.mobileclocking",
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a0a",
@@ -26,7 +27,11 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK"
       ],
       "predictiveBackGestureEnabled": false
@@ -36,8 +41,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Mine Eazy uses your location to confirm you are inside your branch's geofence when you clock in or out.",
-          "locationAlwaysAndWhenInUsePermission": "Mine Eazy shares your work location with your employer while you are signed in, so the office can see who is on site. This keeps running in the background until you sign out.",
+          "locationWhenInUsePermission": "BioBridge uses your location to confirm you are inside your branch's geofence when you clock in or out.",
+          "locationAlwaysAndWhenInUsePermission": "BioBridge shares your work location with your employer while you are signed in, so the office can see who is on site. This keeps running in the background until you sign out.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,

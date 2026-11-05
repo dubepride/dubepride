@@ -1,17 +1,18 @@
 /**
  * ============================================================================
- *  Login.tsx — BioBridge Mobile Employee ID Sign-In & Hardware Device Binding
+ *  Login.tsx — BioBridge Mobile Employee Number Sign-In & Device Binding
  * ============================================================================
  *
- *  Employees sign in using ONLY their Employee ID / Number (e.g. EMP1001 or 1001).
- *  Upon sign-in, BioBridge Mobile sends this phone's persistent Hardware Device ID
- *  so the employee's ID is bound 1-to-1 to their phone on the main system.
- *  If anyone tries to sign in with that Employee ID on another device, the server
+ *  Employees sign in using ONLY their Employee Number (e.g. EMP1001 or 1001).
+ *  On sign-in, BioBridge Mobile sends this phone's persistent hardware device
+ *  ID so the employee is bound 1-to-1 to their handset on the main system.
+ *  If anyone tries to use that Employee Number on another phone, the server
  *  rejects it with a clear "Wrong Device" error.
  */
 
 import React, { useEffect, useState } from "react";
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -22,10 +23,11 @@ import {
   View,
 } from "react-native";
 
-import { Panel } from "@/components/Panel";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { useAuth } from "@/lib/session";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
+
+import LOGO from "../../assets/icon.png";
 
 export function Login(): React.ReactElement {
   const { signIn, initialApiUrl, deviceId, deviceName } = useAuth();
@@ -46,7 +48,7 @@ export function Login(): React.ReactElement {
 
     const trimmed = employeeNumber.trim();
     if (!trimmed) {
-      setError("Please enter your Employee ID.");
+      setError("Please enter your Employee Number.");
       return;
     }
 
@@ -59,7 +61,7 @@ export function Login(): React.ReactElement {
     setBusy(false);
 
     if (!outcome.ok) {
-      setError(outcome.error ?? "Could not sign in with that Employee ID.");
+      setError(outcome.error ?? "Could not sign in with that Employee Number.");
     }
   };
 
@@ -72,88 +74,93 @@ export function Login(): React.ReactElement {
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.brand}>
-          <Text style={styles.brandMark}>BIOBRIDGE</Text>
-          <Text style={styles.brandSub}>BioBridge Mobile · Time & Attendance</Text>
-        </View>
-
-        <Panel
-          title="Employee Sign In"
-          subtitle="Enter your Employee ID to sign in. Your ID is locked to this device so no one else can clock in on your behalf."
-        >
-          <Text style={styles.label}>Employee ID / Number</Text>
-          <TextInput
-            value={employeeNumber}
-            onChangeText={setEmployeeNumber}
-            placeholder="e.g. EMP1001 or 1001"
-            placeholderTextColor={COLORS.textFaint}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            returnKeyType="go"
-            editable={!busy}
-            onSubmitEditing={() => void submit()}
-            style={styles.input}
-          />
-
-          <View style={styles.deviceBindBadge}>
-            <Text style={styles.deviceBindTitle}>
-              🔒 DEVICE BINDING ACTIVE
-            </Text>
-            <Text style={styles.deviceBindMeta}>
-              {deviceName ? `${deviceName} · ` : ""}ID: {deviceId ?? "Initializing…"}
-            </Text>
-          </View>
-
-          <View style={styles.locationNotice}>
-            <Text style={styles.locationNoticeTitle}>📍 LOCATION SHARING</Text>
-            <Text style={styles.locationNoticeText}>
-              After you sign in, this phone shares its work location with your
-              employer so the office can see who is on site. Sharing runs in the
-              background and stops when you sign out.
-            </Text>
-          </View>
-
-          {error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorTitle}>⚠ Sign-In Rejected</Text>
-              <Text style={styles.errorText}>{error}</Text>
+        <View style={styles.content}>
+          <View style={styles.brandBlock}>
+            <View style={styles.logoWrap}>
+              <Image source={LOGO} style={styles.logo} resizeMode="cover" />
             </View>
-          ) : null}
+            <Text style={styles.brandMark}>BIOBRIDGE</Text>
+            <Text style={styles.brandSub}>TIME &amp; ATTENDANCE</Text>
+          </View>
 
-          <PrimaryButton
-            label="LOG IN"
-            onPress={() => void submit()}
-            loading={busy}
-            style={styles.submit}
-          />
-
-          <Pressable onPress={() => setShowServer((open) => !open)} hitSlop={8}>
-            <Text style={styles.disclosure}>
-              {showServer ? "Hide server address" : "Change server address"}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Employee sign in</Text>
+            <Text style={styles.cardSubtitle}>
+              Enter your Employee Number to continue.
             </Text>
-          </Pressable>
 
-          {showServer ? (
-            <>
-              <Text style={styles.label}>Bridge URL</Text>
-              <TextInput
-                value={apiUrl}
-                onChangeText={setApiUrl}
-                placeholder="http://192.168.1.42:3000"
-                placeholderTextColor={COLORS.textFaint}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                editable={!busy}
-                style={styles.input}
-              />
-              <Text style={styles.hint}>
-                On the Android emulator, http://10.0.2.2:3000 reaches your machine.
-                On a physical device, use your machine&apos;s LAN address or public server URL.
+            <Text style={styles.label}>Employee Number</Text>
+            <TextInput
+              value={employeeNumber}
+              onChangeText={setEmployeeNumber}
+              placeholder="e.g. 1001"
+              placeholderTextColor={COLORS.textFaint}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              returnKeyType="go"
+              editable={!busy}
+              onSubmitEditing={() => void submit()}
+              style={styles.input}
+            />
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorTitle}>Sign-in rejected</Text>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
+
+            <PrimaryButton
+              label="SIGN IN"
+              variant="soft"
+              onPress={() => void submit()}
+              loading={busy}
+              style={styles.submit}
+            />
+
+            <Pressable onPress={() => setShowServer((open) => !open)} hitSlop={8}>
+              <Text style={styles.disclosure}>
+                {showServer ? "Hide server address" : "Change server address"}
               </Text>
-            </>
-          ) : null}
-        </Panel>
+            </Pressable>
+
+            {showServer ? (
+              <View style={styles.serverBox}>
+                <Text style={styles.label}>Bridge URL</Text>
+                <TextInput
+                  value={apiUrl}
+                  onChangeText={setApiUrl}
+                  placeholder="http://192.168.1.42:3000"
+                  placeholderTextColor={COLORS.textFaint}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  editable={!busy}
+                  style={styles.input}
+                />
+                <Text style={styles.hint}>
+                  On the Android emulator, http://10.0.2.2:3000 reaches your machine.
+                  On a physical device, use your machine&apos;s LAN address or the public
+                  server URL.
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.deviceRow}>
+            <View style={styles.deviceDot} />
+            <Text style={styles.deviceText}>
+              Device locked{deviceName ? ` · ${deviceName}` : ""}
+            </Text>
+          </View>
+          <Text style={styles.deviceId}>
+            Hardware ID: {deviceId ?? "initialising…"}
+          </Text>
+
+          <Text style={styles.note}>
+            Clocking stays manual. Location is shared while you are signed in.
+          </Text>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -167,26 +174,70 @@ const styles = StyleSheet.create({
   scroll: {
     flexGrow: 1,
     justifyContent: "center",
-    padding: SPACING.xl,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.xxl,
   },
-  brand: {
+  content: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+  },
+  brandBlock: {
+    alignItems: "center",
     marginBottom: SPACING.xl,
   },
+  logoWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 22,
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.panel,
+    shadowColor: COLORS.neon,
+    shadowOpacity: 0.35,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
+  logo: {
+    width: 84,
+    height: 84,
+    borderRadius: 22,
+  },
   brandMark: {
-    fontSize: 34,
+    fontSize: 26,
     fontWeight: "800",
-    letterSpacing: 4,
-    color: COLORS.neon,
+    letterSpacing: 6.5,
+    color: COLORS.white,
+    textAlign: "center",
   },
   brandSub: {
+    marginTop: SPACING.sm,
+    fontSize: 9,
+    fontWeight: "600",
+    letterSpacing: 2.6,
+    color: COLORS.textFaint,
+    textAlign: "center",
+  },
+  card: {
+    backgroundColor: COLORS.panel,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.xl,
+  },
+  cardTitle: {
+    ...TEXT.title,
+    fontSize: 18,
+  },
+  cardSubtitle: {
     ...TEXT.caption,
-    marginTop: SPACING.xs,
-    letterSpacing: 1.2,
+    lineHeight: 18,
+    marginTop: 6,
+    marginBottom: SPACING.lg,
   },
   label: {
     ...TEXT.label,
     marginBottom: SPACING.sm,
-    marginTop: SPACING.md,
   },
   input: {
     backgroundColor: COLORS.panelDeep,
@@ -194,60 +245,26 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: RADIUS.md,
     paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
+    paddingVertical: 14,
     fontSize: FONT.body,
     color: COLORS.white,
-  },
-  deviceBindBadge: {
-    marginTop: SPACING.md,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: RADIUS.sm,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelDeep,
-  },
-  deviceBindTitle: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-    color: COLORS.neon,
-  },
-  deviceBindMeta: {
-    fontSize: FONT.small,
-    color: COLORS.textMuted,
-    marginTop: 2,
-  },
-  locationNotice: {
-    marginTop: SPACING.md,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: RADIUS.sm,
-    borderWidth: 1,
-    borderColor: COLORS.neon,
-    backgroundColor: COLORS.panelDeep,
-  },
-  locationNoticeTitle: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-    color: COLORS.neon,
-  },
-  locationNoticeText: {
-    fontSize: FONT.small,
-    color: COLORS.textMuted,
-    marginTop: 4,
-    lineHeight: 18,
   },
   submit: {
     marginTop: SPACING.lg,
   },
   disclosure: {
     marginTop: SPACING.lg,
-    fontSize: FONT.caption,
+    fontSize: FONT.tiny,
     fontWeight: "600",
     color: COLORS.textMuted,
     textDecorationLine: "underline",
+    textAlign: "center",
+  },
+  serverBox: {
+    marginTop: SPACING.lg,
+    paddingTop: SPACING.lg,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
   hint: {
     ...TEXT.caption,
@@ -255,22 +272,56 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   errorBox: {
-    marginTop: SPACING.lg,
+    marginTop: SPACING.md,
     padding: SPACING.md,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: COLORS.danger,
+    borderColor: "rgba(255, 92, 92, 0.45)",
     backgroundColor: COLORS.dangerSoft,
   },
   errorTitle: {
-    fontSize: FONT.small,
+    fontSize: FONT.caption,
     fontWeight: "700",
     color: COLORS.danger,
     marginBottom: 4,
   },
   errorText: {
-    fontSize: FONT.small,
+    fontSize: FONT.caption,
     color: COLORS.danger,
-    lineHeight: 19,
+    lineHeight: 18,
+  },
+  deviceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    marginTop: SPACING.xl,
+  },
+  deviceDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: COLORS.neon,
+  },
+  deviceText: {
+    fontSize: FONT.tiny,
+    color: COLORS.textFaint,
+    letterSpacing: 0.2,
+  },
+  deviceId: {
+    marginTop: 4,
+    fontSize: 10,
+    color: COLORS.textFaint,
+    textAlign: "center",
+    opacity: 0.75,
+  },
+  note: {
+    marginTop: SPACING.xl,
+    fontSize: FONT.tiny,
+    lineHeight: 18,
+    color: COLORS.textFaint,
+    textAlign: "center",
+    alignSelf: "center",
+    maxWidth: 260,
   },
 });

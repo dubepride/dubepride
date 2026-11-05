@@ -164,7 +164,7 @@ function buildHtml(payload: MapPayload): string {
     display: none;
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 500;
     padding: 4px 8px; font-size: 10px; text-align: center;
-    color: #c9bce4; background: rgba(10,10,10,0.86);
+    color: #b9b3c6; background: rgba(10,10,10,0.86);
   }
   #demo-note {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 400;
@@ -374,10 +374,10 @@ const styles = StyleSheet.create({
   closeBtn: {
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
-    backgroundColor: "rgba(45,27,78,0.8)",
+    backgroundColor: COLORS.panelDeep,
     borderRadius: RADIUS.sm,
     borderWidth: 1,
-    borderColor: COLORS.accent,
+    borderColor: COLORS.border,
   },
   closeText: {
     fontSize: FONT.tiny,

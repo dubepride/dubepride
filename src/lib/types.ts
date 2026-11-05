@@ -1291,7 +1291,7 @@ export interface FieldTrackerSite {
 
 export interface FieldTrackerDevice {
   employeeId: number;
-  /** The Mine Eazy employee number (`Employees.ERP_User_ID`). */
+  /** The BioBridge employee number (`Employees.ERP_User_ID`). */
   employeeNumber: string;
   fullName: string;
   department: string;

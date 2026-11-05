@@ -10,7 +10,7 @@ export interface PanelProps {
   style?: StyleProp<ViewStyle>;
 }
 
-/** The deep-purple card every screen is built from. */
+/** The quiet charcoal card every signed-in screen is built from. */
 export function Panel({ title, subtitle, children, style }: PanelProps): React.ReactElement {
   return (
     <View style={[styles.panel, style]}>
@@ -27,15 +27,18 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: SPACING.lg,
+    padding: SPACING.lg + 2,
     width: "100%",
   },
   title: {
     ...TEXT.title,
+    fontSize: 16,
+    letterSpacing: 0.1,
     marginBottom: SPACING.xs,
   },
   subtitle: {
     ...TEXT.caption,
+    lineHeight: 17,
     marginBottom: SPACING.md,
   },
 });

@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- *  App.tsx — Mine Eazy Mobile Shell
+ *  App.tsx — BioBridge Mobile Shell
  * ============================================================================
  *
  *  Cold start plays a short branded opening — the mark settles in, geofence
@@ -166,7 +166,7 @@ function Intro({ fade }: { fade: Animated.Value }): React.ReactElement {
   return (
     <Animated.View
       style={[styles.intro, { opacity: fade }]}
-      accessibilityLabel="Mine Eazy is opening"
+      accessibilityLabel="BioBridge is opening"
       accessibilityRole="progressbar"
     >
       <View style={styles.stage}>

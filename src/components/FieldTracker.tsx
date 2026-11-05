@@ -8,7 +8,7 @@
  *    map to that fence, so "navigate to any branch" needs no extra page.
  *  • Dots are ANY tracked phone inside the selected fence. Being clocked in is
  *    a badge in the directory + tooltip, never a filter.
- *  • Hovering a dot shows the Mine Eazy employee number first.
+ *  • Hovering a dot shows the BioBridge employee number first.
  *  • The server decides containment from live Branches/Terminals geometry;
  *    the client only filters the snapshot it is given.
  *

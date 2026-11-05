@@ -124,7 +124,7 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 
 ### 3.6 Mobile companion app (employee-number login, manual clocking, offline queue)
 
-- **Sign-in** uses the Mine Eazy employee number only (`POST /api/mobile/login`,
+- **Sign-in** uses the BioBridge employee number only (`POST /api/mobile/login`,
   `x-mobile-key`). A successful sign-in binds this handset to the employee
   1-to-1; a second phone quoting the same number gets `403 UNAUTHORIZED_DEVICE`
   ("Wrong Device").
