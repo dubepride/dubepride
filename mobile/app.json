@@ -2,9 +2,10 @@
   "expo": {
     "name": "BioBridge Mobile",
     "slug": "biobridge-mobile",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "scheme": "biobridge",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0a0a0a",
     "primaryColor": "#00e676",
@@ -17,6 +18,11 @@
     },
     "android": {
       "package": "com.mineeazy.mobileclocking",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a",
+        "monochromeImage": "./assets/monochrome-icon.png"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { BrandMark } from "@/components/BrandMark";
 import type { PermissionKey } from "@/lib/rbac";
 import {
   IconAlert,
@@ -10,7 +11,6 @@ import {
   IconChart,
   IconClock,
   IconEye,
-  IconFingerprint,
   IconHome,
   IconLocate,
   IconScan,
@@ -126,7 +126,7 @@ function RailContent({
       {/* Brand ---------------------------------------------------- */}
       <div className="flex items-center gap-3 border-b border-white/[0.06] px-5 py-4">
         <span className="grid h-10 w-10 flex-none place-items-center rounded-xl border border-neon/40 bg-panel-deep/60 text-neon shadow-[0_0_18px_rgba(0,230,118,0.25)]">
-          <IconFingerprint className="h-5 w-5" />
+          <BrandMark className="h-6 w-6" />
         </span>
         <span className="leading-tight">
           <span className="block text-sm font-extrabold tracking-[0.3em] text-ink">
