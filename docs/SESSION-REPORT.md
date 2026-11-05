@@ -34,7 +34,10 @@ deployment, and change the administrator login to:
 | Admin login changed to `admin@biobridge.com` / `admin` | ✅ Complete |
 | Credentials work on an existing database | ✅ Complete (self-healing seed) |
 | Mobile companion app (employee-number login, manual clocking, offline queue, live geofences) | ✅ Complete |
-| Field Tracker live map with background phone presence | ✅ Complete (APK rebuild pending) |
+| Field Tracker live map with background phone presence | ✅ Complete |
+| App icon, splash, web favicon and sidebar mark | ✅ Complete (brand v1.2.0) |
+| Branded cold-start opening animation | ✅ Complete (brand v1.2.0) |
+| Android release APK rebuilt and verified | ✅ v1.2.0 (versionCode 3) |
 | Changes committed and pushed to GitHub | ✅ Complete |
 | Vercel deployment updated automatically | ✅ Complete |
 | Production login verified | ✅ HTTP 200 |
@@ -169,8 +172,39 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 - **Verification:** 11 new pure-helper tests (`tests/field-tracker.test.ts`);
   suite total 32/32. Type-check and production build clean, including
   `/field-tracker`, `/api/field-tracker` and `/api/mobile/presence`.
-- **Known limitation:** the Android APK must be rebuilt (Android SDK or EAS
-  Build) before the new background-location flags reach devices.
+
+### 3.8 Brand identity and opening animation (v1.2.0)
+
+- **Mark:** concept **B** — a geofence pin whose heart is an arch bridge —
+  neon `#00e676` on a dark rounded tile. One source geometry is reused for the
+  launcher icon, the Android adaptive/themed icon, the splash, the web
+  favicon and the sidebar.
+- **Android assets** (`mobile/android/.../res`, hand-edited native project):
+  legacy `mipmap-*dpi/ic_launcher(.webp|_round.webp)`, adaptive foreground and
+  monochrome PNGs at every density, `mipmap-anydpi-v26/ic_launcher(_round).xml`
+  with the `ic_launcher_background` colour, and replacement
+  `drawable-*dpi/splashscreen_logo.png` images. The splash theme now uses a
+  centred layer-list (`drawable/splashscreen.xml`) on `#0a0a0a` instead of
+  stretching a square bitmap across the window.
+- **Expo config:** `mobile/assets/{icon,adaptive-icon,monochrome-icon}.png`
+  (1024 px) and matching `icon` / `android.adaptiveIcon` keys in `app.json`,
+  so a future `expo prebuild` reproduces the same icons. Version bumped to
+  `1.2.0` / `versionCode 3`.
+- **Web:** `src/app/icon.svg`, `src/app/apple-icon.png` and a regenerated
+  `src/app/favicon.ico` (16/32/48 PNG entries); `BrandMark.tsx` replaces the
+  fingerprint glyph in the sidebar plate.
+- **Cold-start animation:** `mobile/App.tsx` renders a full-screen overlay —
+  the mark springs in, two geofence rings pulse out, the wordmark and a thin
+  progress rail fade up — while the saved session is read. It holds for at
+  least **1.7 s**, is capped at **4.2 s**, then fades out over **420 ms** into
+  the login screen or dashboard. All motion uses `Animated` with the native
+  driver, so no new dependency was required.
+- **Verification:** web + mobile type-check, 32/32 tests and `next build`
+  clean (`/icon.svg` and `/apple-icon.png` prerendered). Android release
+  assembled in **4m 51s**; `aapt2` confirms `versionCode 3`,
+  `versionName 1.2.0`, adaptive/themed icon resources, the dark splash and the
+  presence permissions. The bundle contains the intro strings and the
+  `drawable-mdpi/assets_icon.png` used by the overlay.
 
 
 
@@ -183,6 +217,8 @@ and `docs/SYSTEM-FLOW-MAP.md`.
 | `9ed8611` | Self-heal admin login seed to `admin@biobridge.com` / `admin` |
 | `71d0f3c` | Session report and documentation alignment |
 | `a66d8c2` | Field Tracker live map, `can_view_live_map`, background phone presence |
+| `00c37fa` | Mobile version bump to 1.1.0 for the Field Tracker build |
+| `09382a0` | Pin-bridge brand icon, web favicons, sidebar mark and opening animation |
 
 All commits were pushed to `origin/master`. The repository is in sync with
 GitHub and the working tree is clean.
@@ -196,7 +232,11 @@ GitHub and the working tree is clean.
 | `tsc --noEmit` (web) | Pass |
 | `tsc --noEmit` (mobile) | Pass |
 | `node --test "tests/*.test.ts"` | 32/32 pass |
-| `next build` | Pass (incl. `/field-tracker`, `/api/field-tracker`, `/api/mobile/presence`) |
+| `next build` | Pass (incl. `/field-tracker`, `/api/field-tracker`, `/api/mobile/presence`, `/icon.svg`, `/apple-icon.png`) |
+| Android release `assembleRelease` | BUILD SUCCESSFUL in 4m 51s |
+| APK badging | `com.mineeazy.mobileclocking` · versionCode 3 · versionName 1.2.0 |
+| APK permissions | `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION`, location foreground service |
+| APK brand assets | adaptive + monochrome icon, dark centred splash, intro strings and `assets_icon.png` present |
 | Local `/login` | HTTP 200 |
 | Local login (`admin@biobridge.com` / `admin`) | HTTP 200 |
 | Local login, blank email + `admin` | HTTP 200 |
@@ -219,7 +259,8 @@ GitHub and the working tree is clean.
 | 6 | Production login returned 401 after deploy | Added the self-healing admin seed |
 | 7 | `Date.now()` in a client component aborted prerendering `/field-tracker` | Uses the snapshot `generatedAt` (falling back to `0`) instead of render time |
 | 8 | Mixed `??`/`||` broke the TypeScript build | Parenthesised the branch fallback |
-| 9 | Android APK cannot be rebuilt locally (no SDK / EAS) | Deferred; web + JS unchanged and verified, native build required for the new background-location flags |
+| 9 | Android APK could not be rebuilt (no SDK / EAS found initially) | Located the local JDK 17 and Android SDK; assembled the release through the Gradle wrapper JAR because `cmd.exe` is unavailable |
+| 10 | Legacy splash theme stretched a square bitmap across the window | Switched `Theme.App.SplashScreen` to a centred layer-list drawable on the dark splash colour |
 
 ---
 
@@ -243,8 +284,11 @@ GitHub and the working tree is clean.
   (IT Administrator and HR Manager by default).
 - Git `master` in sync with `origin/master`; working tree clean.
 - Type-check (web + mobile), tests (32/32) and production build all green.
-- **Outstanding:** rebuild the Android APK (Android SDK or EAS Build) so the
-  new background-location configuration in `mobile/app.json` reaches devices.
+- Mobile release **v1.2.0** (versionCode 3) rebuilt with the pin-bridge icon,
+  themed/adaptive icons, dark centred splash and the branded opening
+  animation. Artifact:
+  `mobile/android/app/build/outputs/apk/release/app-release.apk` (67 MB,
+  debug-signed; `mobile/android/` and the APK stay out of Git).
 
 ### Operational commands
 
