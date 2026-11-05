@@ -86,6 +86,13 @@ import type {
   PermissionKey,
   PermissionsMap,
   PunchDirection,
+  ReportsAttendanceRow,
+  ReportsBranchRow,
+  ReportsEvent,
+  ReportsExceptionKind,
+  ReportsResponse,
+  ReportsSummary,
+  ReportsTrendPoint,
   ShiftRow,
   SyncBatchDto,
   SyncBatchRow,
@@ -3932,6 +3939,431 @@ export async function getExceptions(type: ExceptionType | null): Promise<Excepti
     rule: type ? EXCEPTION_RULES[type] : null,
     rows: type ? bucket[type] : [],
     counts,
+    generatedAt: now,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Reports & Analytics (Phase 9 — live data)                           */
+/* ------------------------------------------------------------------ */
+
+const REPORT_DAYS_DEFAULT = 7;
+const REPORT_DAYS_MAX = 31;
+/** Cap on table rows; CSV exports still use the full attendance set. */
+const REPORT_EVENT_LIMIT = 250;
+const DAY_CODES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+interface ReportEmployee {
+  Employee_ID: number;
+  ERP_User_ID: string;
+  Full_Name: string;
+  Department: string;
+  Branch_Name: string;
+  Shift_ID: number | null;
+  Status: string;
+  Created_At: number;
+}
+
+interface ReportPunch {
+  Log_ID: number;
+  Employee_ID: number;
+  Timestamp: number;
+  Direction: PunchDirection;
+  Log_Branch: string | null;
+  Terminal_Branch: string | null;
+}
+
+interface ReportShift {
+  startMin: number;
+  endMin: number;
+  days: Set<string>;
+}
+
+/** Fallback when an employee has no shift assigned: Mon–Fri, 08:00–17:00. */
+const DEFAULT_REPORT_SHIFT: ReportShift = {
+  startMin: 8 * 60,
+  endMin: 17 * 60,
+  days: new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]),
+};
+
+/** "08:30" → 510 minutes; malformed input falls back. */
+function clockMinutes(value: string, fallback: number): number {
+  const match = /^(\d{1,2}):(\d{2})/.exec((value ?? "").trim());
+  if (!match) return fallback;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/** "+45 mins" / "-32 mins" / "—". */
+function varianceText(minutes: number | null): string {
+  if (minutes === null) return "—";
+  return `${minutes > 0 ? "+" : ""}${minutes} mins`;
+}
+
+const TREND_FIELDS: Record<ReportsExceptionKind, keyof Omit<ReportsTrendPoint, "date">> = {
+  arrived_early: "arrivedEarly",
+  arrived_late: "arrivedLate",
+  left_early: "leftEarly",
+  left_late: "leftLate",
+  missing_punch: "missingPunch",
+  no_show: "noShow",
+};
+
+/**
+ * Live Reports & Analytics aggregate over a rolling window of calendar days.
+ *
+ * Baselines come from the roster's own shift (Shifts.Start_Time / End_Time /
+ * Days) with an 08:00–17:00 Mon–Fri fallback, so a "late arrival" means late
+ * for that employee rather than late for the day shift. Departures get the
+ * same one-hour grace the exception widget uses (end → end + 60 min).
+ *
+ * No-shows are scheduled employee-days with no verified punch. Today only
+ * starts counting once the employee's shift has begun, and an employee is
+ * never counted before their Created_At. Everything is derived from
+ * Attendance_Logs + Employees + Terminals; there are no demo rows here.
+ */
+export async function getReports(days: number = REPORT_DAYS_DEFAULT): Promise<ReportsResponse> {
+  const windowDays = Math.min(REPORT_DAYS_MAX, Math.max(1, Math.floor(days)));
+  const db = await getDb();
+  const now = Date.now();
+
+  const base = new Date(now);
+  base.setHours(0, 0, 0, 0);
+  const todayStart = base.getTime();
+
+  const dayList = Array.from({ length: windowDays }, (_, index) => {
+    const date = new Date(
+      base.getFullYear(),
+      base.getMonth(),
+      base.getDate() - (windowDays - 1 - index)
+    );
+    const startMs = date.getTime();
+    const next = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+    return { key: dateKeyOf(startMs), date, startMs, endMs: next.getTime() };
+  });
+
+  const fromMs = dayList[0].startMs;
+  const toMs = dayList[dayList.length - 1].endMs;
+
+  const employees = await queryAll<ReportEmployee>(
+    db,
+    `SELECT Employee_ID, ERP_User_ID, Full_Name, Department, Branch_Name, Shift_ID, Status, Created_At
+       FROM Employees`
+  );
+  const punches = await queryAll<ReportPunch>(
+    db,
+    `SELECT l.Log_ID, l.Employee_ID, l.Timestamp, l.Direction,
+            l.Branch_Name AS Log_Branch, t.Branch_Name AS Terminal_Branch
+       FROM Attendance_Logs l
+       LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
+      WHERE l.Timestamp >= ? AND l.Timestamp < ?
+        AND l.Employee_ID IS NOT NULL
+        AND l.Verify_Result = 'Verified'
+      ORDER BY l.Employee_ID, l.Timestamp, l.Log_ID`,
+    fromMs,
+    toMs
+  );
+  const shifts = await listShifts();
+
+  const shiftById = new Map<number, ReportShift>();
+  for (const shift of shifts) {
+    shiftById.set(shift.Shift_ID, {
+      startMin: clockMinutes(shift.Start_Time, DEFAULT_REPORT_SHIFT.startMin),
+      endMin: clockMinutes(shift.End_Time, DEFAULT_REPORT_SHIFT.endMin),
+      days: new Set(
+        (shift.Days ?? "")
+          .split(",")
+          .map((day) => day.trim())
+          .filter(Boolean)
+      ),
+    });
+  }
+
+  const employeeById = new Map(employees.map((employee) => [employee.Employee_ID, employee]));
+  const dayByKey = new Map(dayList.map((day) => [day.key, day]));
+  const trendByKey = new Map<string, ReportsTrendPoint>(
+    dayList.map((day) => [
+      day.key,
+      {
+        date: day.key,
+        arrivedEarly: 0,
+        arrivedLate: 0,
+        leftEarly: 0,
+        leftLate: 0,
+        missingPunch: 0,
+        noShow: 0,
+      },
+    ])
+  );
+
+  // Group verified punches by employee × local calendar day.
+  const groups = new Map<string, ReportPunch[]>();
+  for (const punch of punches) {
+    if (!employeeById.has(punch.Employee_ID)) continue;
+    const key = `${punch.Employee_ID}:${dateKeyOf(punch.Timestamp)}`;
+    const list = groups.get(key);
+    if (list) list.push(punch);
+    else groups.set(key, [punch]);
+  }
+
+  type PendingEvent = Omit<ReportsEvent, "id">;
+  const pendingEvents: PendingEvent[] = [];
+  const branchCounts = new Map<string, number>();
+  const lateEmployees = new Set<number>();
+  const counts: Record<ReportsExceptionKind, number> = {
+    arrived_early: 0,
+    arrived_late: 0,
+    left_early: 0,
+    left_late: 0,
+    missing_punch: 0,
+    no_show: 0,
+  };
+  const attendance: ReportsAttendanceRow[] = [];
+  let expectedDays = 0;
+  let attendedDays = 0;
+
+  const shiftFor = (employee: ReportEmployee): ReportShift =>
+    employee.Shift_ID !== null
+      ? shiftById.get(employee.Shift_ID) ?? DEFAULT_REPORT_SHIFT
+      : DEFAULT_REPORT_SHIFT;
+
+  const branchOf = (list: ReportPunch[], employee: ReportEmployee): string => {
+    for (const punch of list) {
+      const branch =
+        (punch.Log_Branch ?? "").trim() || (punch.Terminal_Branch ?? "").trim();
+      if (branch) return branch;
+    }
+    return (employee.Branch_Name ?? "").trim() || "Unassigned";
+  };
+
+  const recordException = (
+    kind: ReportsExceptionKind,
+    employee: ReportEmployee,
+    dayKey: string,
+    branch: string,
+    timestamp: number | null,
+    varianceMin: number | null
+  ): void => {
+    const trend = trendByKey.get(dayKey);
+    if (!trend) return;
+
+    trend[TREND_FIELDS[kind]] += 1;
+    counts[kind] += 1;
+    if (kind === "arrived_late") lateEmployees.add(employee.Employee_ID);
+    branchCounts.set(branch, (branchCounts.get(branch) ?? 0) + 1);
+    pendingEvents.push({
+      date: dayKey,
+      employeeId: employee.Employee_ID,
+      employeeName: employee.Full_Name,
+      department: employee.Department,
+      branch,
+      exceptionType: EXCEPTION_LABELS[kind] as ReportsEvent["exceptionType"],
+      variance: varianceText(varianceMin),
+      varianceMin,
+      timestamp,
+    });
+  };
+
+  for (const [key, list] of groups) {
+    const [employeeRaw, dayKey] = key.split(":");
+    const employee = employeeById.get(Number(employeeRaw));
+    const day = dayByKey.get(dayKey);
+    if (!employee || !day) continue;
+
+    const shift = shiftFor(employee);
+    const scheduled = shift.days.has(DAY_CODES[day.date.getDay()]);
+    if (scheduled && employee.Created_At <= day.endMs) {
+      expectedDays += 1;
+      attendedDays += 1;
+    }
+
+    const first = list[0];
+    const last = list[list.length - 1];
+    const branch = branchOf(list, employee);
+    const shiftStartMs = day.startMs + shift.startMin * MINUTE_MS;
+    // Overnight shifts (end ≤ start) finish on the following day.
+    const endMin = shift.endMin <= shift.startMin ? shift.endMin + 24 * 60 : shift.endMin;
+    const shiftEndMs = day.startMs + endMin * MINUTE_MS;
+
+    let workedMs = 0;
+    let openSince: number | null = null;
+    for (const punch of list) {
+      if (punch.Direction === "IN") {
+        if (openSince === null) openSince = punch.Timestamp;
+      } else if (openSince !== null) {
+        workedMs += punch.Timestamp - openSince;
+        openSince = null;
+      }
+    }
+
+    if (first.Timestamp < shiftStartMs) {
+      recordException(
+        "arrived_early",
+        employee,
+        dayKey,
+        branch,
+        first.Timestamp,
+        minutesFrom(first.Timestamp, shiftStartMs)
+      );
+    } else if (first.Timestamp > shiftStartMs) {
+      recordException(
+        "arrived_late",
+        employee,
+        dayKey,
+        branch,
+        first.Timestamp,
+        minutesFrom(first.Timestamp, shiftStartMs)
+      );
+    }
+
+    if (last.Direction === "OUT") {
+      if (last.Timestamp < shiftEndMs) {
+        recordException(
+          "left_early",
+          employee,
+          dayKey,
+          branch,
+          last.Timestamp,
+          minutesFrom(last.Timestamp, shiftEndMs)
+        );
+      } else if (last.Timestamp > shiftEndMs + HOUR_MS) {
+        recordException(
+          "left_late",
+          employee,
+          dayKey,
+          branch,
+          last.Timestamp,
+          minutesFrom(last.Timestamp, shiftEndMs + HOUR_MS)
+        );
+      }
+    }
+
+    if (first.Direction === "OUT") {
+      recordException("missing_punch", employee, dayKey, branch, first.Timestamp, null);
+    } else if (list.length % 2 === 1) {
+      recordException("missing_punch", employee, dayKey, branch, last.Timestamp, null);
+    }
+
+    attendance.push({
+      date: dayKey,
+      employeeId: employee.Employee_ID,
+      employeeName: employee.Full_Name,
+      department: employee.Department,
+      branch,
+      clockIn: first.Timestamp,
+      clockOut: last.Direction === "OUT" ? last.Timestamp : null,
+      workedMs,
+      status:
+        first.Direction === "OUT"
+          ? "Missing Punch"
+          : last.Direction === "IN"
+          ? "In Progress"
+          : "Present",
+    });
+  }
+
+  // No-shows: scheduled employee-days with no verified punch.
+  for (const employee of employees) {
+    if ((employee.Status ?? "").trim().toLowerCase() === "inactive") continue;
+    const shift = shiftFor(employee);
+
+    for (const day of dayList) {
+      if (employee.Created_At >= day.endMs) continue;
+      if (!shift.days.has(DAY_CODES[day.date.getDay()])) continue;
+      if (groups.has(`${employee.Employee_ID}:${day.key}`)) continue;
+
+      const shiftStartMs = day.startMs + shift.startMin * MINUTE_MS;
+      // Today is not a no-show until the shift has actually started.
+      if (day.startMs === todayStart && now < shiftStartMs) continue;
+
+      expectedDays += 1;
+      const branch = (employee.Branch_Name ?? "").trim() || "Unassigned";
+      recordException("no_show", employee, day.key, branch, shiftStartMs, null);
+      attendance.push({
+        date: day.key,
+        employeeId: employee.Employee_ID,
+        employeeName: employee.Full_Name,
+        department: employee.Department,
+        branch,
+        clockIn: null,
+        clockOut: null,
+        workedMs: 0,
+        status: "Absent",
+      });
+    }
+  }
+
+  attendance.sort(
+    (a, b) => b.date.localeCompare(a.date) || a.employeeName.localeCompare(b.employeeName)
+  );
+
+  pendingEvents.sort(
+    (a, b) =>
+      (b.timestamp ?? 0) - (a.timestamp ?? 0) ||
+      a.employeeName.localeCompare(b.employeeName)
+  );
+  const events = pendingEvents.slice(0, REPORT_EVENT_LIMIT).map((event, index) => ({
+    ...event,
+    id: `EXC-${String(index + 1).padStart(4, "0")}`,
+  }));
+
+  const trends = dayList.map(
+    (day) => trendByKey.get(day.key) as ReportsTrendPoint
+  );
+
+  const branches: ReportsBranchRow[] = [...branchCounts.entries()]
+    .map(([branchName, totalExceptions]) => ({ branchName, totalExceptions }))
+    .sort(
+      (a, b) =>
+        b.totalExceptions - a.totalExceptions ||
+        a.branchName.localeCompare(b.branchName)
+    );
+
+  const totalExceptions = (Object.values(counts) as number[]).reduce(
+    (sum, value) => sum + value,
+    0
+  );
+  const peak = trends.reduce(
+    (best, point) => {
+      const total =
+        point.arrivedEarly +
+        point.arrivedLate +
+        point.leftEarly +
+        point.leftLate +
+        point.missingPunch +
+        point.noShow;
+      return total > best.total ? { date: point.date, total } : best;
+    },
+    { date: trends[trends.length - 1]?.date ?? "", total: 0 }
+  );
+  const rosterSize = employees.length;
+  const onTimeRate =
+    rosterSize > 0
+      ? Math.round(((rosterSize - lateEmployees.size) / rosterSize) * 100)
+      : 100;
+  const attendanceRate =
+    expectedDays > 0 ? Math.round((attendedDays / expectedDays) * 100) : 100;
+
+  const summary: ReportsSummary = {
+    windowDays,
+    windowFrom: dayList[0].key,
+    windowTo: dayList[dayList.length - 1].key,
+    rosterSize,
+    totalExceptions,
+    counts,
+    branchesCovered: branchCounts.size,
+    onTimeRate,
+    attendanceRate,
+    averagePerDay: Number((totalExceptions / windowDays).toFixed(1)),
+    peakDay: peak.date,
+    peakDayTotal: peak.total,
+  };
+
+  return {
+    trends,
+    branches,
+    events,
+    attendance,
+    summary,
     generatedAt: now,
   };
 }

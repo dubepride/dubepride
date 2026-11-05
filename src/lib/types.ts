@@ -919,6 +919,101 @@ export interface ExceptionsResponse {
 }
 
 /* ------------------------------------------------------------------ */
+/* Reports & Analytics — live data from Attendance_Logs                */
+/* ------------------------------------------------------------------ */
+
+/** The six exception buckets, as stored in the reports wire shape. */
+export type ReportsExceptionKind =
+  | "arrived_early"
+  | "arrived_late"
+  | "left_early"
+  | "left_late"
+  | "missing_punch"
+  | "no_show";
+
+/** One day of the reports timeline. */
+export interface ReportsTrendPoint {
+  /** "YYYY-MM-DD" local calendar day. */
+  date: string;
+  arrivedEarly: number;
+  arrivedLate: number;
+  leftEarly: number;
+  leftLate: number;
+  missingPunch: number;
+  noShow: number;
+}
+
+/** Exception totals grouped by the branch recorded on the punch. */
+export interface ReportsBranchRow {
+  branchName: string;
+  totalExceptions: number;
+}
+
+/** One exception in the Recent Exception Events table / CSV exports. */
+export interface ReportsEvent {
+  /** Display id, assigned after sorting: "EXC-0001". */
+  id: string;
+  /** "YYYY-MM-DD". */
+  date: string;
+  employeeId: number;
+  employeeName: string;
+  department: string;
+  branch: string;
+  exceptionType:
+    | "Arrived Early"
+    | "Arrived Late"
+    | "Left Early"
+    | "Left Late"
+    | "Missing Punch"
+    | "No Show";
+  /** Signed whole minutes against the baseline ("—" when not applicable). */
+  variance: string;
+  varianceMin: number | null;
+  /** Punch time (null for no-show rows). Used for ordering only. */
+  timestamp: number | null;
+}
+
+/** One employee × one calendar day, used by the Attendance/Absent exports. */
+export interface ReportsAttendanceRow {
+  /** "YYYY-MM-DD". */
+  date: string;
+  employeeId: number;
+  employeeName: string;
+  department: string;
+  branch: string;
+  clockIn: number | null;
+  clockOut: number | null;
+  workedMs: number;
+  status: "Present" | "In Progress" | "Missing Punch" | "Absent";
+}
+
+/** Headline KPI block derived from the live rows above. */
+export interface ReportsSummary {
+  windowDays: number;
+  windowFrom: string;
+  windowTo: string;
+  rosterSize: number;
+  totalExceptions: number;
+  counts: Record<ReportsExceptionKind, number>;
+  branchesCovered: number;
+  onTimeRate: number;
+  attendanceRate: number;
+  averagePerDay: number;
+  peakDay: string;
+  peakDayTotal: number;
+}
+
+/** GET /api/reports — live Reports & Analytics payload. */
+export interface ReportsResponse {
+  trends: ReportsTrendPoint[];
+  branches: ReportsBranchRow[];
+  events: ReportsEvent[];
+  attendance: ReportsAttendanceRow[];
+  summary: ReportsSummary;
+  generatedAt: number;
+}
+
+/* ------------------------------------------------------------------ */
 /* Phase 15 — Hands-Free Geofenced Mobile Clocking                     */
 /* ------------------------------------------------------------------ */
 

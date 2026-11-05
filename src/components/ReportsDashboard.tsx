@@ -2,13 +2,12 @@
 
 import type { ComponentType } from "react";
 import { IconAlert, IconCalendar, IconChart, IconClock } from "@/components/icons";
-import { dateKeyOf, pad2 } from "@/lib/format";
-import {
-  mockBranchExceptions,
-  mockExceptionEvents,
-  mockExceptionTrends,
-} from "@/lib/mock-reports";
-import type { DashboardResponse } from "@/lib/types";
+import { dateKeyOf, formatDateString, formatDuration, pad2 } from "@/lib/format";
+import type {
+  DashboardResponse,
+  ReportsEvent,
+  ReportsResponse,
+} from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
 import {
   Area,
@@ -32,6 +31,11 @@ const COLORS = {
   bar: "#A855F7", // Purple
 };
 
+/** Reports poll slowly — it is a seven-day aggregate, not a live feed. */
+const REPORT_DAYS = 7;
+const REPORT_POLL_MS = 60_000;
+const REPORTS_URL = `/api/reports?days=${REPORT_DAYS}`;
+
 interface TooltipPayload {
   name: string;
   value: number;
@@ -44,11 +48,7 @@ interface CustomTooltipProps {
   label?: string;
 }
 
-const ExceptionTypeChip = ({
-  type,
-}: {
-  type: (typeof mockExceptionEvents)[0]["exceptionType"];
-}) => {
+const ExceptionTypeChip = ({ type }: { type: ReportsEvent["exceptionType"] }) => {
   const tone =
     type === "No Show" || type === "Missing Punch"
       ? "chip--danger"
@@ -81,49 +81,20 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   );
 };
 
+function ChartEmpty({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="grid h-full place-items-center px-6 text-center">
+      <div>
+        <p className="text-sm font-semibold text-ink">{title}</p>
+        <p className="mt-1 text-xs text-muted">{hint}</p>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
-/* Report generation — deterministic stats derived from the mock sets  */
+/* Report cards                                                        */
 /* ------------------------------------------------------------------ */
-
-/** Daily-series totals across the 7-day window. */
-const TREND_TOTAL = mockExceptionTrends.reduce(
-  (sum, d) => sum + d.arrivedLate + d.leftEarly + d.missingPunch + d.noShow,
-  0
-);
-const LATE_TOTAL = mockExceptionTrends.reduce((s, d) => s + d.arrivedLate, 0);
-const EARLY_TOTAL = mockExceptionTrends.reduce((s, d) => s + d.leftEarly, 0);
-const MISSING_TOTAL = mockExceptionTrends.reduce((s, d) => s + d.missingPunch, 0);
-const NOSHOW_TOTAL = mockExceptionTrends.reduce((s, d) => s + d.noShow, 0);
-
-/** Mean exceptions per day: 140 records ÷ 7 days. */
-const AVG_PER_DAY = mockExceptionTrends.length
-  ? TREND_TOTAL / mockExceptionTrends.length
-  : 0;
-
-/** Staff appearing in the exception table who were never late. */
-const UNIQUE_EMPLOYEES = new Set(mockExceptionEvents.map((e) => e.employeeName)).size;
-const LATE_EMPLOYEES = new Set(
-  mockExceptionEvents
-    .filter((e) => e.exceptionType === "Arrived Late")
-    .map((e) => e.employeeName)
-).size;
-const ON_TIME_RATE = UNIQUE_EMPLOYEES
-  ? Math.round(((UNIQUE_EMPLOYEES - LATE_EMPLOYEES) / UNIQUE_EMPLOYEES) * 100)
-  : 100;
-
-/** Share of expected punches that were present (no-show + missing punch out). */
-const ATTENDANCE_RATE = TREND_TOTAL
-  ? Math.round((1 - (NOSHOW_TOTAL + MISSING_TOTAL) / TREND_TOTAL) * 100)
-  : 100;
-
-/** Busiest exception day in the daily series. */
-const PEAK_DAY = mockExceptionTrends.reduce(
-  (best, d) => {
-    const total = d.arrivedLate + d.leftEarly + d.missingPunch + d.noShow;
-    return total > best.total ? { date: d.date, total } : best;
-  },
-  { date: mockExceptionTrends[0]?.date ?? "", total: 0 }
-);
 
 type ReportId = "attendance" | "late" | "absent" | "summary";
 
@@ -143,7 +114,7 @@ const REPORT_CARDS: ReportCard[] = [
     id: "attendance",
     slug: "attendance",
     title: "Attendance Report",
-    description: "Full period attendance with worked hours per employee.",
+    description: "Every employee-day in the window with clock in/out and worked hours.",
     Icon: IconCalendar,
     tone: "border-neon/40 bg-neon/10 text-neon",
   },
@@ -151,7 +122,7 @@ const REPORT_CARDS: ReportCard[] = [
     id: "late",
     slug: "late-arrivals",
     title: "Late Arrivals Report",
-    description: "Everyone who clocked in after the 08:00 shift start.",
+    description: "Everyone who clocked in after their own shift start.",
     Icon: IconClock,
     tone: "border-warn/40 bg-warn/10 text-warn",
   },
@@ -159,7 +130,7 @@ const REPORT_CARDS: ReportCard[] = [
     id: "absent",
     slug: "absent",
     title: "Absent Report",
-    description: "Enrolled employees with no verified punch.",
+    description: "Scheduled employee-days with no verified punch.",
     Icon: IconAlert,
     tone: "border-danger/40 bg-danger/10 text-danger",
   },
@@ -174,7 +145,7 @@ const REPORT_CARDS: ReportCard[] = [
 ];
 
 /* ------------------------------------------------------------------ */
-/* CSV plumbing — every builder runs inside the click handler          */
+/* CSV plumbing — built from the live payload inside click handlers    */
 /* ------------------------------------------------------------------ */
 
 type CsvRow = (string | number)[];
@@ -198,118 +169,81 @@ function downloadCsv(filename: string, rows: CsvRow[]): void {
   URL.revokeObjectURL(url);
 }
 
-/** "08:00" → 480 minutes. */
-function minutesOf(hhmm: string): number {
-  const [h, m] = hhmm.split(":");
-  return Number(h) * 60 + Number(m);
+/** 24-hour clock for CSV cells: "08:45". */
+function clockOf(ms: number): string {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-/** Slide a wall clock by ±minutes, wrapping past midnight. */
-function shiftClock(hhmm: string, delta: number): string {
-  const total = (((minutesOf(hhmm) + delta) % 1440) + 1440) % 1440;
-  return `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
-}
+/** Attendance — every employee × day row, including absences. */
+function attendanceRows(reports: ReportsResponse): CsvRow[] {
+  const rows = reports.attendance.map<CsvRow>((row) => [
+    row.date,
+    row.employeeName,
+    row.department,
+    row.branch,
+    row.clockIn !== null ? clockOf(row.clockIn) : "—",
+    row.clockOut !== null ? clockOf(row.clockOut) : "—",
+    row.workedMs > 0 ? formatDuration(row.workedMs) : "—",
+    row.status,
+  ]);
 
-/** "08:45" → "17:00" becomes "8h 15m". */
-function durationBetween(start: string, end: string): string {
-  const delta = minutesOf(end) - minutesOf(start);
-  if (delta <= 0) return "0h 00m";
-  return `${Math.floor(delta / 60)}h ${pad2(delta % 60)}m`;
-}
-
-/** "+45 mins" → 45, "-32 mins" → -32, "—" → null. */
-function varianceMinutes(variance: string): number | null {
-  const match = /^\+?(-?\d+)\s*mins?$/.exec(variance.trim());
-  return match ? Number(match[1]) : null;
-}
-
-/**
- * Attendance — one line per logged exception, reconstructed into
- * In / Out / Worked around the 08:00–17:00 shift (deterministic; the
- * mock dataset tags each row with its branch, used as the department
- * unit in exports).
- */
-function attendanceRows(): CsvRow[] {
-  const rows = mockExceptionEvents.map<CsvRow>((e) => {
-    const delta = varianceMinutes(e.variance);
-    let clockIn = "08:00";
-    let clockOut = "17:00";
-
-    if (
-      delta !== null &&
-      (e.exceptionType === "Arrived Late" || e.exceptionType === "Arrived Early")
-    ) {
-      clockIn = shiftClock("08:00", delta);
-    }
-    if (delta !== null && e.exceptionType === "Left Early") {
-      clockOut = shiftClock("17:00", delta);
-    }
-    if (delta !== null && e.exceptionType === "Left Late") {
-      clockOut = shiftClock("17:00", Math.abs(delta));
-    }
-    if (e.exceptionType === "Missing Punch") clockOut = "";
-    if (e.exceptionType === "No Show") {
-      clockIn = "";
-      clockOut = "";
-    }
-
-    const worked = clockIn && clockOut ? durationBetween(clockIn, clockOut) : "";
-    return [
-      e.date,
-      e.employeeName,
-      e.branch,
-      clockIn || "—",
-      clockOut || "—",
-      worked || "—",
-    ];
-  });
-
-  return [["Date", "Employee", "Department", "In", "Out", "Worked"], ...rows];
-}
-
-/** Late arrivals — everyone punched in after the 08:00 shift start. */
-function lateArrivalRows(): CsvRow[] {
-  const rows = mockExceptionEvents
-    .filter((e) => e.exceptionType === "Arrived Late")
-    .map<CsvRow>((e) => [
-      e.date,
-      e.employeeName,
-      e.branch,
-      varianceMinutes(e.variance) ?? 0,
-    ]);
-
-  return [["Date", "Employee", "Department", "Minutes Late"], ...rows];
-}
-
-/** Absent — enrolled staff with a "No Show" (no verified punch). */
-function absentRows(): CsvRow[] {
-  const rows = mockExceptionEvents
-    .filter((e) => e.exceptionType === "No Show")
-    .map<CsvRow>((e) => [e.date, e.employeeName, e.branch]);
-
-  return [["Date", "Employee", "Department"], ...rows];
-}
-
-/** Summary — headline KPIs computed from the daily series + event table. */
-function summaryRows(): CsvRow[] {
   return [
-    ["Metric", "Value"],
-    ["Total Exception Records", TREND_TOTAL],
-    ["Exception Rows Logged", mockExceptionEvents.length],
-    ["Arrived Late", LATE_TOTAL],
-    ["Left Early", EARLY_TOTAL],
-    ["Missing Punch", MISSING_TOTAL],
-    ["No Show", NOSHOW_TOTAL],
-    ["Branches Covered", mockBranchExceptions.length],
-    ["Peak Exception Day", PEAK_DAY.date],
-    ["Peak Day Exceptions", PEAK_DAY.total],
-    ["On-Time Rate %", ON_TIME_RATE],
-    ["Average Day", AVG_PER_DAY.toFixed(1)],
-    ["Attendance %", ATTENDANCE_RATE],
+    ["Date", "Employee", "Department", "Branch", "In", "Out", "Worked", "Status"],
+    ...rows,
   ];
 }
 
-const CSV_BUILDERS: Record<ReportId, () => CsvRow[]> = {
+/** Late arrivals — live events where the first punch beat the shift start. */
+function lateArrivalRows(reports: ReportsResponse): CsvRow[] {
+  const rows = reports.events
+    .filter((event) => event.exceptionType === "Arrived Late")
+    .map<CsvRow>((event) => [
+      event.date,
+      event.employeeName,
+      event.branch,
+      event.department,
+      event.varianceMin ?? 0,
+    ]);
+
+  return [["Date", "Employee", "Branch", "Department", "Minutes Late"], ...rows];
+}
+
+/** Absent — scheduled days with no verified punch. */
+function absentRows(reports: ReportsResponse): CsvRow[] {
+  const rows = reports.attendance
+    .filter((row) => row.status === "Absent")
+    .map<CsvRow>((row) => [row.date, row.employeeName, row.branch, row.department]);
+
+  return [["Date", "Employee", "Branch", "Department"], ...rows];
+}
+
+/** Summary — headline KPIs computed by the live reports query. */
+function summaryRows(reports: ReportsResponse): CsvRow[] {
+  const { summary } = reports;
+
+  return [
+    ["Metric", "Value"],
+    ["Window", `${summary.windowFrom} → ${summary.windowTo}`],
+    ["Days", summary.windowDays],
+    ["Roster Size", summary.rosterSize],
+    ["Total Exception Records", summary.totalExceptions],
+    ["Arrived Early", summary.counts.arrived_early],
+    ["Arrived Late", summary.counts.arrived_late],
+    ["Left Early", summary.counts.left_early],
+    ["Left Late", summary.counts.left_late],
+    ["Missing Punch", summary.counts.missing_punch],
+    ["No Show", summary.counts.no_show],
+    ["Branches Covered", summary.branchesCovered],
+    ["Peak Exception Day", summary.peakDay],
+    ["Peak Day Exceptions", summary.peakDayTotal],
+    ["On-Time Rate %", summary.onTimeRate],
+    ["Average Day", summary.averagePerDay.toFixed(1)],
+    ["Attendance %", summary.attendanceRate],
+  ];
+}
+
+const CSV_BUILDERS: Record<ReportId, (reports: ReportsResponse) => CsvRow[]> = {
   attendance: attendanceRows,
   late: lateArrivalRows,
   absent: absentRows,
@@ -317,9 +251,9 @@ const CSV_BUILDERS: Record<ReportId, () => CsvRow[]> = {
 };
 
 /** Event-handler helper: builds one report CSV and downloads it. */
-function generateReportCsv(card: ReportCard): void {
+function generateReportCsv(card: ReportCard, reports: ReportsResponse): void {
   const stamp = dateKeyOf(Date.now());
-  downloadCsv(`biobridge-${card.slug}-report-${stamp}`, CSV_BUILDERS[card.id]());
+  downloadCsv(`biobridge-${card.slug}-report-${stamp}`, CSV_BUILDERS[card.id](reports));
 }
 
 /** True when an interaction started inside one of the card's own buttons. */
@@ -329,13 +263,22 @@ function fromInnerButton(target: EventTarget | null): boolean {
 
 export default function ReportsDashboard() {
   /**
-   * Live headline summary — same payload the dashboard's summary cards
-   * render (Total / Present / Late / Absent). While the first tick is in
-   * flight, or if the endpoint fails, every tile degrades to "—" and the
-   * rest of the page keeps rendering from the mock sets.
+   * Quick stats come from /api/dashboard (the same payload the dashboard
+   * summary cards render). Everything below — trends, branch breakdown,
+   * event table and CSV rows — comes from the live /api/reports aggregate.
    */
   const { data: dashboard } = usePoll<DashboardResponse>("/api/dashboard", 10000);
+  const {
+    data: reports,
+    error: reportsError,
+    loading: reportsLoading,
+  } = usePoll<ReportsResponse>(REPORTS_URL, REPORT_POLL_MS);
+
   const summary = dashboard?.summary ?? null;
+  const reportSummary = reports?.summary ?? null;
+  const trends = reports?.trends ?? [];
+  const branches = reports?.branches ?? [];
+  const events = reports?.events ?? [];
 
   const quickStats: { label: string; value: string; sub: string; tone: string }[] = [
     {
@@ -347,13 +290,13 @@ export default function ReportsDashboard() {
     {
       label: "Present",
       value: summary ? String(summary.present) : "—",
-      sub: "first punch ≤ 08:00",
+      sub: "first punch ≤ shift start",
       tone: "via-neon/60",
     },
     {
       label: "Late",
       value: summary ? String(summary.late) : "—",
-      sub: "first punch after 08:00",
+      sub: "first punch after shift start",
       tone: "via-warn/60",
     },
     {
@@ -381,67 +324,87 @@ export default function ReportsDashboard() {
         <span className="chip chip--muted">
           <span className="flex items-center gap-2">
             <IconChart className="h-4 w-4 text-neon" />
-            Exception Analysis
+            Live · Last {reportSummary?.windowDays ?? REPORT_DAYS} days
           </span>
         </span>
       </div>
 
+      {reportsError ? (
+        <div className="rounded-xl border border-danger/30 bg-danger/[0.08] px-4 py-3 text-xs text-danger">
+          Live report data could not be refreshed ({reportsError}).
+          {reports
+            ? " Showing the last successful snapshot."
+            : " The charts and export will fill in when the bridge responds."}
+        </div>
+      ) : null}
+
       {/* Report generators -------------------------------------------- */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {REPORT_CARDS.map((card) => (
-          <section
-            key={card.id}
-            role="button"
-            tabIndex={0}
-            aria-label={`Download the ${card.title} as CSV`}
-            onClick={(e) => {
-              // Interactions that started on an inner button keep their own
-              // single action — the card never double-fires the export.
-              if (fromInnerButton(e.target)) return;
-              generateReportCsv(card);
-            }}
-            onKeyDown={(e) => {
-              if (fromInnerButton(e.target)) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                generateReportCsv(card);
-              }
-            }}
-            className="glass relative cursor-pointer overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:border-neon/40! hover:bg-white/[0.05]! focus-visible:border-neon/40!"
-          >
-            <div className="accent-line" aria-hidden="true" />
-            <div className="flex h-full flex-col gap-4 p-5">
-              <div className="flex items-start gap-3">
-                <span
-                  className={`grid h-10 w-10 flex-none place-items-center rounded-xl border ${card.tone}`}
-                  aria-hidden="true"
-                >
-                  <card.Icon className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-bold text-ink">{card.title}</h3>
-                  <p className="mt-1 text-xs text-muted">{card.description}</p>
+        {REPORT_CARDS.map((card) => {
+          const disabled = !reports;
+          return (
+            <section
+              key={card.id}
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              aria-disabled={disabled}
+              aria-label={`Download the ${card.title} as CSV`}
+              onClick={(e) => {
+                if (!reports) return;
+                // Interactions that started on an inner button keep their own
+                // single action — the card never double-fires the export.
+                if (fromInnerButton(e.target)) return;
+                generateReportCsv(card, reports);
+              }}
+              onKeyDown={(e) => {
+                if (!reports) return;
+                if (fromInnerButton(e.target)) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  generateReportCsv(card, reports);
+                }
+              }}
+              className={`glass relative overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:border-neon/40! hover:bg-white/[0.05]! focus-visible:border-neon/40! ${
+                disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              }`}
+            >
+              <div className="accent-line" aria-hidden="true" />
+              <div className="flex h-full flex-col gap-4 p-5">
+                <div className="flex items-start gap-3">
+                  <span
+                    className={`grid h-10 w-10 flex-none place-items-center rounded-xl border ${card.tone}`}
+                    aria-hidden="true"
+                  >
+                    <card.Icon className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold text-ink">{card.title}</h3>
+                    <p className="mt-1 text-xs text-muted">{card.description}</p>
+                  </div>
+                </div>
+                <div className="mt-auto flex items-center gap-2 border-t border-white/[0.07] pt-4">
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    className="btn btn--neon px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => {
+                      if (reports) generateReportCsv(card, reports);
+                    }}
+                  >
+                    CSV
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase"
+                    onClick={handlePrint}
+                  >
+                    Print
+                  </button>
                 </div>
               </div>
-              <div className="mt-auto flex items-center gap-2 border-t border-white/[0.07] pt-4">
-                <button
-                  type="button"
-                  className="btn btn--neon px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase"
-                  onClick={() => generateReportCsv(card)}
-                >
-                  CSV
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase"
-                  onClick={handlePrint}
-                >
-                  Print
-                </button>
-              </div>
-            </div>
-          </section>
-        ))}
+            </section>
+          );
+        })}
       </div>
 
       {/* Quick statistics --------------------------------------------- */}
@@ -481,87 +444,99 @@ export default function ReportsDashboard() {
               </h2>
             </div>
             <span className="font-mono text-[10px] tracking-wider text-muted">
-              LAST 7 DAYS
+              LAST {REPORT_DAYS} DAYS
             </span>
           </header>
           <div className="h-[320px] p-4 sm:p-5">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={mockExceptionTrends}
-                margin={{ top: 10, right: 10, left: -10, bottom: 10 }}
-              >
-                <defs>
-                  <linearGradient id="late" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.arrivedLate} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={COLORS.arrivedLate} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="early" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.leftEarly} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={COLORS.leftEarly} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="missing" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.missingPunch} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={COLORS.missingPunch} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="noshow" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.noShow} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={COLORS.noShow} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(160, 174, 192, 0.12)" />
-                <XAxis
-                  dataKey="date"
-                  stroke="#A0AEC0"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#A0AEC0"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  allowDecimals={false}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend
-                  wrapperStyle={{ fontSize: "11px", paddingTop: "12px" }}
-                  iconType="circle"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="arrivedLate"
-                  name="Arrived Late"
-                  stroke={COLORS.arrivedLate}
-                  fillOpacity={1}
-                  fill="url(#late)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="leftEarly"
-                  name="Left Early"
-                  stroke={COLORS.leftEarly}
-                  fillOpacity={1}
-                  fill="url(#early)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="missingPunch"
-                  name="Missing Punch"
-                  stroke={COLORS.missingPunch}
-                  fillOpacity={1}
-                  fill="url(#missing)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="noShow"
-                  name="No Show"
-                  stroke={COLORS.noShow}
-                  fillOpacity={1}
-                  fill="url(#noshow)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            {reports ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={trends}
+                  margin={{ top: 10, right: 10, left: -10, bottom: 10 }}
+                >
+                  <defs>
+                    <linearGradient id="late" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.arrivedLate} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={COLORS.arrivedLate} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="early" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.leftEarly} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={COLORS.leftEarly} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="missing" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.missingPunch} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={COLORS.missingPunch} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="noshow" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.noShow} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={COLORS.noShow} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(160, 174, 192, 0.12)" />
+                  <XAxis
+                    dataKey="date"
+                    stroke="#A0AEC0"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value: string) => formatDateString(value)}
+                  />
+                  <YAxis
+                    stroke="#A0AEC0"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend
+                    wrapperStyle={{ fontSize: "11px", paddingTop: "12px" }}
+                    iconType="circle"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="arrivedLate"
+                    name="Arrived Late"
+                    stroke={COLORS.arrivedLate}
+                    fillOpacity={1}
+                    fill="url(#late)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="leftEarly"
+                    name="Left Early"
+                    stroke={COLORS.leftEarly}
+                    fillOpacity={1}
+                    fill="url(#early)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="missingPunch"
+                    name="Missing Punch"
+                    stroke={COLORS.missingPunch}
+                    fillOpacity={1}
+                    fill="url(#missing)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="noShow"
+                    name="No Show"
+                    stroke={COLORS.noShow}
+                    fillOpacity={1}
+                    fill="url(#noshow)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <ChartEmpty
+                title={reportsLoading ? "Loading live data…" : "Reports unavailable"}
+                hint={
+                  reportsLoading
+                    ? "Aggregating the last seven days of verified punches."
+                    : "The bridge did not return a report payload."
+                }
+              />
+            )}
           </div>
         </section>
 
@@ -576,47 +551,66 @@ export default function ReportsDashboard() {
               </h2>
             </div>
             <span className="font-mono text-[10px] tracking-wider text-muted">
-              TOP BRANCHES
+              TOP {Math.min(8, branches.length) || "—"}
             </span>
           </header>
           <div className="h-[320px] p-4 sm:p-5">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={mockBranchExceptions}
-                layout="vertical"
-                margin={{ top: 10, right: 20, left: 10, bottom: 10 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="rgba(160, 174, 192, 0.12)"
-                  horizontal={false}
-                />
-                <XAxis
-                  type="number"
-                  stroke="#A0AEC0"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  allowDecimals={false}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="branchName"
-                  stroke="#A0AEC0"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  width={70}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar
-                  dataKey="totalExceptions"
-                  name="Total Exceptions"
-                  radius={[8, 8, 8, 8]}
-                  fill={COLORS.bar}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            {reports && branches.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={branches.slice(0, 8)}
+                  layout="vertical"
+                  margin={{ top: 10, right: 20, left: 10, bottom: 10 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="rgba(160, 174, 192, 0.12)"
+                    horizontal={false}
+                  />
+                  <XAxis
+                    type="number"
+                    stroke="#A0AEC0"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="branchName"
+                    stroke="#A0AEC0"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    width={90}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar
+                    dataKey="totalExceptions"
+                    name="Total Exceptions"
+                    radius={[8, 8, 8, 8]}
+                    fill={COLORS.bar}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <ChartEmpty
+                title={
+                  reportsLoading
+                    ? "Loading live data…"
+                    : reports
+                    ? "No branch exceptions yet"
+                    : "Reports unavailable"
+                }
+                hint={
+                  reportsLoading
+                    ? "Grouping verified punches by their branch."
+                    : reports
+                    ? "Exceptions appear here once punches are recorded."
+                    : "The bridge did not return a report payload."
+                }
+              />
+            )}
           </div>
         </section>
       </div>
@@ -632,7 +626,9 @@ export default function ReportsDashboard() {
             </h2>
           </div>
           <span className="font-mono text-[10px] tracking-wider text-muted">
-            {mockExceptionEvents.length} RECORDS
+            {reports
+              ? `${events.length} OF ${reportSummary?.totalExceptions ?? 0} RECORDS`
+              : "— RECORDS"}
           </span>
         </header>
         <div className="scroll-thin overflow-x-auto">
@@ -648,7 +644,7 @@ export default function ReportsDashboard() {
               </tr>
             </thead>
             <tbody>
-              {mockExceptionEvents.map((event) => (
+              {events.map((event) => (
                 <tr key={event.id} className="tbl-row">
                   <td>
                     <span className="font-mono text-xs text-muted tabular-nums">
@@ -684,6 +680,26 @@ export default function ReportsDashboard() {
                   </td>
                 </tr>
               ))}
+              {events.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-10 text-center">
+                    <p className="text-sm font-semibold text-ink">
+                      {reportsLoading
+                        ? "Loading live exceptions…"
+                        : reports
+                        ? "No exception events in this window."
+                        : "Live report data unavailable."}
+                    </p>
+                    <p className="mt-1 text-xs text-muted">
+                      {reportsLoading
+                        ? "Verified punches are being aggregated."
+                        : reports
+                        ? "Late arrivals, early departures, missing punches and no-shows will appear here."
+                        : "Check the bridge connection and reload the page."}
+                    </p>
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
