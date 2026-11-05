@@ -180,7 +180,7 @@ function Intro({ fade }: { fade: Animated.Value }): React.ReactElement {
 
       <Animated.View style={[styles.brandBlock, copyStyle]}>
         <Text style={styles.brand}>BIOBRIDGE</Text>
-        <Text style={styles.tagline}>MINE EAZY · TIME &amp; ATTENDANCE</Text>
+        <Text style={styles.tagline}>TIME &amp; ATTENDANCE</Text>
       </Animated.View>
 
       <View style={styles.progressTrack}>
