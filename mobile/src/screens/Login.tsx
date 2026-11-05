@@ -26,11 +26,13 @@ import {
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { useAuth } from "@/lib/session";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import LOGO from "../../assets/icon.png";
 
 export function Login(): React.ReactElement {
   const { signIn, initialApiUrl, deviceId, deviceName } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [apiUrl, setApiUrl] = useState(initialApiUrl);
@@ -71,7 +73,15 @@ export function Login(): React.ReactElement {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[
+          styles.scroll,
+          {
+            paddingTop: insets.top + SPACING.xl,
+            paddingBottom: insets.bottom + SPACING.xl,
+            paddingLeft: insets.left + SPACING.xl,
+            paddingRight: insets.right + SPACING.xl,
+          },
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>

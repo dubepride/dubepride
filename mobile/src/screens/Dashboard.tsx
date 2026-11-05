@@ -22,8 +22,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Panel } from "@/components/Panel";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -62,13 +64,19 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
 }
 
 export function Dashboard(): React.ReactElement {
-  const { session, signOut, refreshFences } = useAuth();
+  const { session, signOut, refreshFences, tracking, retryTracking } = useAuth();
   const geofence = useGeofenceStatus(session);
   const queue = usePendingQueue(session);
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+
+  // Keep the map usable on small phones and proportionate on tablets.
+  const mapHeight = Math.max(220, Math.min(340, Math.round(width * 0.62)));
 
   const [clockBusy, setClockBusy] = useState(false);
   const [clockMessage, setClockMessage] = useState<string | null>(null);
   const [clockError, setClockError] = useState<string | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
 
   // Live 4s sync with the server so web-console geofence and employee edits
   // reflect immediately.
@@ -101,6 +109,9 @@ export function Dashboard(): React.ReactElement {
   const onSite = geofence.inside;
   const hasFix = geofence.hasFix;
   const noFence = sites.length === 0;
+  const trackingOn = tracking?.ok === true;
+  const trackingMessage =
+    tracking?.message ?? "Location sharing is not running yet. Enable it to appear on the Field Tracker.";
 
   const handleClock = async (): Promise<void> => {
     if (clockBusy) return;
@@ -145,12 +156,31 @@ export function Dashboard(): React.ReactElement {
     }
   };
 
+  const handleRetryTracking = async (): Promise<void> => {
+    if (retryBusy) return;
+    setRetryBusy(true);
+    try {
+      await retryTracking();
+    } finally {
+      setRetryBusy(false);
+    }
+  };
+
   return (
     <ScrollView
       style={styles.flex}
-      contentContainerStyle={styles.scroll}
+      contentContainerStyle={[
+        styles.scroll,
+        {
+          paddingTop: insets.top + SPACING.md,
+          paddingBottom: insets.bottom + SPACING.xxl,
+          paddingLeft: insets.left + SPACING.lg,
+          paddingRight: insets.right + SPACING.lg,
+        },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
+      <View style={styles.shell}>
       {/* ── Brand bar ───────────────────────────────────────────────── */}
       <View style={styles.topBar}>
         <Image source={LOGO} style={styles.topLogo} resizeMode="cover" />
@@ -321,6 +351,16 @@ export function Dashboard(): React.ReactElement {
             value={`${sites.length} registered site${sites.length === 1 ? "" : "s"}`}
           />
           <Row
+            label="Field Tracker"
+            value={
+              tracking?.ok
+                ? "Sharing location"
+                : tracking
+                  ? "Not sharing"
+                  : "Starting…"
+            }
+          />
+          <Row
             label="GPS accuracy"
             value={
               geofence.accuracyMeters === null
@@ -361,16 +401,36 @@ export function Dashboard(): React.ReactElement {
           </View>
         ) : null}
 
-        <View style={styles.locationNotice}>
+        <View style={[styles.locationNotice, trackingOn ? null : styles.locationNoticeWarn]}>
           <View style={styles.locationNoticeHeader}>
-            <View style={styles.locationDot} />
-            <Text style={styles.locationNoticeTitle}>Location sharing on</Text>
+            <View
+              style={[styles.locationDot, trackingOn ? null : styles.locationDotWarn]}
+            />
+            <Text
+              style={[
+                styles.locationNoticeTitle,
+                trackingOn ? null : styles.locationNoticeTitleWarn,
+              ]}
+            >
+              {trackingOn ? "Field Tracker sharing on" : "Location sharing needs attention"}
+            </Text>
           </View>
           <Text style={styles.locationNoticeText}>
-            While you are signed in, this phone sends its latest location to the
-            office Field Tracker so the branch can see who is on site. Sharing
-            stops when you sign out.
+            {trackingOn
+              ? noFence
+                ? "No geofenced site is configured yet, but this phone still shares its latest location with the office Field Tracker while you are signed in. Sharing stops when you sign out."
+                : "This phone shares its latest location with the office Field Tracker while you are signed in — online or offline. Cached fixes upload automatically when internet returns. Sharing stops when you sign out."
+              : trackingMessage}
           </Text>
+          {trackingOn ? null : (
+            <PrimaryButton
+              label="RETRY LOCATION SHARING"
+              variant="soft"
+              onPress={() => void handleRetryTracking()}
+              loading={retryBusy}
+              style={styles.retryButton}
+            />
+          )}
         </View>
       </Panel>
 
@@ -391,7 +451,7 @@ export function Dashboard(): React.ReactElement {
               ? { latitude: geofence.latitude, longitude: geofence.longitude }
               : null
           }
-          height={260}
+          height={mapHeight}
         />
         <Text style={styles.note}>
           Fence circles reflect the live radii and coordinates configured on the
@@ -462,6 +522,7 @@ export function Dashboard(): React.ReactElement {
           Device locked{session.deviceName ? ` · ${session.deviceName}` : ""}
         </Text>
       </View>
+      </View>
     </ScrollView>
   );
 }
@@ -492,8 +553,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   scroll: {
-    padding: SPACING.lg + 2,
-    paddingBottom: SPACING.xxl,
+    flexGrow: 1,
+    width: "100%",
+  },
+  shell: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center",
     gap: SPACING.lg,
   },
 
@@ -773,6 +839,13 @@ const styles = StyleSheet.create({
     borderColor: COLORS.borderSoft,
     backgroundColor: COLORS.panelDeep,
   },
+  locationNoticeWarn: {
+    borderColor: "rgba(255, 179, 0, 0.45)",
+    backgroundColor: COLORS.warningSoft,
+  },
+  retryButton: {
+    marginTop: SPACING.md,
+  },
   locationNoticeHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -785,12 +858,18 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: COLORS.neon,
   },
+  locationDotWarn: {
+    backgroundColor: COLORS.warning,
+  },
   locationNoticeTitle: {
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 1.2,
     textTransform: "uppercase",
     color: COLORS.neon,
+  },
+  locationNoticeTitleWarn: {
+    color: COLORS.warning,
   },
   locationNoticeText: {
     fontSize: FONT.small,

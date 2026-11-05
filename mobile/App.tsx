@@ -21,6 +21,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/lib/session";
 import { Dashboard } from "@/screens/Dashboard";
@@ -261,10 +262,12 @@ function Screens(): React.ReactElement {
 
 export default function App(): React.ReactElement {
   return (
-    <AuthProvider>
-      <StatusBar style="light" />
-      <Screens />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <StatusBar style="light" />
+        <Screens />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 

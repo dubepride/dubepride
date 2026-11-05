@@ -37,11 +37,15 @@
  *  To keep that overshoot small without draining the battery while idling, the
  *  fix cadence runs at two speeds (see geo.ts):
  *
- *      relaxed  every 120 s  · idling, nobody on site
- *      armed    every  30 s  · someone is dwelling → punch lands 3:00–3:30
+ *      relaxed  every 60 s  · idling, nobody on site
+ *      armed    every 30 s  · someone is dwelling → punch lands 3:00–3:30
  *
  *  The ENTER event re-requests the armed cadence; the punch (or leaving the
  *  site) re-requests the relaxed one.
+ *
+ *  Every fix ALSO feeds the Field Tracker heartbeat, even when no geofence is
+ *  configured. That heartbeat is latest-position-only, works offline (the last
+ *  fix is kept on the device), and stops only when the employee signs out.
  *
  *  ─────────────────────────────────────────────────────────────────────
  *  THE OTHER TWO RULES THAT MATTER
@@ -86,7 +90,6 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { Platform } from "react-native";
 
-import { reportPresence, sendOrQueue } from "@/lib/api";
 import {
   DWELL_MIN_SAMPLES,
   DWELL_MS,
@@ -104,9 +107,16 @@ import {
   regionRadiusMeters,
   sessionSites,
 } from "@/lib/geo";
-import { clearDwell, readDwell, readSession, writeDwell } from "@/lib/storage";
+import { deliverPresence } from "@/lib/presence";
+import {
+  clearDwell,
+  clearPendingPresence,
+  readDwell,
+  readSession,
+  writeDwell,
+} from "@/lib/storage";
 import { COLORS } from "@/theme";
-import type { DwellState, GeoFenceSite, GeoPunchPayload, MobileSession } from "@/lib/types";
+import type { DwellState, GeoFenceSite, MobileSession } from "@/lib/types";
 
 export { DWELL_TASK, GEOFENCE_TASK };
 
@@ -265,9 +275,10 @@ let evaluating = false;
 
 /**
  * Field Tracker heartbeat: the app reports the latest fix while signed in, so
- * the web map can show where each phone is. Latest-only, so it is throttled
- * well above the server's 15 s guard; a missed report simply waits for the
- * next fix. Reporting never blocks or aborts the punch state machine.
+ * the web map can show where each phone is. Latest-only, so it is throttled to
+ * one report per fix cadence; a missed report is stored on the device and
+ * flushed when connectivity returns. Reporting never blocks or aborts the
+ * punch state machine.
  */
 const PRESENCE_REPORT_MS = 30_000;
 let lastPresenceAt = 0;
@@ -279,17 +290,17 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
     const session = await readSession();
     if (!session) return;
 
-    const sites = sessionSites(session);
-    if (sites.length === 0) return;
-
     const { latitude, longitude, accuracy } = fix.coords;
+    const sites = sessionSites(session);
+    const now = Date.now();
 
     // ── Field Tracker heartbeat (signed in, in the background) ────────
-    const now = Date.now();
+    // Sent even when no fence is configured — the office still benefits from
+    // seeing the phone. `deliverPresence` queues the fix if we are offline.
     if (now - lastPresenceAt >= PRESENCE_REPORT_MS) {
       lastPresenceAt = now;
       const nearest = nearestSite(sites, latitude, longitude);
-      await reportPresence(
+      await deliverPresence(
         { apiUrl: session.apiUrl, mobileKey: session.mobileKey },
         {
           employeeRef: session.employee.erpUserId,
@@ -303,6 +314,10 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
         }
       );
     }
+
+    // The dwell/punch state machine only makes sense when at least one
+    // registered fence exists; the heartbeat above already went out.
+    if (sites.length === 0) return;
 
     // The site this fix lands in. The bridge re-derives the same answer and is
     // the final word — but the dwell needs it to know where "here" is, and to
@@ -470,15 +485,10 @@ export async function startGeofenceTracking(
   // Phase 17 — the phone watches EVERY registered site, not just the
   // employee's roster branch: an employee may travel, and a punch is judged
   // against whichever fence they are physically inside.
+  //
+  // A missing fence must NOT disable location sharing: the Field Tracker still
+  // needs the phone's latest position, and a fence may be configured later.
   const sites = sessionSites(session);
-  if (sites.length === 0) {
-    return {
-      ok: false,
-      reason: "no-fence",
-      message:
-        "No branch has mobile clocking set up yet — you can still clock in with the button or the fingerprint terminal.",
-    };
-  }
 
   if (IS_WEB) {
     return {
@@ -529,22 +539,35 @@ export async function startGeofenceTracking(
     // configured radius. Android caps a single app at 100 regions, far above
     // any realistic branch list; if registration is ever refused the fix
     // stream below still detects arrival within one interval.
-    try {
-      await Location.startGeofencingAsync(
-        GEOFENCE_TASK,
-        sites.map((site) => ({
-          identifier: regionIdentifier(site, session.employee.employeeId),
-          latitude: site.latitude,
-          longitude: site.longitude,
-          radius: regionRadiusMeters(site),
-          notifyOnEnter: true,
-          notifyOnExit: true,
-        }))
-      );
-    } catch (err) {
-      // Non-fatal: the fix stream below still detects arrival within one
-      // interval, just without the immediate ENTER wake-up.
-      log("region monitoring unavailable:", err instanceof Error ? err.message : err);
+    if (sites.length > 0) {
+      try {
+        await Location.startGeofencingAsync(
+          GEOFENCE_TASK,
+          sites.map((site) => ({
+            identifier: regionIdentifier(site, session.employee.employeeId),
+            latitude: site.latitude,
+            longitude: site.longitude,
+            radius: regionRadiusMeters(site),
+            notifyOnEnter: true,
+            notifyOnExit: true,
+          }))
+        );
+      } catch (err) {
+        // Non-fatal: the fix stream below still detects arrival within one
+        // interval, just without the immediate ENTER wake-up.
+        log("region monitoring unavailable:", err instanceof Error ? err.message : err);
+      }
+    } else {
+      // A fence may have been removed on the web app. Drop any stale region
+      // registration so the OS isn't watching a site this session no longer
+      // has, while the fix stream keeps the Field Tracker fed.
+      try {
+        if (await Location.hasStartedGeofencingAsync(GEOFENCE_TASK)) {
+          await Location.stopGeofencingAsync(GEOFENCE_TASK);
+        }
+      } catch {
+        /* nothing registered */
+      }
     }
 
     await Location.startLocationUpdatesAsync(DWELL_TASK, locationOptions("relaxed"));
@@ -553,7 +576,12 @@ export async function startGeofenceTracking(
     return {
       ok: true,
       reason: "active",
-      message: `Sharing your location while signed in — ${sites.length} registered site${sites.length === 1 ? "" : "s"}.`,
+      message:
+        sites.length === 0
+          ? "Sharing your location while signed in — no geofenced site is configured yet, but the Field Tracker still receives this phone."
+          : `Sharing your location while signed in — ${sites.length} registered site${
+              sites.length === 1 ? "" : "s"
+            }.`,
     };
   } catch (err) {
     return {
@@ -568,6 +596,9 @@ export async function startGeofenceTracking(
 export async function stopGeofenceTracking(): Promise<void> {
   cadence = null;
   await clearDwell();
+  // A queued Field Tracker fix belongs to a signed-in employee; signing out
+  // must never let it be uploaded afterwards.
+  await clearPendingPresence();
   try {
     if (await Location.hasStartedGeofencingAsync(GEOFENCE_TASK)) {
       await Location.stopGeofencingAsync(GEOFENCE_TASK);

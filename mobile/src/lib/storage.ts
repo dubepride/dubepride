@@ -21,7 +21,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-import type { DwellState, MobileSession, QueuedPunch } from "./types";
+import type {
+  DwellState,
+  MobileSession,
+  PresencePayload,
+  QueuedPunch,
+} from "./types";
 
 /** Versioned so a future shape change can't be misread as the old one. */
 export const STORAGE_KEYS = {
@@ -30,6 +35,7 @@ export const STORAGE_KEYS = {
   apiUrl: "biobridge.apiUrl.v1",
   queue: "biobridge.queue.v1",
   dwell: "biobridge.dwell.v1",
+  presence: "biobridge.presence.v1",
 } as const;
 
 /**
@@ -170,4 +176,25 @@ export async function writeDwell(state: DwellState | null): Promise<void> {
 /** Forget the current visit entirely — called on EXIT and on sign-out. */
 export async function clearDwell(): Promise<void> {
   await writeDwell(null);
+}
+
+/* ------------------------------------------------------------------ */
+/* Field Tracker presence (AsyncStorage)                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The latest fix whose heartbeat could not reach the bridge. Latest-position
+ * only: a newer fix replaces the old one, so reconnecting never replays a
+ * stale trail of movement.
+ */
+export async function readPendingPresence(): Promise<PresencePayload | null> {
+  return readJson<PresencePayload | null>(STORAGE_KEYS.presence, null);
+}
+
+export async function writePendingPresence(payload: PresencePayload): Promise<void> {
+  await writeJson(STORAGE_KEYS.presence, payload);
+}
+
+export async function clearPendingPresence(): Promise<void> {
+  await AsyncStorage.removeItem(STORAGE_KEYS.presence).catch(() => undefined);
 }

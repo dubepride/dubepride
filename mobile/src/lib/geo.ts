@@ -25,7 +25,12 @@ export const REGION_PREFIX = "biobridge:";
 
 export const DWELL_MS = 3 * 60 * 1000;
 export const DWELL_MIN_SAMPLES = 2;
-export const LOCATION_INTERVAL_RELAXED_MS = 120_000;
+/**
+ * While signed in the fix stream also feeds the Field Tracker. A relaxed fix
+ * every 60 s keeps the map fresh (the bridge marks a phone stale after 5 min)
+ * without the battery cost of the armed cadence.
+ */
+export const LOCATION_INTERVAL_RELAXED_MS = 60_000;
 export const LOCATION_INTERVAL_ARMED_MS = 30_000;
 export const LOCATION_DISTANCE_M = 25;
 export const ACCURACY_SLACK_M = 0;

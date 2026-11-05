@@ -235,6 +235,14 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
         await writeSession(next);
         setSession(next);
       }
+
+      // Coming back online after an offline unlock is the moment to make sure
+      // the background fix stream is actually running again (permissions may
+      // have been granted since the cached sign-in).
+      if (active.offline) {
+        setTracking(await startGeofenceTracking(next));
+      }
+
       return { updated: changed, count: nextFences.length };
     } catch {
       // Keep existing cached session if server is temporarily unreachable

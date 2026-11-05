@@ -12,6 +12,9 @@
  *    1. Instant OS network recovery listener (expo-network).
  *    2. App foreground / resume listener (AppState).
  *    3. Periodic polling interval (10s) while pending punches exist.
+ *
+ *  The same triggers also publish a Field Tracker presence fix that could not
+ *  be sent while the phone was offline.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,6 +22,7 @@ import { AppState } from "react-native";
 import * as Network from "expo-network";
 
 import { flushOfflineQueue } from "@/lib/api";
+import { flushPendingPresence } from "@/lib/presence";
 import { listQueued } from "@/lib/queue";
 import type { MobileSession, QueuedPunch } from "@/lib/types";
 
@@ -27,6 +31,9 @@ const POLL_MS = 4000;
 
 /** Background backstop auto-sync cadence when items are queued. */
 const AUTO_SYNC_INTERVAL_MS = 10_000;
+
+/** Don't hammer an offline bridge with presence retries while polling. */
+const PRESENCE_FLUSH_MS = 30_000;
 
 export interface PendingQueueState {
   pending: QueuedPunch[];
@@ -51,6 +58,8 @@ export function usePendingQueue(
   const [error, setError] = useState<string | null>(null);
 
   const inFlight = useRef(false);
+  const presenceInFlight = useRef(false);
+  const lastPresenceFlush = useRef(0);
 
   const sessionRef = useRef(session);
   useEffect(() => {
@@ -75,7 +84,25 @@ export function usePendingQueue(
   const flush = useCallback(
     async (): Promise<void> => {
       const active = sessionRef.current;
-      if (!active || inFlight.current) return;
+      if (!active) return;
+
+      // The Field Tracker heartbeat is independent of the punch queue: publish
+      // the last known fix as soon as the connection is back, even when there
+      // are no punches waiting.
+      const now = Date.now();
+      if (!presenceInFlight.current && now - lastPresenceFlush.current >= PRESENCE_FLUSH_MS) {
+        presenceInFlight.current = true;
+        lastPresenceFlush.current = now;
+        try {
+          await flushPendingPresence(active);
+        } catch {
+          // Still offline — the fix stays queued for the next trigger.
+        } finally {
+          presenceInFlight.current = false;
+        }
+      }
+
+      if (inFlight.current) return;
 
       const currentQueue = await listQueued();
       if (currentQueue.length === 0) return;
@@ -134,13 +161,17 @@ export function usePendingQueue(
     // Instant Wi-Fi / Cellular network recovery
     const networkSub = Network.addNetworkStateListener((state) => {
       if (state.isConnected && state.isInternetReachable !== false) {
+        lastPresenceFlush.current = 0;
         void checkAndSync();
       }
     });
 
     // App coming back from background
     const appSub = AppState.addEventListener("change", (status) => {
-      if (status === "active") void checkAndSync();
+      if (status === "active") {
+        lastPresenceFlush.current = 0;
+        void checkAndSync();
+      }
     });
 
     // Periodic backstop check

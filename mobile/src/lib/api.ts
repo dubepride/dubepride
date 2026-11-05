@@ -101,12 +101,13 @@ interface JsonResponse<T> {
 async function requestJson<T>(
   url: string,
   init: RequestInit,
-  timeoutMs: number = REQUEST_TIMEOUT_MS
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  attempts: number = 3
 ): Promise<JsonResponse<T>> {
   let response: Response | null = null;
   let lastNetErr: unknown = null;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -115,7 +116,7 @@ async function requestJson<T>(
       break;
     } catch (err) {
       lastNetErr = err;
-      if (attempt < 2) {
+      if (attempt < attempts - 1) {
         await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
       }
     } finally {
@@ -333,7 +334,8 @@ export async function postGeoPunch(
  */
 export async function postPresence(
   target: PunchTarget,
-  payload: PresencePayload
+  payload: PresencePayload,
+  options?: { timeoutMs?: number; attempts?: number }
 ): Promise<void> {
   const hw = await getDeviceIdentity();
   const deviceId = (payload.deviceId ?? hw.deviceId).trim();
@@ -359,7 +361,9 @@ export async function postPresence(
         deviceId,
         deviceName,
       }),
-    }
+    },
+    options?.timeoutMs,
+    options?.attempts
   );
 
   if (!result.ok || !result.body?.ok) {
