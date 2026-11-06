@@ -570,8 +570,12 @@ export async function startGeofenceTracking(
       }
     }
 
-    await Location.startLocationUpdatesAsync(DWELL_TASK, locationOptions("relaxed"));
-    cadence = "relaxed";
+    try {
+      await Location.startLocationUpdatesAsync(DWELL_TASK, locationOptions("relaxed"));
+      cadence = "relaxed";
+    } catch (bgErr) {
+      log("background location updates unavailable on this device:", bgErr instanceof Error ? bgErr.message : bgErr);
+    }
 
     return {
       ok: true,

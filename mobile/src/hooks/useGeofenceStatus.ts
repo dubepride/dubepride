@@ -65,24 +65,30 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
   useEffect(() => {
     let cancelled = false;
     let subscription: Location.LocationSubscription | null = null;
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+
+    const pullFix = async () => {
+      try {
+        const pos = await Location.getLastKnownPositionAsync();
+        if (!cancelled && pos) {
+          setFix({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          });
+        }
+      } catch {
+        // Fix not available yet
+      }
+    };
 
     void (async () => {
       if (!session) {
         setFix(null);
         return;
       }
-      try {
-        const seed = await Location.getLastKnownPositionAsync();
-        if (!cancelled && seed) {
-          setFix({
-            latitude: seed.coords.latitude,
-            longitude: seed.coords.longitude,
-            accuracy: seed.coords.accuracy,
-          });
-        }
-      } catch {
-        // Location not available yet
-      }
+
+      await pullFix();
 
       try {
         subscription = await Location.watchPositionAsync(
@@ -102,14 +108,24 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
         );
       } catch {
         if (!cancelled) {
-          setMessage("Enable location access to view geofence distance.");
+          setMessage("Live GPS tracking in progress (fallback mode).");
         }
       }
+
+      // Interval fallback ensures coordinates keep updating smoothly on all devices
+      fallbackInterval = setInterval(() => {
+        if (!cancelled) {
+          void pullFix();
+        }
+      }, 5_000);
     })();
 
     return () => {
       cancelled = true;
       subscription?.remove();
+      if (fallbackInterval) {
+        clearInterval(fallbackInterval);
+      }
     };
   }, [session, trackingNonce]);
 

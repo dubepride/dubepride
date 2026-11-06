@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "run:android": "expo run:android",
     "run:ios": "expo run:ios",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/patch-expo-location.js"
   },
   "dependencies": {
     "@expo/metro-runtime": "^6.1.2",

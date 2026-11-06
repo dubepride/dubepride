@@ -50,17 +50,58 @@ function timeLabel(timestamp: number): string {
 }
 
 async function currentFix(message: string): Promise<Location.LocationObject> {
-  if (!(await Location.hasServicesEnabledAsync())) {
-    throw new Error("Location Services are switched off on your device.");
+  const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
+  if (!servicesEnabled) {
+    throw new Error("Location Services are switched off on your device. Please enable Location in Settings.");
   }
-  const permission = await Location.getForegroundPermissionsAsync();
-  if (permission.status !== Location.PermissionStatus.GRANTED) {
-    const asked = await Location.requestForegroundPermissionsAsync();
-    if (asked.status !== Location.PermissionStatus.GRANTED) {
+  const permission = await Location.getForegroundPermissionsAsync().catch(() => null);
+  if (!permission || permission.status !== Location.PermissionStatus.GRANTED) {
+    const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
+    if (!asked || asked.status !== Location.PermissionStatus.GRANTED) {
       throw new Error(message);
     }
   }
-  return Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+
+  // 1. Primary: High Accuracy (standard on GMS devices)
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+      timeInterval: 4000,
+    });
+  } catch (errHigh) {
+    console.warn("High accuracy fix failed, attempting Balanced fallback:", errHigh);
+  }
+
+  // 2. Secondary fallback: Balanced Accuracy (cell/wifi/standard GPS)
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      timeInterval: 4000,
+    });
+  } catch (errBalanced) {
+    console.warn("Balanced accuracy fix failed, attempting LastKnown fallback:", errBalanced);
+  }
+
+  // 3. Tertiary fallback: Most recent known fix
+  try {
+    const lastKnown = await Location.getLastKnownPositionAsync();
+    if (lastKnown) {
+      return lastKnown;
+    }
+  } catch (errLast) {
+    console.warn("Last known position failed:", errLast);
+  }
+
+  // 4. Final attempt: Lowest accuracy
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Lowest,
+    });
+  } catch (errFinal) {
+    console.warn("Lowest accuracy fix failed:", errFinal);
+  }
+
+  throw new Error("Could not acquire GPS position. Please make sure Location/GPS is turned on in your phone's Settings and try again.");
 }
 
 export function Dashboard(): React.ReactElement {
