@@ -34,7 +34,7 @@ import { StatusChip } from "@/components/StatusChip";
 import { useGeofenceStatus } from "@/hooks/useGeofenceStatus";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
 import { sendOrQueue } from "@/lib/api";
-import { formatDistance, sessionSites } from "@/lib/geo";
+import { activeSite, formatDistance, nearestSite, sessionSites } from "@/lib/geo";
 import { useAuth } from "@/lib/session";
 import type { GeoPunchPayload } from "@/lib/types";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
@@ -105,7 +105,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
 }
 
 export function Dashboard(): React.ReactElement {
-  const { session, signOut, refreshFences, tracking, retryTracking } = useAuth();
+  const { session, signOut, refreshFences, tracking, retryTracking, recordLocalPunch } = useAuth();
   const geofence = useGeofenceStatus(session);
   const queue = usePendingQueue(session);
   const insets = useSafeAreaInsets();
@@ -161,28 +161,61 @@ export function Dashboard(): React.ReactElement {
     setClockError(null);
 
     try {
-      await refreshFences();
-      const position = await currentFix(
-        "Location permission is required to record your attendance punch."
-      );
+      // Non-blocking background geofence refresh attempt
+      void refreshFences().catch(() => {});
+
+      let lat = geofence.latitude;
+      let lng = geofence.longitude;
+      let acc = geofence.accuracyMeters;
+
+      if (lat === null || lng === null) {
+        const position = await currentFix(
+          "Location permission is required to record your attendance punch."
+        );
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+        acc = position.coords.accuracy === null ? null : Math.round(position.coords.accuracy);
+      }
+
+      // Check geofence boundary locally (vital for instant offline accuracy)
+      const matched = activeSite(sites, lat, lng, acc);
+      if (sites.length > 0 && !matched) {
+        const nearest = nearestSite(sites, lat, lng, acc);
+        if (nearest) {
+          const diff = nearest.distanceMeters - nearest.site.radiusMeters;
+          setClockError(
+            `Outside geofence: You are ${formatDistance(diff)} outside ${nearest.site.branch} (distance: ${formatDistance(nearest.distanceMeters)}, allowed radius: ${nearest.site.radiusMeters}m).`
+          );
+        } else {
+          setClockError("Outside authorised geofence. Please move inside your branch perimeter to clock.");
+        }
+        return;
+      }
+
+      const nextDirection: "IN" | "OUT" = dayStatus?.clockedIn ? "OUT" : "IN";
 
       const payload: GeoPunchPayload = {
         employeeRef: employee.erpUserId,
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracyMeters:
-          position.coords.accuracy === null ? null : Math.round(position.coords.accuracy),
+        latitude: lat,
+        longitude: lng,
+        accuracyMeters: acc,
         deviceId: session.deviceId ?? null,
         deviceName: session.deviceName ?? null,
         timestamp: Date.now(),
+        branchRef: matched?.site.branch ?? undefined,
       };
 
       const dispatch = await sendOrQueue(session, payload);
       if (dispatch.queued) {
-        setClockMessage("Punch recorded offline — it will sync automatically when internet returns.");
+        await recordLocalPunch(nextDirection, payload.timestamp);
+        const branchName = matched?.site.branch ?? homeSite;
+        setClockMessage(
+          `Clocked ${nextDirection === "IN" ? "IN" : "OUT"} offline at ${branchName}. Stored safely and will sync when online.`
+        );
         void queue.triggerAutoSync();
       } else if (dispatch.response?.ok) {
-        setClockMessage(dispatch.response.message ?? "Punch recorded successfully.");
+        await recordLocalPunch(nextDirection, payload.timestamp);
+        setClockMessage(dispatch.response.message ?? `Clocked ${nextDirection === "IN" ? "IN" : "OUT"} successfully.`);
         void refreshFences();
       } else {
         setClockError(
@@ -489,7 +522,11 @@ export function Dashboard(): React.ReactElement {
           home={session.geofence}
           me={
             geofence.hasFix && geofence.latitude !== null && geofence.longitude !== null
-              ? { latitude: geofence.latitude, longitude: geofence.longitude }
+              ? {
+                  latitude: geofence.latitude,
+                  longitude: geofence.longitude,
+                  accuracy: geofence.accuracyMeters,
+                }
               : null
           }
           height={mapHeight}

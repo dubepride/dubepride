@@ -282,7 +282,8 @@ export type PunchTarget = Pick<MobileSession, "apiUrl" | "mobileKey">;
 
 export async function postGeoPunch(
   target: PunchTarget,
-  payload: GeoPunchPayload
+  payload: GeoPunchPayload,
+  options?: { timeoutMs?: number; attempts?: number }
 ): Promise<GeoPunchResponse> {
   const hw = await getDeviceIdentity();
   const deviceId = (payload.deviceId ?? hw.deviceId).trim();
@@ -308,7 +309,9 @@ export async function postGeoPunch(
         deviceName,
         timestamp: payload.timestamp,
       }),
-    }
+    },
+    options?.timeoutMs,
+    options?.attempts
   );
 
   if (result.status === 401) {
@@ -426,7 +429,8 @@ export async function sendOrQueue(
   payload: GeoPunchPayload
 ): Promise<PunchDispatch> {
   try {
-    const response = await postGeoPunch(target, payload);
+    // Responsive 3.5s timeout / 1 attempt prevents offline hangs on clock in/out
+    const response = await postGeoPunch(target, payload, { timeoutMs: 3500, attempts: 1 });
     return { queued: false, response, message: response.message };
   } catch (err) {
     if (err instanceof NetworkError) {

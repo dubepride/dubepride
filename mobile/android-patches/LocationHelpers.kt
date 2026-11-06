@@ -43,6 +43,36 @@ class LocationHelpers {
     }
 
     /**
+     * Determines whether one Location reading is better than the current Location fix.
+     * Prevents low-accuracy cell tower fixes from overriding high-precision GPS fixes.
+     */
+    fun isBetterLocation(location: Location, currentBestLocation: Location?): Boolean {
+      if (currentBestLocation == null) return true
+
+      val timeDelta = location.time - currentBestLocation.time
+      val isSignificantlyNewer = timeDelta > 60_000
+      val isSignificantlyOlder = timeDelta < -60_000
+      val isNewer = timeDelta > 0
+
+      if (isSignificantlyNewer) return true
+      if (isSignificantlyOlder) return false
+
+      val accuracyDelta = (location.accuracy - currentBestLocation.accuracy).toInt()
+      val isLessAccurate = accuracyDelta > 0
+      val isMoreAccurate = accuracyDelta < 0
+      val isSignificantlyLessAccurate = accuracyDelta > 50
+
+      val isFromSameProvider = location.provider == currentBestLocation.provider
+
+      return when {
+        isMoreAccurate -> true
+        isNewer && !isLessAccurate -> true
+        isNewer && !isSignificantlyLessAccurate && isFromSameProvider -> true
+        else -> false
+      }
+    }
+
+    /**
      * Obtains the most recent location known to the device's native LocationManager (GPS, Network, Passive).
      */
     fun getLastKnownLocationFromLocationManager(context: Context?): Location? {
@@ -54,7 +84,7 @@ class LocationHelpers {
         try {
           if (locationManager.isProviderEnabled(provider)) {
             val loc = locationManager.getLastKnownLocation(provider)
-            if (loc != null && (best == null || loc.time > best.time)) {
+            if (loc != null && isBetterLocation(loc, best)) {
               best = loc
             }
           }
@@ -79,7 +109,7 @@ class LocationHelpers {
       }
 
       val bestLastKnown = getLastKnownLocationFromLocationManager(context)
-      if (bestLastKnown != null && (System.currentTimeMillis() - bestLastKnown.time) < 15_000) {
+      if (bestLastKnown != null && bestLastKnown.accuracy <= 30f && (System.currentTimeMillis() - bestLastKnown.time) < 20_000) {
         promise.resolve(LocationResponse(bestLastKnown))
         return
       }

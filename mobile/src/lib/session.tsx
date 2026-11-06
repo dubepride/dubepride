@@ -37,7 +37,7 @@ import {
   writeSavedApiUrl,
   writeSession,
 } from "./storage";
-import type { MobileSession } from "./types";
+import type { MobileDayStatus, MobileSession } from "./types";
 import {
   startGeofenceTracking,
   stopGeofenceTracking,
@@ -75,6 +75,8 @@ interface AuthContextValue {
   retryTracking: () => Promise<void>;
   /** Refresh active geofences, radii, employee profile & day status from the server. */
   refreshFences: () => Promise<{ updated: boolean; count: number }>;
+  /** Immediately toggle dayStatus in the local session for offline punch responsiveness. */
+  recordLocalPunch: (direction: "IN" | "OUT", time?: number) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -356,6 +358,26 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
     setTracking(await startGeofenceTracking(session));
   }, [session]);
 
+  const recordLocalPunch = useCallback(
+    async (direction: "IN" | "OUT", time: number = Date.now()): Promise<void> => {
+      const active = sessionRef.current;
+      if (!active) return;
+      const nextDayStatus: MobileDayStatus = {
+        clockedIn: direction === "IN",
+        lastPunchAt: time,
+        lastDirection: direction,
+      };
+      const next: MobileSession = {
+        ...active,
+        dayStatus: nextDayStatus,
+      };
+      sessionRef.current = next;
+      await writeSession(next);
+      setSession(next);
+    },
+    []
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -368,6 +390,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       signOut,
       retryTracking,
       refreshFences,
+      recordLocalPunch,
     }),
     [
       status,
@@ -380,6 +403,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       signOut,
       retryTracking,
       refreshFences,
+      recordLocalPunch,
     ]
   );
 

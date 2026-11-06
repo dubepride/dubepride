@@ -588,21 +588,23 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
       return
     }
 
-    val provider = when {
-      lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-      lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-      lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) -> LocationManager.PASSIVE_PROVIDER
-      else -> null
-    }
+    val gpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+    val networkEnabled = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+    val passiveEnabled = lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)
 
-    if (provider == null) {
+    if (!gpsEnabled && !networkEnabled && !passiveEnabled) {
       callbacks.onRequestFailed(LocationUnavailableException())
       return
     }
 
+    var bestCurrent: Location? = LocationHelpers.getLastKnownLocationFromLocationManager(mContext)
+
     val nativeListener = object : LocationListener {
       override fun onLocationChanged(location: Location) {
-        callbacks.onLocationChanged(location)
+        if (LocationHelpers.isBetterLocation(location, bestCurrent)) {
+          bestCurrent = location
+          callbacks.onLocationChanged(location)
+        }
       }
       override fun onProviderDisabled(p: String) {}
       override fun onProviderEnabled(p: String) {}
@@ -619,13 +621,33 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
         callbacks.onLocationChanged(it)
       }
 
-      lm.requestLocationUpdates(
-        provider,
-        locationRequest.intervalMillis,
-        locationRequest.minUpdateDistanceMeters,
-        nativeListener,
-        Looper.getMainLooper()
-      )
+      if (gpsEnabled) {
+        lm.requestLocationUpdates(
+          LocationManager.GPS_PROVIDER,
+          locationRequest.intervalMillis,
+          locationRequest.minUpdateDistanceMeters,
+          nativeListener,
+          Looper.getMainLooper()
+        )
+      }
+      if (networkEnabled) {
+        lm.requestLocationUpdates(
+          LocationManager.NETWORK_PROVIDER,
+          locationRequest.intervalMillis,
+          locationRequest.minUpdateDistanceMeters,
+          nativeListener,
+          Looper.getMainLooper()
+        )
+      }
+      if (!gpsEnabled && !networkEnabled && passiveEnabled) {
+        lm.requestLocationUpdates(
+          LocationManager.PASSIVE_PROVIDER,
+          locationRequest.intervalMillis,
+          locationRequest.minUpdateDistanceMeters,
+          nativeListener,
+          Looper.getMainLooper()
+        )
+      }
       callbacks.onRequestSuccess()
     } catch (e: SecurityException) {
       callbacks.onRequestFailed(LocationRequestRejectedException(e))

@@ -11,7 +11,7 @@
  */
 
 import * as Location from "expo-location";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   nearestSite,
@@ -19,6 +19,7 @@ import {
   sessionSites,
   type SiteMatch,
 } from "@/lib/geo";
+import { LocationSmoother } from "@/lib/smoother";
 import type { MobileSession } from "@/lib/types";
 
 interface Fix {
@@ -55,8 +56,12 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
   const [fix, setFix] = useState<Fix | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [trackingNonce, setTrackingNonce] = useState(0);
+  const smootherRef = useRef(new LocationSmoother());
 
-  const refreshTracking = useCallback(() => setTrackingNonce((n) => n + 1), []);
+  const refreshTracking = useCallback(() => {
+    smootherRef.current.reset();
+    setTrackingNonce((n) => n + 1);
+  }, []);
 
   const sites = useMemo(() => sessionSites(session), [session]);
   const configured = sites.length > 0;
@@ -71,10 +76,16 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
       try {
         const pos = await Location.getLastKnownPositionAsync();
         if (!cancelled && pos) {
-          setFix({
+          const smoothed = smootherRef.current.smooth({
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
             accuracy: pos.coords.accuracy,
+            timestamp: pos.timestamp ?? Date.now(),
+          });
+          setFix({
+            latitude: smoothed.latitude,
+            longitude: smoothed.longitude,
+            accuracy: smoothed.accuracy,
           });
         }
       } catch {
@@ -94,15 +105,21 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
         subscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
-            timeInterval: 5_000,
-            distanceInterval: 5,
+            timeInterval: 1_500,
+            distanceInterval: 1,
           },
           (update) => {
             if (cancelled) return;
-            setFix({
+            const smoothed = smootherRef.current.smooth({
               latitude: update.coords.latitude,
               longitude: update.coords.longitude,
               accuracy: update.coords.accuracy,
+              timestamp: update.timestamp ?? Date.now(),
+            });
+            setFix({
+              latitude: smoothed.latitude,
+              longitude: smoothed.longitude,
+              accuracy: smoothed.accuracy,
             });
           }
         );
@@ -117,7 +134,7 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
         if (!cancelled) {
           void pullFix();
         }
-      }, 5_000);
+      }, 2_500);
     })();
 
     return () => {
