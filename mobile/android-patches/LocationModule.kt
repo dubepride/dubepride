@@ -573,10 +573,14 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
     try {
       locationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
         .addOnFailureListener {
+          LocationHelpers.sGooglePlayServicesBroken = true
           requestNativeLocationUpdates(locationRequest, requestId, callbacks)
         }
-      callbacks.onRequestSuccess()
+        .addOnSuccessListener {
+          callbacks.onRequestSuccess()
+        }
     } catch (_: Throwable) {
+      LocationHelpers.sGooglePlayServicesBroken = true
       requestNativeLocationUpdates(locationRequest, requestId, callbacks)
     }
   }

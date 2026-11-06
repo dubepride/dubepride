@@ -62,46 +62,55 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     }
   }
 
-  // 1. Primary: High Accuracy (standard on GMS devices)
-  try {
-    return await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-      timeInterval: 4000,
-    });
-  } catch (errHigh) {
-    console.warn("High accuracy fix failed, attempting Balanced fallback:", errHigh);
-  }
-
-  // 2. Secondary fallback: Balanced Accuracy (cell/wifi/standard GPS)
-  try {
-    return await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 4000,
-    });
-  } catch (errBalanced) {
-    console.warn("Balanced accuracy fix failed, attempting LastKnown fallback:", errBalanced);
-  }
-
-  // 3. Tertiary fallback: Most recent known fix
+  // 1. Immediate: Check for recent known position (fastest response, avoids waiting for satellites)
   try {
     const lastKnown = await Location.getLastKnownPositionAsync();
-    if (lastKnown) {
+    if (lastKnown && lastKnown.coords) {
       return lastKnown;
     }
   } catch (errLast) {
-    console.warn("Last known position failed:", errLast);
+    console.warn("Last known position check:", errLast);
   }
 
-  // 4. Final attempt: Lowest accuracy
+  // 2. Primary: Balanced Accuracy (works universally on all Androids, including non-GMS/Huawei)
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: false,
+    });
+  } catch (errBalanced) {
+    console.warn("Balanced accuracy fix failed:", errBalanced);
+  }
+
+  // 3. High Accuracy attempt
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+      mayShowUserSettingsDialog: false,
+    });
+  } catch (errHigh) {
+    console.warn("High accuracy fix failed:", errHigh);
+  }
+
+  // 4. Fallback: Lowest accuracy
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Lowest,
+      mayShowUserSettingsDialog: false,
     });
   } catch (errFinal) {
     console.warn("Lowest accuracy fix failed:", errFinal);
   }
 
-  throw new Error("Could not acquire GPS position. Please make sure Location/GPS is turned on in your phone's Settings and try again.");
+  // 5. Final check for last known position before failing
+  try {
+    const finalLast = await Location.getLastKnownPositionAsync();
+    if (finalLast && finalLast.coords) {
+      return finalLast;
+    }
+  } catch {}
+
+  throw new Error("Acquiring GPS fix... Satellite lock can take 15–30 seconds indoors on this handset. Please step near a window or outdoors, wait a few moments, and tap Clock In again.");
 }
 
 export function Dashboard(): React.ReactElement {

@@ -28,10 +28,14 @@ import kotlin.coroutines.suspendCoroutine
 
 class LocationHelpers {
   companion object {
+    @Volatile
+    var sGooglePlayServicesBroken: Boolean = false
+
     /**
      * Checks whether Google Play Services is available and working on the device.
      */
     fun isGooglePlayServicesAvailable(context: Context?): Boolean {
+      if (sGooglePlayServicesBroken) return false
       if (context == null) return false
       return try {
         val availability = GoogleApiAvailability.getInstance()
@@ -79,14 +83,13 @@ class LocationHelpers {
       if (context == null) return null
       val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
       var best: Location? = null
-      val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+      val all = try { locationManager.allProviders } catch (_: Throwable) { emptyList<String>() }
+      val providers = (all + listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, "fused")).distinct()
       for (provider in providers) {
         try {
-          if (locationManager.isProviderEnabled(provider)) {
-            val loc = locationManager.getLastKnownLocation(provider)
-            if (loc != null && isBetterLocation(loc, best)) {
-              best = loc
-            }
+          val loc = locationManager.getLastKnownLocation(provider)
+          if (loc != null && isBetterLocation(loc, best)) {
+            best = loc
           }
         } catch (_: Throwable) {}
       }
@@ -109,19 +112,15 @@ class LocationHelpers {
       }
 
       val bestLastKnown = getLastKnownLocationFromLocationManager(context)
-      if (bestLastKnown != null && bestLastKnown.accuracy <= 30f && (System.currentTimeMillis() - bestLastKnown.time) < 20_000) {
+      if (bestLastKnown != null && bestLastKnown.accuracy <= 80f && (System.currentTimeMillis() - bestLastKnown.time) < 300_000L) {
         promise.resolve(LocationResponse(bestLastKnown))
         return
       }
 
-      val provider = when {
-        locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-        locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-        locationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER) -> LocationManager.PASSIVE_PROVIDER
-        else -> null
-      }
+      val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+      val networkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
 
-      if (provider == null) {
+      if (!gpsEnabled && !networkEnabled) {
         if (bestLastKnown != null) {
           promise.resolve(LocationResponse(bestLastKnown))
           return
@@ -162,23 +161,34 @@ class LocationHelpers {
           }
         }
       }
-      mainHandler.postDelayed(timeoutRunnable, 10_000)
+      mainHandler.postDelayed(timeoutRunnable, 25_000L)
 
+      var registered = false
+      if (gpsEnabled) {
+        try {
+          locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
+          registered = true
+        } catch (_: Throwable) {}
+      }
+      if (networkEnabled) {
+        try {
+          locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
+          registered = true
+        } catch (_: Throwable) {}
+      }
       try {
-        locationManager.requestLocationUpdates(provider, 500L, 0f, listener, Looper.getMainLooper())
-      } catch (e: SecurityException) {
-        mainHandler.removeCallbacks(timeoutRunnable)
-        if (bestLastKnown != null) {
-          promise.resolve(LocationResponse(bestLastKnown))
-        } else {
-          promise.reject(LocationRequestRejectedException(e))
+        if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
+          locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
+          registered = true
         }
-      } catch (e: Throwable) {
+      } catch (_: Throwable) {}
+
+      if (!registered) {
         mainHandler.removeCallbacks(timeoutRunnable)
         if (bestLastKnown != null) {
           promise.resolve(LocationResponse(bestLastKnown))
         } else {
-          promise.reject(LocationUnavailableException())
+          promise.reject(CurrentLocationIsUnavailableException())
         }
       }
     }
@@ -242,12 +252,14 @@ class LocationHelpers {
             promise.resolve(LocationResponse(location))
           }
           .addOnFailureListener {
+            sGooglePlayServicesBroken = true
             requestSingleLocationFromLocationManager(context, promise)
           }
           .addOnCanceledListener {
             promise.reject(LocationRequestCancelledException())
           }
       } catch (_: Throwable) {
+        sGooglePlayServicesBroken = true
         requestSingleLocationFromLocationManager(context, promise)
       }
     }

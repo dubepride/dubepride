@@ -87,9 +87,32 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
             longitude: smoothed.longitude,
             accuracy: smoothed.accuracy,
           });
+          return;
         }
       } catch {
         // Fix not available yet
+      }
+
+      // Kickstart provider if no cached position exists
+      try {
+        const fresh = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (!cancelled && fresh) {
+          const smoothed = smootherRef.current.smooth({
+            latitude: fresh.coords.latitude,
+            longitude: fresh.coords.longitude,
+            accuracy: fresh.coords.accuracy,
+            timestamp: fresh.timestamp ?? Date.now(),
+          });
+          setFix({
+            latitude: smoothed.latitude,
+            longitude: smoothed.longitude,
+            accuracy: smoothed.accuracy,
+          });
+        }
+      } catch {
+        // Still acquiring
       }
     };
 
@@ -97,6 +120,20 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
       if (!session) {
         setFix(null);
         return;
+      }
+
+      // Proactively ensure location permission is granted on startup
+      try {
+        const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
+        if (!perm || perm.status !== Location.PermissionStatus.GRANTED) {
+          const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
+          if (!asked || asked.status !== Location.PermissionStatus.GRANTED) {
+            if (!cancelled) setMessage("Location permission is needed for live GPS tracking.");
+            return;
+          }
+        }
+      } catch {
+        // Continue
       }
 
       await pullFix();
