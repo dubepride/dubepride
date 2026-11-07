@@ -245,33 +245,7 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
         return@AsyncFunction
       }
 
-      if (LocationHelpers.hasNetworkProviderEnabled(mContext) || !showUserSettingsDialog) {
-        LocationHelpers.requestContinuousUpdates(this@LocationModule, locationRequest, watchId, promise)
-      } else {
-        // Pending requests can ask the user to turn on improved accuracy mode in user's settings.
-        addPendingLocationRequest(
-          locationRequest,
-          object : LocationActivityResultListener {
-            override fun onResult(resultCode: Int) {
-              if (resultCode == Activity.RESULT_OK) {
-                LocationHelpers.requestContinuousUpdates(this@LocationModule, locationRequest, watchId, promise)
-              } else {
-                requestNativeLocationUpdates(locationRequest, watchId, object : LocationRequestCallbacks {
-                  override fun onLocationChanged(location: Location) {
-                    sendLocationResponse(watchId, LocationResponse(location))
-                  }
-                  override fun onRequestSuccess() {
-                    promise.resolve(null)
-                  }
-                  override fun onRequestFailed(cause: CodedException) {
-                    promise.reject(cause)
-                  }
-                })
-              }
-            }
-          }
-        )
-      }
+      LocationHelpers.requestContinuousUpdates(this@LocationModule, locationRequest, watchId, promise)
     }
 
     AsyncFunction("watchMotionActivityImplAsync") Coroutine { watchId: Int ->
@@ -515,26 +489,8 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
     }
 
     // Read options
-    val locationRequest = LocationHelpers.prepareLocationRequest(options)
     val currentLocationRequest = LocationHelpers.prepareCurrentLocationRequest(options)
-    val showUserSettingsDialog = options.mayShowUserSettingsDialog
-
-    if (LocationHelpers.hasNetworkProviderEnabled(mContext) || !showUserSettingsDialog) {
-      LocationHelpers.requestSingleLocation(mContext, mLocationProvider, currentLocationRequest, promise)
-    } else {
-      addPendingLocationRequest(
-        locationRequest,
-        object : LocationActivityResultListener {
-          override fun onResult(resultCode: Int) {
-            if (resultCode == Activity.RESULT_OK) {
-              LocationHelpers.requestSingleLocation(mContext, mLocationProvider, currentLocationRequest, promise)
-            } else {
-              LocationHelpers.requestSingleLocationFromLocationManager(mContext, promise)
-            }
-          }
-        }
-      )
-    }
+    LocationHelpers.requestSingleLocation(mContext, mLocationProvider, currentLocationRequest, promise)
   }
 
   fun requestLocationUpdates(locationRequest: LocationRequest, requestId: Int?, callbacks: LocationRequestCallbacks) {
@@ -625,32 +581,21 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
         callbacks.onLocationChanged(it)
       }
 
-      if (gpsEnabled) {
-        lm.requestLocationUpdates(
-          LocationManager.GPS_PROVIDER,
-          locationRequest.intervalMillis,
-          locationRequest.minUpdateDistanceMeters,
-          nativeListener,
-          Looper.getMainLooper()
-        )
-      }
-      if (networkEnabled) {
-        lm.requestLocationUpdates(
-          LocationManager.NETWORK_PROVIDER,
-          locationRequest.intervalMillis,
-          locationRequest.minUpdateDistanceMeters,
-          nativeListener,
-          Looper.getMainLooper()
-        )
-      }
-      if (!gpsEnabled && !networkEnabled && passiveEnabled) {
-        lm.requestLocationUpdates(
-          LocationManager.PASSIVE_PROVIDER,
-          locationRequest.intervalMillis,
-          locationRequest.minUpdateDistanceMeters,
-          nativeListener,
-          Looper.getMainLooper()
-        )
+      val all = try { lm.allProviders } catch (_: Throwable) { emptyList<String>() }
+      val providers = (all + listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, "fused")).distinct()
+
+      for (p in providers) {
+        try {
+          if (lm.isProviderEnabled(p) || p == LocationManager.PASSIVE_PROVIDER) {
+            lm.requestLocationUpdates(
+              p,
+              locationRequest.intervalMillis,
+              locationRequest.minUpdateDistanceMeters,
+              nativeListener,
+              Looper.getMainLooper()
+            )
+          }
+        } catch (_: Throwable) {}
       }
       callbacks.onRequestSuccess()
     } catch (e: SecurityException) {

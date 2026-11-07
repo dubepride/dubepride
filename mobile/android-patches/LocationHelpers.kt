@@ -7,6 +7,8 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import androidx.core.location.LocationManagerCompat
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.location.CurrentLocationRequest
@@ -112,22 +114,14 @@ class LocationHelpers {
       }
 
       val bestLastKnown = getLastKnownLocationFromLocationManager(context)
-      if (bestLastKnown != null && bestLastKnown.accuracy <= 80f && (System.currentTimeMillis() - bestLastKnown.time) < 300_000L) {
+      if (bestLastKnown != null && bestLastKnown.accuracy <= 100f && (System.currentTimeMillis() - bestLastKnown.time) < 900_000L) {
         promise.resolve(LocationResponse(bestLastKnown))
         return
       }
 
-      val gpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-      val networkEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-
-      if (!gpsEnabled && !networkEnabled) {
-        if (bestLastKnown != null) {
-          promise.resolve(LocationResponse(bestLastKnown))
-          return
-        }
-        promise.reject(CurrentLocationIsUnavailableException())
-        return
-      }
+      val isLocEnabled = isAnyProviderAvailable(context)
+      val allProviders = try { locationManager.allProviders } catch (_: Throwable) { emptyList<String>() }
+      val providersToTry = (allProviders + listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, "fused")).distinct()
 
       val mainHandler = Handler(Looper.getMainLooper())
       val hasResolved = AtomicBoolean(false)
@@ -164,29 +158,21 @@ class LocationHelpers {
       mainHandler.postDelayed(timeoutRunnable, 25_000L)
 
       var registered = false
-      if (gpsEnabled) {
+      for (p in providersToTry) {
         try {
-          locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
-          registered = true
+          if (locationManager.isProviderEnabled(p) || p == LocationManager.PASSIVE_PROVIDER) {
+            locationManager.requestLocationUpdates(p, 0L, 0f, listener, Looper.getMainLooper())
+            registered = true
+          }
         } catch (_: Throwable) {}
       }
-      if (networkEnabled) {
-        try {
-          locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
-          registered = true
-        } catch (_: Throwable) {}
-      }
-      try {
-        if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
-          locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 0L, 0f, listener, Looper.getMainLooper())
-          registered = true
-        }
-      } catch (_: Throwable) {}
 
       if (!registered) {
         mainHandler.removeCallbacks(timeoutRunnable)
         if (bestLastKnown != null) {
           promise.resolve(LocationResponse(bestLastKnown))
+        } else if (!isLocEnabled) {
+          promise.reject(LocationSettingsUnsatisfiedException())
         } else {
           promise.reject(CurrentLocationIsUnavailableException())
         }
@@ -342,9 +328,46 @@ class LocationHelpers {
     }
 
     fun isAnyProviderAvailable(context: Context?): Boolean {
-      val locationManager = context?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+      if (context == null) return false
+      val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         ?: return false
-      return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) || locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+
+      // 1. Android official master location switch (API 28+ and compat)
+      try {
+        if (LocationManagerCompat.isLocationEnabled(locationManager)) {
+          return true
+        }
+      } catch (_: Throwable) {}
+
+      // 2. Settings.Secure.LOCATION_MODE check for all Android versions and OEM skins (MIUI, EMUI, ColorOS, HiOS)
+      try {
+        val mode = Settings.Secure.getInt(
+          context.contentResolver,
+          Settings.Secure.LOCATION_MODE,
+          Settings.Secure.LOCATION_MODE_OFF
+        )
+        if (mode != Settings.Secure.LOCATION_MODE_OFF) {
+          return true
+        }
+      } catch (_: Throwable) {}
+
+      // 3. Check individual providers (GPS, Network, Passive, Fused, etc.)
+      try {
+        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+          return true
+        }
+      } catch (_: Throwable) {}
+
+      try {
+        for (provider in locationManager.allProviders) {
+          if (locationManager.isProviderEnabled(provider)) {
+            return true
+          }
+        }
+      } catch (_: Throwable) {}
+
+      return false
     }
 
     // Decorator for Permissions.getPermissionsWithPermissionsManager, for use in Kotlin coroutines

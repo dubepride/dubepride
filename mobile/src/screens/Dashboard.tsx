@@ -50,10 +50,8 @@ function timeLabel(timestamp: number): string {
 }
 
 async function currentFix(message: string): Promise<Location.LocationObject> {
-  const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
-  if (!servicesEnabled) {
-    throw new Error("Location Services are switched off on your device. Please enable Location in Settings.");
-  }
+  // 1. Ensure foreground permissions first (on Android 10-15, provider status
+  // is restricted or returns false until foreground permission is granted).
   const permission = await Location.getForegroundPermissionsAsync().catch(() => null);
   if (!permission || permission.status !== Location.PermissionStatus.GRANTED) {
     const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
@@ -62,7 +60,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     }
   }
 
-  // 1. Immediate: Check for recent known position (fastest response, avoids waiting for satellites)
+  // 2. Immediate: Check for recent known position (fastest response, avoids waiting for satellites)
   try {
     const lastKnown = await Location.getLastKnownPositionAsync();
     if (lastKnown && lastKnown.coords) {
@@ -72,7 +70,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("Last known position check:", errLast);
   }
 
-  // 2. Primary: Balanced Accuracy (works universally on all Androids, including non-GMS/Huawei)
+  // 3. Primary: Balanced Accuracy (works universally across all Androids, including non-GMS / Huawei / Transsion)
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
@@ -82,7 +80,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("Balanced accuracy fix failed:", errBalanced);
   }
 
-  // 3. High Accuracy attempt
+  // 4. High Accuracy attempt
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.High,
@@ -92,7 +90,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("High accuracy fix failed:", errHigh);
   }
 
-  // 4. Fallback: Lowest accuracy
+  // 5. Fallback: Lowest accuracy (coarse / cell / Wi-Fi fallback)
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Lowest,
@@ -102,7 +100,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("Lowest accuracy fix failed:", errFinal);
   }
 
-  // 5. Final check for last known position before failing
+  // 6. Final check for last known position before evaluating failure
   try {
     const finalLast = await Location.getLastKnownPositionAsync();
     if (finalLast && finalLast.coords) {
@@ -110,7 +108,17 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     }
   } catch {}
 
-  throw new Error("Acquiring GPS fix... Satellite lock can take 15–30 seconds indoors on this handset. Please step near a window or outdoors, wait a few moments, and tap Clock In again.");
+  // 7. Check if location services are truly switched off only AFTER fix attempts fail
+  const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
+  if (!servicesEnabled) {
+    throw new Error(
+      "Location/GPS is turned off on your device. Please swipe down from the top of your screen to open Quick Settings, tap the Location tile to turn it ON, and try again."
+    );
+  }
+
+  throw new Error(
+    "Acquiring GPS fix... Satellite lock can take 15–30 seconds indoors or under cover on this handset. Please step near a window or outdoors, wait a few moments, and tap Clock In again."
+  );
 }
 
 export function Dashboard(): React.ReactElement {

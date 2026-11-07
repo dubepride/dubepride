@@ -499,21 +499,13 @@ export async function startGeofenceTracking(
   }
 
   try {
-    if (!(await Location.hasServicesEnabledAsync())) {
-      return {
-        ok: false,
-        reason: "location-off",
-        message: "Turn on Location Services to share your work location while signed in.",
-      };
+    // 1. Foreground permission first — Android refuses to even query or prompt
+    // for background access until foreground is granted.
+    let foreground = await Location.getForegroundPermissionsAsync().catch(() => null);
+    if (!foreground || foreground.status !== Location.PermissionStatus.GRANTED) {
+      foreground = await Location.requestForegroundPermissionsAsync().catch(() => null);
     }
-
-    // Foreground permission first — Android refuses to even prompt for
-    // background access until foreground is granted.
-    let foreground = await Location.getForegroundPermissionsAsync();
-    if (foreground.status !== Location.PermissionStatus.GRANTED) {
-      foreground = await Location.requestForegroundPermissionsAsync();
-    }
-    if (foreground.status !== Location.PermissionStatus.GRANTED) {
+    if (!foreground || foreground.status !== Location.PermissionStatus.GRANTED) {
       return {
         ok: false,
         reason: "permission-denied",
@@ -521,25 +513,34 @@ export async function startGeofenceTracking(
       };
     }
 
-    let background = await Location.getBackgroundPermissionsAsync();
-    if (background.status !== Location.PermissionStatus.GRANTED) {
-      background = await Location.requestBackgroundPermissionsAsync();
-    }
-    if (background.status !== Location.PermissionStatus.GRANTED) {
+    // 2. Check provider/services switch AFTER foreground permission is obtained.
+    const servicesOn = await Location.hasServicesEnabledAsync().catch(() => true);
+    if (!servicesOn) {
       return {
         ok: false,
-        reason: "permission-denied",
-        message: 'Set location access to "Allow all the time" to keep sharing your work location in the background.',
+        reason: "location-off",
+        message: "Turn on Location/GPS in your phone Settings to share your work location.",
       };
     }
 
-    // Region monitoring is the fast path (the OS wakes us on arrival), one
-    // region per registered site. Its radius is clamped because Android
-    // rejects anything under 100 m — the verdict itself still uses the
-    // configured radius. Android caps a single app at 100 regions, far above
-    // any realistic branch list; if registration is ever refused the fix
-    // stream below still detects arrival within one interval.
-    if (sites.length > 0) {
+    // 3. Gracefully request background permission if available.
+    // On Android 11-15, users commonly choose 'While using the app'. Since BioBridge
+    // registers an ongoing foreground service with persistent notification, location
+    // tracking continues working even without 'Allow all the time'.
+    let backgroundGranted = false;
+    try {
+      let background = await Location.getBackgroundPermissionsAsync().catch(() => null);
+      if (!background || background.status !== Location.PermissionStatus.GRANTED) {
+        background = await Location.requestBackgroundPermissionsAsync().catch(() => null);
+      }
+      backgroundGranted = background?.status === Location.PermissionStatus.GRANTED;
+    } catch {
+      // Ignored: foreground service will carry updates
+    }
+
+    // 4. Region monitoring is the fast path (the OS wakes us on arrival)
+    // when background permission is granted and GMS is available.
+    if (sites.length > 0 && backgroundGranted) {
       try {
         await Location.startGeofencingAsync(
           GEOFENCE_TASK,
