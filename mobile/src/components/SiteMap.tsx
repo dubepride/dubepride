@@ -285,8 +285,53 @@ function buildRadarHtml(payload: RadarPayload): string {
   window.addEventListener('resize', resize);
   resize();
 
+  function haversineM(lat1, lng1, lat2, lng2) {
+    var R = 6371008.8;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLng = (lng2 - lng1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
   window.updateFix = function(lat, lng, accuracy) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    // Dynamically anchor radar center to containing site (or nearest site)
+    if (data.sites && data.sites.length > 0) {
+      var bestSite = null;
+      var bestDist = Infinity;
+      var containingSite = null;
+      for (var i = 0; i < data.sites.length; i++) {
+        var st = data.sites[i];
+        var d = haversineM(lat, lng, st.latitude, st.longitude);
+        if (Math.round(d) <= st.radiusMeters && !containingSite) {
+          containingSite = st;
+        }
+        if (d < bestDist) {
+          bestDist = d;
+          bestSite = st;
+        }
+      }
+      var chosen = containingSite || bestSite;
+      if (chosen && (data.center.branch !== chosen.branch || data.center.radiusMeters !== chosen.radiusMeters)) {
+        data.center = {
+          latitude: chosen.latitude,
+          longitude: chosen.longitude,
+          branch: chosen.branch,
+          radiusMeters: chosen.radiusMeters
+        };
+        centerLat = chosen.latitude;
+        centerLng = chosen.longitude;
+        latCos = Math.cos(centerLat * Math.PI / 180);
+        defaultRadius = chosen.radiusMeters || 20;
+        curPos = null;
+        resize();
+        scale = defaultScale;
+      }
+    }
+
     var p = projectToMeters(lat, lng);
     targetPos = {
       x: p.x,
@@ -389,7 +434,7 @@ function buildRadarHtml(payload: RadarPayload): string {
 
       var distMeters = Math.sqrt(curPos.x * curPos.x + curPos.y * curPos.y);
       var bufferRadius = defaultRadius + 15;
-      var isInside = distMeters <= defaultRadius;
+      var isInside = Math.round(distMeters) <= defaultRadius;
       var isBuffer = !isInside && distMeters <= bufferRadius;
 
       updateHUD(distMeters, isInside, isBuffer, targetPos.accuracy);
@@ -604,15 +649,19 @@ export function SiteMap({ sites, home, me, height = 260 }: SiteMapProps): React.
 
   const html = useMemo(() => buildRadarHtml(buildRadarPayload({ sites, home, me })), [fenceSignature]);
 
-  // Smooth position injection: updates dot coordinates without tearing down the DOM or reloading!
-  useEffect(() => {
+  const pushFixToWebViews = () => {
     if (me && Number.isFinite(me.latitude) && Number.isFinite(me.longitude)) {
       const acc = me.accuracy !== null && me.accuracy !== undefined ? me.accuracy : "null";
       const jsCode = `if (window.updateFix) { window.updateFix(${me.latitude}, ${me.longitude}, ${acc}); } true;`;
       webViewRef.current?.injectJavaScript(jsCode);
       fullWebViewRef.current?.injectJavaScript(jsCode);
     }
-  }, [me?.latitude, me?.longitude, me?.accuracy]);
+  };
+
+  // Smooth position injection: updates dot coordinates without tearing down the DOM or reloading!
+  useEffect(() => {
+    pushFixToWebViews();
+  }, [me?.latitude, me?.longitude, me?.accuracy, fullscreen]);
 
   const mapContent = (isModal = false) => (
     <WebView
@@ -626,6 +675,7 @@ export function SiteMap({ sites, home, me, height = 260 }: SiteMapProps): React.
       setSupportMultipleWindows={false}
       androidLayerType="hardware"
       scrollEnabled={false}
+      onLoadEnd={() => pushFixToWebViews()}
     />
   );
 

@@ -31,6 +31,7 @@ import type {
 /** Versioned so a future shape change can't be misread as the old one. */
 export const STORAGE_KEYS = {
   session: "biobridge.session.v1",
+  lastVerifiedSession: "biobridge.last_verified_session.v1",
   pin: "biobridge.pin.v1",
   apiUrl: "biobridge.apiUrl.v1",
   queue: "biobridge.queue.v1",
@@ -39,40 +40,53 @@ export const STORAGE_KEYS = {
 } as const;
 
 /**
- * expo-secure-store has no web implementation. Falls back to AsyncStorage so
- * `npm run web` still boots for UI work — a desktop browser is not a device
- * we would ever clock from, so the weaker store is acceptable there.
+ * expo-secure-store has no web implementation, and some custom Android OEM ROMs
+ * have hardware keystore quirks. Mirroring to AsyncStorage guarantees sessions
+ * and offline credentials survive restarts on every handset.
  */
 const SECURE_AVAILABLE = Platform.OS !== "web";
 
 async function secureGet(key: string): Promise<string | null> {
-  if (!SECURE_AVAILABLE) return AsyncStorage.getItem(key);
+  if (SECURE_AVAILABLE) {
+    try {
+      const val = await SecureStore.getItemAsync(key);
+      if (val !== null && val !== undefined) return val;
+    } catch {
+      /* fallback to AsyncStorage below */
+    }
+  }
   try {
-    return await SecureStore.getItemAsync(key);
+    return await AsyncStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
 async function secureSet(key: string, value: string): Promise<void> {
-  if (!SECURE_AVAILABLE) {
-    await AsyncStorage.setItem(key, value);
-    return;
+  if (SECURE_AVAILABLE) {
+    try {
+      await SecureStore.setItemAsync(key, value);
+    } catch {
+      /* keychain unavailable — fallback below */
+    }
   }
   try {
-    await SecureStore.setItemAsync(key, value);
+    await AsyncStorage.setItem(key, value);
   } catch {
-    /* keychain unavailable (rare) — treat as a no-op, the UI stays usable */
+    /* ignore */
   }
 }
 
 async function secureDelete(key: string): Promise<void> {
-  if (!SECURE_AVAILABLE) {
-    await AsyncStorage.removeItem(key);
-    return;
+  if (SECURE_AVAILABLE) {
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch {
+      /* nothing to delete */
+    }
   }
   try {
-    await SecureStore.deleteItemAsync(key);
+    await AsyncStorage.removeItem(key);
   } catch {
     /* nothing to delete */
   }
@@ -121,7 +135,24 @@ export async function writeSession(session: MobileSession | null): Promise<void>
     await secureDelete(STORAGE_KEYS.session);
     return;
   }
-  await secureSet(STORAGE_KEYS.session, JSON.stringify(session));
+  const serialized = JSON.stringify(session);
+  await secureSet(STORAGE_KEYS.session, serialized);
+  await secureSet(STORAGE_KEYS.lastVerifiedSession, serialized);
+}
+
+export async function readLastVerifiedSession(): Promise<MobileSession | null> {
+  const raw = await secureGet(STORAGE_KEYS.lastVerifiedSession);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as MobileSession;
+    return parsed && parsed.employee ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearLastVerifiedSession(): Promise<void> {
+  await secureDelete(STORAGE_KEYS.lastVerifiedSession);
 }
 
 export async function readPin(): Promise<string | null> {

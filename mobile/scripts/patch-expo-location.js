@@ -18,13 +18,18 @@ const destDir = path.join(
 );
 
 if (fs.existsSync(destDir)) {
-  const files = ['LocationHelpers.kt', 'LocationModule.kt'];
-  for (const file of files) {
-    const srcFile = path.join(srcDir, file);
-    const destFile = path.join(destDir, file);
-    if (fs.existsSync(srcFile)) {
+  const patches = [
+    { src: 'LocationHelpers.kt', dest: 'LocationHelpers.kt' },
+    { src: 'LocationModule.kt', dest: 'LocationModule.kt' },
+    { src: 'LocationTaskConsumer.kt', dest: path.join('taskConsumers', 'LocationTaskConsumer.kt') },
+    { src: 'LocationTaskService.kt', dest: path.join('services', 'LocationTaskService.kt') },
+  ];
+  for (const patch of patches) {
+    const srcFile = path.join(srcDir, patch.src);
+    const destFile = path.join(destDir, patch.dest);
+    if (fs.existsSync(srcFile) && fs.existsSync(path.dirname(destFile))) {
       fs.copyFileSync(srcFile, destFile);
-      console.log(`[patch] Applied native patch to ${file}`);
+      console.log(`[patch] Applied native patch to ${patch.dest}`);
     }
   }
 }

@@ -31,6 +31,9 @@ import {
 } from "./api";
 import { getDeviceIdentity } from "./device";
 import {
+  clearLastVerifiedSession,
+  readLastVerifiedSession,
+  readQueue,
   readSavedApiUrl,
   readSession,
   writePin,
@@ -206,6 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
       ) {
         await stopGeofenceTracking();
         await writeSession(null);
+        await clearLastVerifiedSession();
         setSession(null);
         setTracking(null);
         setStatus("signed-out");
@@ -214,7 +218,16 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
 
       const nextFences = Array.isArray(data.fences) ? data.fences : active.fences;
       const nextGeofence = data.geofence !== undefined ? data.geofence : active.geofence;
-      const nextDayStatus = data.dayStatus !== undefined ? data.dayStatus : active.dayStatus;
+      const queuedPunches = await readQueue();
+      const localPunchIsNewer =
+        queuedPunches.length > 0 ||
+        ((active.dayStatus?.lastPunchAt ?? 0) > (data.dayStatus?.lastPunchAt ?? 0));
+      const nextDayStatus =
+        localPunchIsNewer && active.dayStatus !== undefined
+          ? active.dayStatus
+          : data.dayStatus !== undefined
+            ? data.dayStatus
+            : active.dayStatus;
 
       const next: MobileSession = {
         ...active,
@@ -293,7 +306,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
     } catch (err) {
       // ── Offline: fall back to the session already verified on this device ──
       if (err instanceof NetworkError) {
-        const cached = await readSession();
+        const cached = (await readSession()) ?? (await readLastVerifiedSession());
         if (cached && matchesEmployee(cached, empRef)) {
           const next: MobileSession = { ...cached, apiUrl: base, offline: true };
           sessionRef.current = next;

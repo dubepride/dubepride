@@ -12,6 +12,7 @@
 
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState } from "react-native";
 
 import {
   nearestSite,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/geo";
 import { LocationSmoother } from "@/lib/smoother";
 import type { MobileSession } from "@/lib/types";
+import { ensureForegroundLocationPermission } from "@/tasks/geofenceTask";
 
 interface Fix {
   latitude: number;
@@ -66,53 +68,59 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
   const sites = useMemo(() => sessionSites(session), [session]);
   const configured = sites.length > 0;
 
+  // Automatically re-verify permissions and restart GPS stream when returning from Settings / Quick Settings
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTrackingNonce((n) => n + 1);
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   // Live position, so distance readout and map update live while screen is open
   useEffect(() => {
     let cancelled = false;
     let subscription: Location.LocationSubscription | null = null;
     let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+    let pullInFlight = false;
 
-    const pullFix = async () => {
-      try {
-        const pos = await Location.getLastKnownPositionAsync();
-        if (!cancelled && pos) {
-          const smoothed = smootherRef.current.smooth({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            timestamp: pos.timestamp ?? Date.now(),
-          });
-          setFix({
-            latitude: smoothed.latitude,
-            longitude: smoothed.longitude,
-            accuracy: smoothed.accuracy,
-          });
-          return;
-        }
-      } catch {
-        // Fix not available yet
-      }
+    const applyPosition = (pos: Location.LocationObject) => {
+      if (cancelled || !pos?.coords) return;
+      const smoothed = smootherRef.current.smooth({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        timestamp: pos.timestamp ?? Date.now(),
+      });
+      setFix({
+        latitude: smoothed.latitude,
+        longitude: smoothed.longitude,
+        accuracy: smoothed.accuracy,
+      });
+      setMessage(null);
+    };
 
-      // Kickstart provider if no cached position exists
+    const pullLiveFix = async () => {
+      if (cancelled || pullInFlight) return;
+      pullInFlight = true;
       try {
         const fresh = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+          accuracy: Location.Accuracy.High,
+          mayShowUserSettingsDialog: false,
+        }).catch(() =>
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            mayShowUserSettingsDialog: false,
+          })
+        );
         if (!cancelled && fresh) {
-          const smoothed = smootherRef.current.smooth({
-            latitude: fresh.coords.latitude,
-            longitude: fresh.coords.longitude,
-            accuracy: fresh.coords.accuracy,
-            timestamp: fresh.timestamp ?? Date.now(),
-          });
-          setFix({
-            latitude: smoothed.latitude,
-            longitude: smoothed.longitude,
-            accuracy: smoothed.accuracy,
-          });
+          applyPosition(fresh);
         }
       } catch {
-        // Still acquiring
+        // Still acquiring satellite lock
+      } finally {
+        pullInFlight = false;
       }
     };
 
@@ -122,56 +130,55 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
         return;
       }
 
-      // Proactively ensure location permission is granted on startup
-      try {
-        const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
-        if (!perm || perm.status !== Location.PermissionStatus.GRANTED) {
-          const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
-          if (!asked || asked.status !== Location.PermissionStatus.GRANTED) {
-            if (!cancelled) setMessage("Location permission is needed for live GPS tracking.");
-            return;
-          }
-        }
-      } catch {
-        // Continue
+      // 1. Ensure location permission via single-flight helper (never races with session.tsx)
+      const granted = await ensureForegroundLocationPermission();
+      if (cancelled) return;
+      if (!granted) {
+        setMessage("Location permission is needed for live GPS tracking.");
+        return;
       }
 
-      await pullFix();
+      setMessage(null);
 
+      // 2. Seed initial UI immediately ONLY if a recent (< 30s, <= 80m) cached fix exists
+      try {
+        const recentCached = await Location.getLastKnownPositionAsync({
+          maxAge: 30_000,
+          requiredAccuracy: 80,
+        });
+        if (!cancelled && recentCached) {
+          applyPosition(recentCached);
+        }
+      } catch {
+        // Ignore
+      }
+
+      // 3. Start continuous high-accuracy hardware stream immediately
       try {
         subscription = await Location.watchPositionAsync(
           {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 1_500,
-            distanceInterval: 1,
+            accuracy: Location.Accuracy.High,
+            timeInterval: 1_000,
+            distanceInterval: 0,
+            mayShowUserSettingsDialog: false,
           },
           (update) => {
-            if (cancelled) return;
-            const smoothed = smootherRef.current.smooth({
-              latitude: update.coords.latitude,
-              longitude: update.coords.longitude,
-              accuracy: update.coords.accuracy,
-              timestamp: update.timestamp ?? Date.now(),
-            });
-            setFix({
-              latitude: smoothed.latitude,
-              longitude: smoothed.longitude,
-              accuracy: smoothed.accuracy,
-            });
+            applyPosition(update);
           }
         );
       } catch {
-        if (!cancelled) {
-          setMessage("Live GPS tracking in progress (fallback mode).");
-        }
+        // Fallback polling below will still drive updates
       }
 
-      // Interval fallback ensures coordinates keep updating smoothly on all devices
+      // 4. Kickstart live position immediately in parallel
+      void pullLiveFix();
+
+      // 5. Periodic live poll backstop ensures coordinates keep updating on all OEM handsets
       fallbackInterval = setInterval(() => {
         if (!cancelled) {
-          void pullFix();
+          void pullLiveFix();
         }
-      }, 2_500);
+      }, 3_500);
     })();
 
     return () => {
@@ -181,7 +188,7 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
         clearInterval(fallbackInterval);
       }
     };
-  }, [session, trackingNonce]);
+  }, [session?.employee.employeeId, trackingNonce]);
 
   // Which registered site is this fix in?
   const match = fix ? activeSite(sites, fix.latitude, fix.longitude, fix.accuracy) : null;

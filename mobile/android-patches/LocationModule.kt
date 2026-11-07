@@ -135,6 +135,9 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
       mLocationProvider = LocationServices.getFusedLocationProviderClient(mContext)
       mSensorManager = mContext.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         ?: throw SensorManagerUnavailable()
+      if (appContext.currentActivity != null) {
+        AppForegroundedSingleton.isForegrounded = true
+      }
     }
 
     Events(HEADING_EVENT_NAME, LOCATION_EVENT_NAME, MOTION_ACTIVITY_EVENT_NAME)
@@ -221,30 +224,12 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
     }
 
     AsyncFunction("watchPositionImplAsync") { watchId: Int, options: LocationOptions, promise: Promise ->
-      // Check for permissions
       if (isMissingForegroundPermissions()) {
         promise.reject(LocationUnauthorizedException())
         return@AsyncFunction
       }
 
       val locationRequest = LocationHelpers.prepareLocationRequest(options)
-      val showUserSettingsDialog = options.mayShowUserSettingsDialog
-
-      if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
-        requestNativeLocationUpdates(locationRequest, watchId, object : LocationRequestCallbacks {
-          override fun onLocationChanged(location: Location) {
-            sendLocationResponse(watchId, LocationResponse(location))
-          }
-          override fun onRequestSuccess() {
-            promise.resolve(null)
-          }
-          override fun onRequestFailed(cause: CodedException) {
-            promise.reject(cause)
-          }
-        })
-        return@AsyncFunction
-      }
-
       LocationHelpers.requestContinuousUpdates(this@LocationModule, locationRequest, watchId, promise)
     }
 
@@ -324,6 +309,9 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
       if (!shouldUseForegroundService && isMissingBackgroundPermissions()) {
         throw LocationBackgroundUnauthorizedException()
       }
+      if (!AppForegroundedSingleton.isForegrounded && appContext.currentActivity != null) {
+        AppForegroundedSingleton.isForegrounded = true
+      }
       if (!AppForegroundedSingleton.isForegrounded && options.foregroundService != null) {
         throw ForegroundServiceStartNotAllowedException()
       }
@@ -356,18 +344,15 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
 
     AsyncFunction("hasStartedGeofencingAsync") { taskName: String ->
       if (isMissingBackgroundPermissions()) {
-        throw LocationBackgroundUnauthorizedException()
+        return@AsyncFunction false
       }
-
       return@AsyncFunction mTaskManager.taskHasConsumerOfClass(taskName, GeofencingTaskConsumer::class.java)
     }
 
     AsyncFunction("stopGeofencingAsync") { taskName: String ->
-      if (isMissingBackgroundPermissions()) {
-        throw LocationBackgroundUnauthorizedException()
-      }
-
-      mTaskManager.unregisterTask(taskName, GeofencingTaskConsumer::class.java)
+      try {
+        mTaskManager.unregisterTask(taskName, GeofencingTaskConsumer::class.java)
+      } catch (_: Throwable) {}
       return@AsyncFunction
     }
 
@@ -494,70 +479,59 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
   }
 
   fun requestLocationUpdates(locationRequest: LocationRequest, requestId: Int?, callbacks: LocationRequestCallbacks) {
+    if (requestId != null) {
+      mLocationRequests[requestId] = locationRequest
+    }
+
+    // Always attach native LocationManager listeners (GPS, Network, Passive, Fused)
+    // so offline handsets and non-GMS / HMS devices always receive hardware fixes.
+    requestNativeLocationUpdates(locationRequest, requestId, callbacks)
+
     if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
-      requestNativeLocationUpdates(locationRequest, requestId, callbacks)
       return
     }
 
     val locationProvider: FusedLocationProviderClient = mLocationProvider
-
     val locationCallback: LocationCallback = object : LocationCallback() {
-      var isLocationAvailable = false
-
       override fun onLocationResult(locationResult: LocationResult) {
         val location = locationResult.lastLocation
         if (location != null) {
           callbacks.onLocationChanged(location)
-        } else if (!isLocationAvailable) {
-          callbacks.onLocationError(LocationUnavailableException())
-        } else {
-          callbacks.onRequestFailed(LocationUnknownException())
         }
-      }
-
-      override fun onLocationAvailability(locationAvailability: LocationAvailability) {
-        isLocationAvailable = locationAvailability.isLocationAvailable
       }
     }
 
     if (requestId != null) {
-      // Save location callback and request so we will be able to pause/resume receiving updates.
       mLocationCallbacks[requestId] = locationCallback
-      mLocationRequests[requestId] = locationRequest
     }
 
     try {
       locationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
         .addOnFailureListener {
           LocationHelpers.sGooglePlayServicesBroken = true
-          requestNativeLocationUpdates(locationRequest, requestId, callbacks)
         }
         .addOnSuccessListener {
           callbacks.onRequestSuccess()
         }
     } catch (_: Throwable) {
       LocationHelpers.sGooglePlayServicesBroken = true
-      requestNativeLocationUpdates(locationRequest, requestId, callbacks)
     }
   }
 
   fun requestNativeLocationUpdates(locationRequest: LocationRequest, requestId: Int?, callbacks: LocationRequestCallbacks) {
     val lm = mContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     if (lm == null) {
-      callbacks.onRequestFailed(LocationUnavailableException())
+      if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
+        callbacks.onRequestFailed(LocationUnavailableException())
+      }
       return
     }
 
-    val gpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
-    val networkEnabled = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-    val passiveEnabled = lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)
-
-    if (!gpsEnabled && !networkEnabled && !passiveEnabled) {
-      callbacks.onRequestFailed(LocationUnavailableException())
-      return
+    if (requestId != null) {
+      mLocationRequests[requestId] = locationRequest
     }
 
-    var bestCurrent: Location? = LocationHelpers.getLastKnownLocationFromLocationManager(mContext)
+    var bestCurrent: Location? = null
 
     val nativeListener = object : LocationListener {
       override fun onLocationChanged(location: Location) {
@@ -573,17 +547,23 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
     }
 
     if (requestId != null) {
+      mNativeLocationListeners[requestId]?.let { old ->
+        try { lm.removeUpdates(old) } catch (_: Throwable) {}
+      }
       mNativeLocationListeners[requestId] = nativeListener
     }
 
     try {
-      LocationHelpers.getLastKnownLocationFromLocationManager(mContext)?.let {
-        callbacks.onLocationChanged(it)
+      val lastKnown = LocationHelpers.getLastKnownLocationFromLocationManager(mContext)
+      if (lastKnown != null && (System.currentTimeMillis() - lastKnown.time) < 30_000L && lastKnown.accuracy <= 50f) {
+        bestCurrent = lastKnown
+        callbacks.onLocationChanged(lastKnown)
       }
 
       val all = try { lm.allProviders } catch (_: Throwable) { emptyList<String>() }
       val providers = (all + listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, "fused")).distinct()
 
+      var registeredAny = false
       for (p in providers) {
         try {
           if (lm.isProviderEnabled(p) || p == LocationManager.PASSIVE_PROVIDER) {
@@ -594,14 +574,24 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
               nativeListener,
               Looper.getMainLooper()
             )
+            registeredAny = true
           }
         } catch (_: Throwable) {}
       }
-      callbacks.onRequestSuccess()
+
+      if (registeredAny) {
+        callbacks.onRequestSuccess()
+      } else if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
+        callbacks.onRequestFailed(LocationUnavailableException())
+      }
     } catch (e: SecurityException) {
-      callbacks.onRequestFailed(LocationRequestRejectedException(e))
+      if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
+        callbacks.onRequestFailed(LocationRequestRejectedException(e))
+      }
     } catch (e: Throwable) {
-      callbacks.onRequestFailed(LocationUnavailableException())
+      if (!LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
+        callbacks.onRequestFailed(LocationUnavailableException())
+      }
     }
   }
 
@@ -821,13 +811,39 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
   }
 
   private fun resumeLocationUpdates() {
-    for (requestId in mLocationCallbacks.keys) {
-      val locationCallback = mLocationCallbacks[requestId] ?: return
-      val locationRequest = mLocationRequests[requestId] ?: return
-      try {
-        mLocationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.myLooper())
-      } catch (e: SecurityException) {
-        Log.e(TAG, "Error occurred while resuming location updates: $e")
+    if (LocationHelpers.isGooglePlayServicesAvailable(mContext)) {
+      for (requestId in mLocationCallbacks.keys.toList()) {
+        val locationCallback = mLocationCallbacks[requestId] ?: continue
+        val locationRequest = mLocationRequests[requestId] ?: continue
+        try {
+          mLocationProvider.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        } catch (e: Throwable) {
+          Log.e(TAG, "Error occurred while resuming GMS location updates: $e")
+        }
+      }
+    }
+
+    val lm = mContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    if (lm != null) {
+      val all = try { lm.allProviders } catch (_: Throwable) { emptyList<String>() }
+      val providers = (all + listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, "fused")).distinct()
+
+      for (requestId in mNativeLocationListeners.keys.toList()) {
+        val nativeListener = mNativeLocationListeners[requestId] ?: continue
+        val locationRequest = mLocationRequests[requestId] ?: continue
+        for (p in providers) {
+          try {
+            if (lm.isProviderEnabled(p) || p == LocationManager.PASSIVE_PROVIDER) {
+              lm.requestLocationUpdates(
+                p,
+                locationRequest.intervalMillis,
+                locationRequest.minUpdateDistanceMeters,
+                nativeListener,
+                Looper.getMainLooper()
+              )
+            }
+          } catch (_: Throwable) {}
+        }
       }
     }
   }

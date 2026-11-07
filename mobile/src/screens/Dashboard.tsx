@@ -37,6 +37,7 @@ import { sendOrQueue } from "@/lib/api";
 import { activeSite, formatDistance, nearestSite, sessionSites } from "@/lib/geo";
 import { useAuth } from "@/lib/session";
 import type { GeoPunchPayload } from "@/lib/types";
+import { ensureForegroundLocationPermission } from "@/tasks/geofenceTask";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
 
 import LOGO from "../../assets/icon.png";
@@ -50,37 +51,14 @@ function timeLabel(timestamp: number): string {
 }
 
 async function currentFix(message: string): Promise<Location.LocationObject> {
-  // 1. Ensure foreground permissions first (on Android 10-15, provider status
-  // is restricted or returns false until foreground permission is granted).
-  const permission = await Location.getForegroundPermissionsAsync().catch(() => null);
-  if (!permission || permission.status !== Location.PermissionStatus.GRANTED) {
-    const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
-    if (!asked || asked.status !== Location.PermissionStatus.GRANTED) {
-      throw new Error(message);
-    }
+  // 1. Ensure foreground permissions first via single-flight helper so we never
+  // collide with useGeofenceStatus or startGeofenceTracking permission prompts.
+  const granted = await ensureForegroundLocationPermission();
+  if (!granted) {
+    throw new Error(message);
   }
 
-  // 2. Immediate: Check for recent known position (fastest response, avoids waiting for satellites)
-  try {
-    const lastKnown = await Location.getLastKnownPositionAsync();
-    if (lastKnown && lastKnown.coords) {
-      return lastKnown;
-    }
-  } catch (errLast) {
-    console.warn("Last known position check:", errLast);
-  }
-
-  // 3. Primary: Balanced Accuracy (works universally across all Androids, including non-GMS / Huawei / Transsion)
-  try {
-    return await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-      mayShowUserSettingsDialog: false,
-    });
-  } catch (errBalanced) {
-    console.warn("Balanced accuracy fix failed:", errBalanced);
-  }
-
-  // 4. High Accuracy attempt
+  // 2. Primary: High Accuracy live fix (parallel GMS + native hardware GPS/Network)
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.High,
@@ -90,7 +68,17 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("High accuracy fix failed:", errHigh);
   }
 
-  // 5. Fallback: Lowest accuracy (coarse / cell / Wi-Fi fallback)
+  // 3. Secondary: Balanced Accuracy live fix
+  try {
+    return await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: false,
+    });
+  } catch (errBalanced) {
+    console.warn("Balanced accuracy fix failed:", errBalanced);
+  }
+
+  // 4. Tertiary: Lowest accuracy (coarse / cell / Wi-Fi / passive fallback)
   try {
     return await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Lowest,
@@ -100,15 +88,17 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
     console.warn("Lowest accuracy fix failed:", errFinal);
   }
 
-  // 6. Final check for last known position before evaluating failure
+  // 5. Fallback to recent cached position (<= 2 minutes old) if live query timed out
   try {
-    const finalLast = await Location.getLastKnownPositionAsync();
+    const finalLast = await Location.getLastKnownPositionAsync({
+      maxAge: 120_000,
+    });
     if (finalLast && finalLast.coords) {
       return finalLast;
     }
   } catch {}
 
-  // 7. Check if location services are truly switched off only AFTER fix attempts fail
+  // 6. Check if location services are truly switched off only AFTER fix attempts fail
   const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
   if (!servicesEnabled) {
     throw new Error(
@@ -117,7 +107,7 @@ async function currentFix(message: string): Promise<Location.LocationObject> {
   }
 
   throw new Error(
-    "Acquiring GPS fix... Satellite lock can take 15–30 seconds indoors or under cover on this handset. Please step near a window or outdoors, wait a few moments, and tap Clock In again."
+    "Acquiring GPS fix... Satellite lock can take 10–20 seconds indoors or under cover on this handset. Please step near a window or outdoors, wait a few moments, and tap Clock In again."
   );
 }
 
@@ -146,14 +136,20 @@ export function Dashboard(): React.ReactElement {
     }, 4_000);
 
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshFences();
+      if (state === "active") {
+        void refreshFences();
+        geofence.refreshTracking();
+        if (!tracking?.ok) {
+          void retryTracking();
+        }
+      }
     });
 
     return () => {
       clearInterval(interval);
       sub.remove();
     };
-  }, [refreshFences]);
+  }, [refreshFences, geofence.refreshTracking, retryTracking, tracking?.ok]);
 
   if (!session) return <View style={styles.flex} />;
 
@@ -185,7 +181,14 @@ export function Dashboard(): React.ReactElement {
       let lng = geofence.longitude;
       let acc = geofence.accuracyMeters;
 
-      if (lat === null || lng === null) {
+      // If we don't have a fix yet OR the current smoothed fix appears outside the
+      // geofence (e.g. the worker just walked inside and tapped Clock In immediately),
+      // query a fresh live hardware fix right now before deciding.
+      if (
+        lat === null ||
+        lng === null ||
+        (sites.length > 0 && !activeSite(sites, lat, lng, acc))
+      ) {
         const position = await currentFix(
           "Location permission is required to record your attendance punch."
         );

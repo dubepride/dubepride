@@ -419,7 +419,7 @@ let cadence: "armed" | "relaxed" | null = null;
 
 function locationOptions(speed: "armed" | "relaxed"): Location.LocationTaskOptions {
   return {
-    accuracy: Location.Accuracy.Balanced,
+    accuracy: Location.Accuracy.High,
     timeInterval:
       speed === "armed" ? LOCATION_INTERVAL_ARMED_MS : LOCATION_INTERVAL_RELAXED_MS,
     distanceInterval: LOCATION_DISTANCE_M,
@@ -476,18 +476,43 @@ export interface TrackingResult {
  * Ask for the permissions this feature needs and start both background tasks.
  * Called on sign-in, on session restore, and from the dashboard's retry.
  */
+let inflightPermissionPromise: Promise<boolean> | null = null;
+
+/**
+ * Single-flight foreground permission helper so Dashboard, useGeofenceStatus,
+ * and startGeofenceTracking never launch competing Android permission dialogs.
+ */
+export async function ensureForegroundLocationPermission(): Promise<boolean> {
+  if (IS_WEB) return false;
+  try {
+    const existing = await Location.getForegroundPermissionsAsync().catch(() => null);
+    if (existing?.status === Location.PermissionStatus.GRANTED) {
+      return true;
+    }
+  } catch {}
+
+  if (inflightPermissionPromise) {
+    return inflightPermissionPromise;
+  }
+
+  inflightPermissionPromise = (async () => {
+    try {
+      const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
+      return asked?.status === Location.PermissionStatus.GRANTED;
+    } finally {
+      inflightPermissionPromise = null;
+    }
+  })();
+
+  return inflightPermissionPromise;
+}
+
 export async function startGeofenceTracking(
   session: MobileSession | null
 ): Promise<TrackingResult> {
   if (!session) {
     return { ok: false, reason: "no-employee", message: "Sign in to start location sharing." };
   }
-  // Phase 17 — the phone watches EVERY registered site, not just the
-  // employee's roster branch: an employee may travel, and a punch is judged
-  // against whichever fence they are physically inside.
-  //
-  // A missing fence must NOT disable location sharing: the Field Tracker still
-  // needs the phone's latest position, and a fence may be configured later.
   const sites = sessionSites(session);
 
   if (IS_WEB) {
@@ -499,13 +524,9 @@ export async function startGeofenceTracking(
   }
 
   try {
-    // 1. Foreground permission first — Android refuses to even query or prompt
-    // for background access until foreground is granted.
-    let foreground = await Location.getForegroundPermissionsAsync().catch(() => null);
-    if (!foreground || foreground.status !== Location.PermissionStatus.GRANTED) {
-      foreground = await Location.requestForegroundPermissionsAsync().catch(() => null);
-    }
-    if (!foreground || foreground.status !== Location.PermissionStatus.GRANTED) {
+    // 1. Foreground permission first via single-flight helper
+    const granted = await ensureForegroundLocationPermission();
+    if (!granted) {
       return {
         ok: false,
         reason: "permission-denied",
@@ -523,19 +544,17 @@ export async function startGeofenceTracking(
       };
     }
 
-    // 3. Gracefully request background permission if available.
-    // On Android 11-15, users commonly choose 'While using the app'. Since BioBridge
-    // registers an ongoing foreground service with persistent notification, location
-    // tracking continues working even without 'Allow all the time'.
+    // 3. Check if background permission is already granted without forcing an OS Settings redirect.
+    // On Android 11-15, calling requestBackgroundPermissionsAsync() kicks the user out of the app
+    // into System Settings and pauses the Activity right before the Foreground Service starts.
+    // Since we use an ongoing Foreground Service notification (foregroundServiceType='location'),
+    // continuous tracking works with standard 'While using the app' foreground permission.
     let backgroundGranted = false;
     try {
-      let background = await Location.getBackgroundPermissionsAsync().catch(() => null);
-      if (!background || background.status !== Location.PermissionStatus.GRANTED) {
-        background = await Location.requestBackgroundPermissionsAsync().catch(() => null);
-      }
+      const background = await Location.getBackgroundPermissionsAsync().catch(() => null);
       backgroundGranted = background?.status === Location.PermissionStatus.GRANTED;
     } catch {
-      // Ignored: foreground service will carry updates
+      backgroundGranted = false;
     }
 
     // 4. Region monitoring is the fast path (the OS wakes us on arrival)
