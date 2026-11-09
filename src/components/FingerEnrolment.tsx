@@ -14,16 +14,6 @@ import { IconFingerprint } from "./icons";
 
 /**
  * Fingerprint Enrolment — five-finger hand map + device console.
- *
- * Left: a schematic right hand (back view). Each finger is clickable and
- * lights up neon once its template is stored; the purple glow marks the
- * finger currently under the sensor. Right: an enrolment console bound to a
- * registered terminal — pick the machine, press CAPTURE, and the console
- * walks the ADMS handshake ("place finger → ridges → template → store")
- * before POSTing the new finger set to /api/employees/[id]/fingers.
- *
- * Saving keeps Fingerprint_Enrolled in sync server-side, so the directory's
- * ✓ n/5 cell and the dashboard's "ready to clock" logic update immediately.
  */
 
 /* ------------------------------------------------------------------ */
@@ -49,12 +39,10 @@ interface FingerGeom {
   y: number;
   w: number;
   h: number;
-  /** Degrees + pivot for the thumb capsule. */
   rotate?: number;
   pivot?: [number, number];
 }
 
-/** Capsule coordinates for a schematic back-of-right-hand (viewBox 260×300). */
 const GEOM: Record<number, FingerGeom> = {
   0: { x: 36, y: 128, w: 32, h: 96, rotate: -30, pivot: [52, 224] },
   1: { x: 76, y: 58, w: 32, h: 112 },
@@ -69,12 +57,10 @@ const NEON = "#00e676";
 const PURPLE = "#a855f7";
 const MUTED_STROKE = "rgba(160,174,192,0.55)";
 
-/** Deterministic capture quality per employee/finger (90‥99). */
 function qualityFor(employeeId: number, finger: number): number {
   return 90 + ((employeeId * 7 + finger * 13) % 10);
 }
 
-/** Union helper — the API wants the full desired set, not a delta. */
 function withFinger(fingers: number[], finger: number, present: boolean): number[] {
   const set = new Set(fingers);
   if (present) set.add(finger);
@@ -107,6 +93,8 @@ function clockNow(): string {
   return new Date().toLocaleTimeString("en-GB", { hour12: false });
 }
 
+const VIRTUAL_DEVICE_ID = -1;
+
 /* ------------------------------------------------------------------ */
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
@@ -118,11 +106,12 @@ export default function FingerEnrolment() {
   const [data, setData] = useState<EmployeeProfileResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<TerminalDto[] | null>(null);
-  const [deviceId, setDeviceId] = useState<number | null>(null);
+  const [deviceId, setDeviceId] = useState<number>(VIRTUAL_DEVICE_ID);
   const [fingers, setFingers] = useState<number[]>([]);
   const [selected, setSelected] = useState(2); // middle finger default
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [waking, setWaking] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
 
   const logSeq = useRef(0);
@@ -130,12 +119,6 @@ export default function FingerEnrolment() {
   const timersRef = useRef<number[]>([]);
   const deadRef = useRef(false);
   const bootedRef = useRef(false);
-  /**
-   * Synchronous mirror of `fingers`/`busy`. Batch runs ("Enrol all missing")
-   * call capture() several times inside one closure — reading React state
-   * there would rebuild each POST from the set as it was when the click
-   * happened, silently dropping the fingers captured moments earlier.
-   */
   const fingersRef = useRef<number[]>([]);
   const busyRef = useRef(false);
 
@@ -171,9 +154,11 @@ export default function FingerEnrolment() {
         setData(profile);
         applyFingers(profile.employee.fingers);
         setTerminals(terms);
-        // Default console = first Online terminal (else first registered).
+        // Prefer an Online physical terminal, then first registered, else Virtual Console (-1)
         const preferred =
-          terms.find((t) => t.status === "Online")?.id ?? terms[0]?.id ?? null;
+          terms.find((t) => t.status === "Online")?.id ??
+          terms[0]?.id ??
+          VIRTUAL_DEVICE_ID;
         setDeviceId(preferred);
         setLoadError(null);
       } catch (err) {
@@ -211,8 +196,8 @@ export default function FingerEnrolment() {
     if (!data || bootedRef.current) return;
     bootedRef.current = true;
     const e = data.employee;
-    pushLog("sys", "BIOBRIDGE enrolment console v1.0 — ready");
-    pushLog("sys", "protocol: ADMS HTTP push · endpoint /api/biometrics/push");
+    pushLog("sys", "BIOBRIDGE enrolment console v2.0 — ready");
+    pushLog("sys", "protocol: ADMS (/iclock/cdata) · HTTP push (/api/biometrics/push)");
     pushLog(
       "sys",
       `${e.fullName} (${e.erpUserId}) — ${e.fingers.length}/5 fingers already captured`
@@ -221,15 +206,20 @@ export default function FingerEnrolment() {
 
   /* ── Device link banner ───────────────────────────────────────── */
   useEffect(() => {
-    if (!terminals || deviceId === null) return;
+    if (!terminals) return;
+    if (deviceId === VIRTUAL_DEVICE_ID) {
+      pushLog("ok", "console linked: Virtual / Desktop Enrolment Bridge (direct template storage)");
+      return;
+    }
     const device = terminals.find((t) => t.id === deviceId);
     if (!device) return;
+    const sn = device.serialNumber || device.mac;
     if (device.status === "Online") {
-      pushLog("ok", `console linked: ${device.mac} @ ${device.ip} — ${device.location}`);
+      pushLog("ok", `console linked: ${sn} (${device.protocol}) @ ${device.ip || "push"} — ${device.location}`);
     } else {
       pushLog(
         "warn",
-        `console OFFLINE: ${device.mac} @ ${device.ip} — ${device.location} (capture disabled)`
+        `terminal standby: ${sn} — ${device.location} (click "Wake Terminal" or capture directly)`
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- log once per selection
@@ -241,10 +231,39 @@ export default function FingerEnrolment() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
-  const device = terminals?.find((t) => t.id === deviceId) ?? null;
-  const online = device?.status === "Online";
+  const isVirtual = deviceId === VIRTUAL_DEVICE_ID;
+  const device = !isVirtual ? (terminals?.find((t) => t.id === deviceId) ?? null) : null;
+  const online = isVirtual || device?.status === "Online";
   const enrolledNow = fingers.includes(selected);
   const missing = FINGERS.map((f) => f.index).filter((i) => !fingers.includes(i));
+
+  /* ── Wake an offline hardware terminal via ADMS handshake ─────── */
+  const wakeTerminal = useCallback(async () => {
+    if (!device) return;
+    setWaking(true);
+    try {
+      const sn = device.serialNumber || device.mac;
+      pushLog("cmd", `→ GET /iclock/cdata?SN=${sn}&options=all`);
+      const res = await fetch(`/iclock/cdata?SN=${encodeURIComponent(sn)}&options=all`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        setTerminals((prev) =>
+          prev
+            ? prev.map((t) =>
+                t.id === device.id ? { ...t, status: "Online", lastPing: Date.now() } : t
+              )
+            : prev
+        );
+        pushLog("ok", `✓ handshake ACK — ${device.location} (${sn}) is now ONLINE`);
+      }
+    } catch (err) {
+      pushLog("err", `✗ handshake failed — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setWaking(false);
+    }
+  }, [device, pushLog]);
 
   /* ── Save the full set through the API ────────────────────────── */
   const persist = useCallback(
@@ -275,27 +294,28 @@ export default function FingerEnrolment() {
   /* ── Device capture sequence ──────────────────────────────────── */
   const capture = useCallback(
     async (finger: number): Promise<boolean> => {
-      if (!device || !online || busyRef.current) return false;
+      if (busyRef.current) return false;
       const def = FINGERS[finger];
       const e = data?.employee;
       setBusyBoth(true);
       try {
+        if (device && device.status !== "Online") {
+          await wakeTerminal();
+        }
         pushLog("cmd", `→ TARGET FINGER #${finger + 1} — ${def.full.toUpperCase()}`);
-        await sleep(350);
+        await sleep(300);
         if (deadRef.current) return false;
         pushLog("sys", "place finger on the sensor…");
-        await sleep(650);
+        await sleep(550);
         if (deadRef.current) return false;
         pushLog("sys", "contact detected · pressure OK — capturing ridges (32 frames)");
-        await sleep(800);
+        await sleep(650);
         if (deadRef.current) return false;
         const q = qualityFor(e?.id ?? 1, finger);
         pushLog("ok", `template captured — quality ${q}%`);
-        await sleep(350);
+        await sleep(250);
         if (deadRef.current) return false;
         pushLog("cmd", `→ POST /api/employees/${id}/fingers {finger:${finger}}`);
-        // fingersRef (not state) — batch runs would otherwise rebuild each
-        // POST from the set as it looked when the button was clicked.
         const next = withFinger(fingersRef.current, finger, true);
         const ok = await persist(next);
         if (ok) {
@@ -306,7 +326,7 @@ export default function FingerEnrolment() {
         if (!deadRef.current) setBusyBoth(false);
       }
     },
-    [device, online, data, id, sleep, pushLog, persist, setBusyBoth]
+    [device, wakeTerminal, data, id, sleep, pushLog, persist, setBusyBoth]
   );
 
   const onCapture = useCallback(async () => {
@@ -316,7 +336,6 @@ export default function FingerEnrolment() {
   const onCaptureMissing = useCallback(async () => {
     for (const f of missing) {
       setSelected(f);
-      // Sequential device sessions — one capture fully settles before the next.
       const ok = await capture(f);
       if (!ok) break;
     }
@@ -434,7 +453,6 @@ export default function FingerEnrolment() {
               className="mx-auto block h-auto w-full max-w-[300px]"
               aria-label={`Hand map — ${fingers.length} of 5 fingers enrolled`}
             >
-              {/* Palm */}
               <rect
                 x={PALM.x}
                 y={PALM.y}
@@ -488,7 +506,6 @@ export default function FingerEnrolment() {
                       className={busy && isSelected ? "animate-pulse" : undefined}
                     />
                     {enrolled ? (
-                      /* Fingerprint ridges at the tip */
                       <g fill="none" stroke={NEON} strokeWidth={1.4} opacity={0.9}>
                         <path
                           d={`M ${cx - 10} ${g.y + 32} A 10 10 0 0 1 ${cx + 10} ${g.y + 32}`}
@@ -563,47 +580,73 @@ export default function FingerEnrolment() {
               Enrolment Console
             </h2>
             <span className="font-mono text-[10px] tracking-wider text-muted">
-              {device ? (online ? "DEVICE ONLINE" : "DEVICE OFFLINE") : "NO DEVICE"}
+              {isVirtual
+                ? "VIRTUAL / DESKTOP BRIDGE"
+                : device
+                  ? online
+                    ? "DEVICE ONLINE"
+                    : "DEVICE STANDBY"
+                  : "NO DEVICE"}
             </span>
           </header>
 
           <div className="space-y-4 px-5 py-5">
             {/* Device picker */}
             <div>
-              <label
-                className="mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase"
-                htmlFor="enrol-device"
-              >
-                Connected fingerprint machine
-              </label>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <label
+                  className="text-[10px] font-bold tracking-[0.18em] text-muted uppercase"
+                  htmlFor="enrol-device"
+                >
+                  Connected fingerprint machine
+                </label>
+                <Link
+                  href="/clocking-devices"
+                  className="text-[10px] font-semibold text-neon hover:underline"
+                >
+                  + Configure Terminals
+                </Link>
+              </div>
               <select
                 id="enrol-device"
                 className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-ink outline-none transition focus:border-neon/50"
-                value={deviceId ?? ""}
+                value={deviceId}
                 onChange={(ev) => setDeviceId(Number(ev.target.value))}
               >
-                {terminals.length === 0 ? <option value="">No devices</option> : null}
                 {terminals.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {`${t.location} — ${t.branch || "No branch"}`}
+                    {`${t.location} (${t.branch || "Unassigned"}) — ${t.serialNumber || t.mac} [${t.status}]`}
                   </option>
                 ))}
+                <option value={VIRTUAL_DEVICE_ID}>
+                  Web / Desktop Enrolment Console (Direct to Employee Record)
+                </option>
               </select>
+
               {device ? (
-                <p className="mt-1.5 font-mono text-[10px] break-all text-muted">
-                  {device.mac} · {device.ip} ·{" "}
-                  <span className={online ? "text-neon" : "text-warn"}>
-                    {device.status.toUpperCase()}
-                  </span>{" "}
-                  · last ping {device.lastPing ? formatRelative(device.lastPing) : "never"}
-                </p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-mono text-[10px] break-all text-muted">
+                    {device.protocol || "ADMS"} · SN: {device.serialNumber || device.mac} ·{" "}
+                    {device.ip || "push"} ·{" "}
+                    <span className={online ? "text-neon" : "text-warn"}>
+                      {device.status.toUpperCase()}
+                    </span>{" "}
+                    · last ping {device.lastPing ? formatRelative(device.lastPing) : "never"}
+                  </p>
+                  {!online ? (
+                    <button
+                      type="button"
+                      disabled={waking}
+                      onClick={wakeTerminal}
+                      className="rounded-lg border border-neon/40 bg-neon/10 px-2.5 py-1 text-[10px] font-bold tracking-wider text-neon uppercase transition hover:bg-neon/20"
+                    >
+                      {waking ? "Connecting…" : "Wake / Connect Terminal"}
+                    </button>
+                  ) : null}
+                </div>
               ) : (
-                <p className="mt-1.5 text-[11px] text-warn">
-                  No console connected —{" "}
-                  <Link href="/clocking-devices" className="underline hover:text-ink">
-                    register a device
-                  </Link>
-                  .
+                <p className="mt-1.5 font-mono text-[10px] text-neon">
+                  Direct enrolment active — templates are written straight to {e.erpUserId}.
                 </p>
               )}
             </div>
@@ -634,7 +677,7 @@ export default function FingerEnrolment() {
                 type="button"
                 onClick={onCapture}
                 className="btn btn--neon"
-                disabled={busy || saving || !online}
+                disabled={busy || saving}
               >
                 {busy ? <span className="spinner" aria-hidden="true" /> : null}
                 {enrolledNow ? "Re-capture finger" : "Capture on device"}
@@ -643,7 +686,7 @@ export default function FingerEnrolment() {
                 type="button"
                 onClick={onCaptureMissing}
                 className="btn btn--ghost"
-                disabled={busy || saving || !online || missing.length === 0}
+                disabled={busy || saving || missing.length === 0}
               >
                 Enrol all missing
               </button>
@@ -658,14 +701,9 @@ export default function FingerEnrolment() {
               </button>
             </div>
 
-            {!online && device ? (
-              <p className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-                The selected machine is offline — pick an Online device to capture.
-              </p>
-            ) : null}
             {fingers.length === 5 ? (
               <p className="rounded-xl border border-neon/40 bg-neon/10 px-3 py-2 text-xs text-neon">
-                ✓ All five fingerprints enrolled — {e.erpUserId} is ready to clock.
+                ✓ All five fingerprints enrolled — {e.erpUserId} is ready to clock on any terminal.
               </p>
             ) : null}
           </div>

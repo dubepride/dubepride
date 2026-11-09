@@ -99,7 +99,9 @@ import type {
   SyncStats,
   SystemAccountDto,
   SystemAccountRow,
+  TerminalDirectionMode,
   TerminalJoinedRow,
+  TerminalProtocol,
   TerminalRow,
   TerminalStatus,
   TimeOffRequestRow,
@@ -416,6 +418,12 @@ async function migrate(db: Client): Promise<void> {
   await ensureColumn(db, "Employees", "Bound_Device_At", "Bound_Device_At INTEGER");
   await ensureColumn(db, "Attendance_Logs", "Device_ID", "Device_ID TEXT");
   await ensureColumn(db, "Attendance_Logs", "Device_Name", "Device_Name TEXT");
+  await ensureColumn(db, "Terminals", "Serial_Number", "Serial_Number TEXT");
+  await ensureColumn(db, "Terminals", "Protocol", "Protocol TEXT NOT NULL DEFAULT 'ADMS'");
+  await ensureColumn(db, "Terminals", "Port", "Port INTEGER DEFAULT 4370");
+  await ensureColumn(db, "Terminals", "Comm_Key", "Comm_Key TEXT DEFAULT ''");
+  await ensureColumn(db, "Terminals", "Timezone", "Timezone TEXT NOT NULL DEFAULT 'Africa/Harare'");
+  await ensureColumn(db, "Terminals", "Direction_Mode", "Direction_Mode TEXT NOT NULL DEFAULT 'Auto'");
 }
 
 /* ------------------------------------------------------------------ */
@@ -3089,24 +3097,132 @@ export async function randomTerminal(): Promise<TerminalRow | null> {
  * Identify the sending device: serial (SN ≙ MAC) first, then source IP.
  * MAC comparison is case-insensitive — firmware often lowercases it.
  */
+export function normalizeTerminalProtocol(raw: unknown): TerminalProtocol {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (s === "ADMS" || s === "Hikvision" || s === "Anviz" || s === "Suprema" || s === "Webhook") {
+    return s;
+  }
+  return "ADMS";
+}
+
+export function normalizeTerminalDirectionMode(raw: unknown): TerminalDirectionMode {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (s === "Auto" || s === "Device" || s === "IN_Only" || s === "OUT_Only") {
+    return s;
+  }
+  return "Auto";
+}
+
 export async function findTerminal(
   db: Client,
-  hint: { mac?: string | null; ip?: string | null }
+  hint: {
+    sn?: string | null;
+    mac?: string | null;
+    ip?: string | null;
+    autoDiscover?: boolean;
+    protocol?: TerminalProtocol;
+  }
 ): Promise<TerminalRow | null> {
-  const mac = hint.mac?.trim();
-  if (mac) {
-    const byMac = await queryOne<TerminalRow>(
-      db,
-      "SELECT * FROM Terminals WHERE Terminal_MAC COLLATE NOCASE = ?",
-      mac
-    );
-    if (byMac) return byMac;
+  const sn = hint.sn?.trim() || null;
+  const mac = hint.mac?.trim() || null;
+  const ip = hint.ip?.trim() || null;
+  const validIp = ip && ip !== "unknown" ? ip : null;
+
+  let found: TerminalRow | null = null;
+
+  if (sn) {
+    found =
+      (await queryOne<TerminalRow>(
+        db,
+        "SELECT * FROM Terminals WHERE Serial_Number COLLATE NOCASE = ? OR Terminal_MAC COLLATE NOCASE = ? LIMIT 1",
+        sn,
+        sn
+      )) ?? null;
   }
-  const ip = hint.ip?.trim();
-  if (ip) {
-    const byIp = await queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE IP_Address = ?", ip);
-    if (byIp) return byIp;
+
+  if (!found && mac && mac !== sn) {
+    found =
+      (await queryOne<TerminalRow>(
+        db,
+        "SELECT * FROM Terminals WHERE Terminal_MAC COLLATE NOCASE = ? OR Serial_Number COLLATE NOCASE = ? LIMIT 1",
+        mac,
+        mac
+      )) ?? null;
   }
+
+  if (!found && validIp) {
+    found =
+      (await queryOne<TerminalRow>(
+        db,
+        "SELECT * FROM Terminals WHERE IP_Address = ? LIMIT 1",
+        validIp
+      )) ?? null;
+  }
+
+  if (found) {
+    const updates: string[] = [];
+    const args: SQLInputValue[] = [];
+    if (sn && !found.Serial_Number) {
+      updates.push("Serial_Number = ?");
+      args.push(sn);
+      found.Serial_Number = sn;
+    }
+    if (validIp && (!found.IP_Address || found.IP_Address === "unknown")) {
+      updates.push("IP_Address = ?");
+      args.push(validIp);
+      found.IP_Address = validIp;
+    }
+    if (updates.length > 0) {
+      args.push(found.Terminal_ID);
+      await exec(db, `UPDATE Terminals SET ${updates.join(", ")} WHERE Terminal_ID = ?`, ...args);
+    }
+    return found;
+  }
+
+  // Auto-discover unregistered hardware terminal when it pushes with a Serial Number or MAC
+  if (hint.autoDiscover && (sn || mac)) {
+    const identifier = (sn || mac)!;
+    const firstBranch =
+      (await queryOne<{ Branch_Name: string }>(
+        db,
+        "SELECT Branch_Name FROM Branches ORDER BY Branch_ID LIMIT 1"
+      ))?.Branch_Name ?? "";
+    const now = Date.now();
+    const label = `Terminal ${identifier}`;
+    const protocol = hint.protocol ?? "ADMS";
+    try {
+      const { lastId } = await run(
+        db,
+        `INSERT INTO Terminals
+           (Terminal_MAC, Serial_Number, IP_Address, Location_Name, Device_Name, Branch_Name,
+            Status, Last_Ping, Clocking_Method, Protocol, Port, Comm_Key, Timezone, Direction_Mode)
+         VALUES (?, ?, ?, ?, ?, ?, 'Online', ?, 'Biometric', ?, 4370, '', 'Africa/Harare', 'Auto')`,
+        mac || identifier,
+        sn || identifier,
+        validIp ?? "",
+        label,
+        label,
+        firstBranch,
+        now,
+        protocol
+      );
+      return (
+        (await queryOne<TerminalRow>(db, "SELECT * FROM Terminals WHERE Terminal_ID = ?", lastId)) ??
+        null
+      );
+    } catch {
+      // Ignore race condition on UNIQUE Terminal_MAC and re-query
+      return (
+        (await queryOne<TerminalRow>(
+          db,
+          "SELECT * FROM Terminals WHERE Terminal_MAC COLLATE NOCASE = ? OR Serial_Number COLLATE NOCASE = ? LIMIT 1",
+          identifier,
+          identifier
+        )) ?? null
+      );
+    }
+  }
+
   return null;
 }
 
@@ -3147,47 +3263,76 @@ export async function pingOnlineTerminals(): Promise<void> {
 
 export async function createTerminal({
   mac,
+  serialNumber,
   ip,
   location,
   branch,
   deviceName,
   status = "Offline",
+  protocol,
+  port,
+  commKey,
+  timezone,
+  directionMode,
   clockingMethod,
   latitude,
   longitude,
   geofenceRadiusMeters,
 }: {
   mac?: string | null;
+  serialNumber?: string | null;
   ip?: string | null;
   location?: string | null;
   branch: string;
   deviceName?: string | null;
   status?: "Online" | "Offline";
+  protocol?: TerminalProtocol | string | null;
+  port?: number | string | null;
+  commKey?: string | null;
+  timezone?: string | null;
+  directionMode?: TerminalDirectionMode | string | null;
 } & ClockingConfigInput) {
   const db = await getDb();
   const method = normalizeClockingMethod(clockingMethod);
-  // A Geofence-only device has no physical MAC; synthesise a stable, unique
-  // placeholder so the NOT NULL UNIQUE column is satisfied (and no real
-  // terminal is ever mistaken for it).
+  const cleanSn = serialNumber?.trim() || null;
+  // A Geofence-only device or SN-only device may have no physical MAC; fall back
+  // to the Serial Number first, or synthesise a unique placeholder.
   const cleanMac =
     mac?.trim() ||
+    cleanSn ||
     `GEO-${branch.trim().replace(/[^A-Za-z0-9]+/g, "").toUpperCase()}-${Date.now().toString(36)}${Math.random()
       .toString(36)
       .slice(2, 6)}`;
   const loc = (location && location.trim()) || deviceName?.trim() || `Device ${cleanMac.slice(-6)}`;
   const devName = (deviceName && deviceName.trim()) || loc;
+  const normProtocol = normalizeTerminalProtocol(protocol);
+  const normPort = port !== undefined && port !== null && port !== "" && Number.isFinite(Number(port))
+    ? Math.max(1, Math.min(65535, Math.round(Number(port))))
+    : 4370;
+  const normCommKey = commKey?.trim() ?? "";
+  const normTimezone = timezone?.trim() || "Africa/Harare";
+  const normDirection = normalizeTerminalDirectionMode(directionMode);
+
   const { lastId } = await run(
     db,
     `INSERT INTO Terminals
-       (Terminal_MAC, IP_Address, Location_Name, Branch_Name, Status, Last_Ping,
+       (Terminal_MAC, Serial_Number, IP_Address, Location_Name, Device_Name, Branch_Name, Status, Last_Ping,
+        Protocol, Port, Comm_Key, Timezone, Direction_Mode,
         Clocking_Method, Latitude, Longitude, Geofence_Radius_Meters)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     cleanMac,
+    cleanSn,
     ip?.trim() || "",
+    devName,
     devName,
     branch.trim(),
     status,
     status === "Online" ? Date.now() : null,
+    normProtocol,
+    normPort,
+    normCommKey,
+    normTimezone,
+    normDirection,
     method,
     coerceCoord(latitude),
     coerceCoord(longitude),
@@ -3231,11 +3376,17 @@ export async function updateTerminal(
   terminalId: number,
   patch: {
     mac?: string;
+    serialNumber?: string | null;
     ip?: string | null;
     location?: string | null;
     branch?: string;
     deviceName?: string | null;
     status?: "Online" | "Offline";
+    protocol?: TerminalProtocol | string | null;
+    port?: number | string | null;
+    commKey?: string | null;
+    timezone?: string | null;
+    directionMode?: TerminalDirectionMode | string | null;
   } & ClockingConfigInput
 ) {
   const db = await getDb();
@@ -3247,6 +3398,10 @@ export async function updateTerminal(
     updates.push("Terminal_MAC = ?");
     params.push(patch.mac.trim());
   }
+  if (patch.serialNumber !== undefined) {
+    updates.push("Serial_Number = ?");
+    params.push(patch.serialNumber?.trim() || null);
+  }
   if (patch.ip !== undefined) {
     updates.push("IP_Address = ?");
     params.push(patch.ip?.trim() || "");
@@ -3256,6 +3411,8 @@ export async function updateTerminal(
     const dev = (patch.deviceName !== undefined ? patch.deviceName : loc) ?? "";
     const final = dev.trim() || loc.trim() || "Unnamed device";
     updates.push("Location_Name = ?");
+    params.push(final);
+    updates.push("Device_Name = ?");
     params.push(final);
   }
   if (patch.branch !== undefined) {
@@ -3267,6 +3424,29 @@ export async function updateTerminal(
     params.push(patch.status);
     updates.push("Last_Ping = ?");
     params.push(patch.status === "Online" ? Date.now() : null);
+  }
+  if (patch.protocol !== undefined) {
+    updates.push("Protocol = ?");
+    params.push(normalizeTerminalProtocol(patch.protocol));
+  }
+  if (patch.port !== undefined) {
+    const p = patch.port !== null && patch.port !== "" && Number.isFinite(Number(patch.port))
+      ? Math.max(1, Math.min(65535, Math.round(Number(patch.port))))
+      : 4370;
+    updates.push("Port = ?");
+    params.push(p);
+  }
+  if (patch.commKey !== undefined) {
+    updates.push("Comm_Key = ?");
+    params.push(patch.commKey?.trim() ?? "");
+  }
+  if (patch.timezone !== undefined) {
+    updates.push("Timezone = ?");
+    params.push(patch.timezone?.trim() || "Africa/Harare");
+  }
+  if (patch.directionMode !== undefined) {
+    updates.push("Direction_Mode = ?");
+    params.push(normalizeTerminalDirectionMode(patch.directionMode));
   }
   if (patch.clockingMethod !== undefined) {
     updates.push("Clocking_Method = ?");

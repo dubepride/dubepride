@@ -47,6 +47,7 @@ import { SESSION_COOKIE } from "@/lib/session";
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
 const PUBLIC_PREFIXES = [
   "/api/biometrics/push",
+  "/iclock",
   // Phase 15 — mobile clocking ingress & geofence feeds. The mobile app cannot
   // hold a session cookie, so these handlers authenticate the shared
   // MOBILE_PUNCH_KEY (or a signed-in admin session).

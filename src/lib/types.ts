@@ -70,10 +70,20 @@ export interface EmployeeRow {
   Bound_Device_At?: number | null;
 }
 
+export type TerminalProtocol = "ADMS" | "Hikvision" | "Anviz" | "Suprema" | "Webhook";
+
+export type TerminalDirectionMode = "Auto" | "Device" | "IN_Only" | "OUT_Only";
+
 export interface TerminalRow {
   Terminal_ID: number;
   Terminal_MAC: string;
+  Serial_Number?: string | null;
   IP_Address: string;
+  Port?: number | null;
+  Protocol?: TerminalProtocol | string | null;
+  Comm_Key?: string | null;
+  Timezone?: string | null;
+  Direction_Mode?: TerminalDirectionMode | string | null;
   Location_Name: string;
   /** One of the company's 17 branches — "Branch 1" … "Branch 17". */
   Branch_Name: string;
@@ -266,7 +276,13 @@ export interface AttendanceRecordsResponse {
 export interface TerminalDto {
   id: number;
   mac: string;
+  serialNumber?: string | null;
   ip: string;
+  port?: number | null;
+  protocol?: TerminalProtocol;
+  commKey?: string | null;
+  timezone?: string;
+  directionMode?: TerminalDirectionMode;
   location: string;
   branch: string;
   status: TerminalStatus;

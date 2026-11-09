@@ -1,11 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatClockTime, formatRelative } from "@/lib/format";
+import { formatRelative } from "@/lib/format";
 import type {
-  AttendanceRecordsResponse,
-  EmployeeDirectoryResponse,
-  PunchDirection,
   TerminalsResponse,
 } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
@@ -16,7 +14,7 @@ import {
   BranchesTab,
   SystemAccountsTab,
 } from "./AccessControlPanel";
-import { IconCheck, IconServer } from "./icons";
+import { IconCheck } from "./icons";
 
 /* ------------------------------------------------------------------ */
 /* Shared form styling                                                 */
@@ -48,6 +46,10 @@ interface SettingsState {
   language: string;
   // Biometric device
   defaultDeviceId: number | null;
+  defaultProtocol: string;
+  defaultPort: string;
+  defaultDirectionMode: string;
+  autoDiscoverTerminals: boolean;
   // Working hours
   dayStart: string;
   dayEnd: string;
@@ -70,10 +72,14 @@ interface SettingsState {
 const DEFAULTS: SettingsState = {
   systemName: "BIOBRIDGE T&A Bridge",
   organisation: "BIOBRIDGE Industries",
-  timeZone: "Africa/Nairobi",
+  timeZone: "Africa/Harare",
   dateFormat: "DD/MM/YYYY",
   language: "English",
   defaultDeviceId: null,
+  defaultProtocol: "ADMS",
+  defaultPort: "4370",
+  defaultDirectionMode: "Auto",
+  autoDiscoverTerminals: true,
   dayStart: "08:00",
   dayEnd: "17:00",
   workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
@@ -90,18 +96,12 @@ const DEFAULTS: SettingsState = {
   retentionDays: "30",
 };
 
-/**
- * All eight tabs in their presentation order. Each carries the capability
- * that unlocks it (Phase 14). An account lacking the capability never sees
- * the tab, and the server-side proxy refuses the route entirely.
- */
 interface TabDef {
   id: string;
   label: string;
   perm: PermissionKey;
 }
 
-/** Order mirrors the spec's requested sequence: Branches / Access Levels / System Accounts / Biometric Device first. */
 const TABS: TabDef[] = [
   { id: "general", label: "General", perm: "can_edit_settings" },
   { id: "branches", label: "Branches", perm: "can_manage_branches" },
@@ -113,7 +113,16 @@ const TABS: TabDef[] = [
   { id: "backup", label: "Backup", perm: "can_edit_settings" },
 ];
 
-const TIME_ZONES = ["Africa/Nairobi", "Europe/London", "America/New_York", "Asia/Dubai", "UTC"];
+const TIME_ZONES = [
+  "Africa/Harare",
+  "Africa/Johannesburg",
+  "Africa/Lusaka",
+  "Africa/Nairobi",
+  "Africa/Lagos",
+  "Europe/London",
+  "Asia/Dubai",
+  "UTC",
+];
 const DATE_FORMATS = ["DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const LANGUAGES = ["English", "French", "Swahili"];
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -152,14 +161,6 @@ const NOTIFICATION_ROWS: {
   },
 ];
 
-/** Shape of the `punch` object returned by POST /api/attendance/punch. */
-interface TestPunch {
-  employeeName: string;
-  timestamp: number;
-  direction: PunchDirection;
-  terminalName: string | null;
-}
-
 /* ------------------------------------------------------------------ */
 /* Small building blocks                                               */
 /* ------------------------------------------------------------------ */
@@ -186,17 +187,6 @@ function Field({
   );
 }
 
-/** Definition row used by the device diagnostics card. */
-function DefRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-white/[0.05] py-2.5 last:border-0">
-      <span className="text-[10px] font-bold tracking-[0.16em] text-muted uppercase">{label}</span>
-      <span className={`text-sm text-ink ${mono ? "font-mono" : "font-semibold"}`}>{value}</span>
-    </div>
-  );
-}
-
-/** Rounded-full pill switch — neon when on, muted when off. */
 function Toggle({
   on,
   label,
@@ -227,7 +217,6 @@ function Toggle({
   );
 }
 
-/** Glass panel shell shared by every tab. */
 function Panel({
   title,
   subtitle,
@@ -271,6 +260,391 @@ function Panel({
 }
 
 /* ------------------------------------------------------------------ */
+/* Biometric Device & Universal ADMS / Push Gateway Tab                */
+/* ------------------------------------------------------------------ */
+
+function BiometricDeviceTab({
+  settings,
+  update,
+  saved,
+  onSave,
+}: {
+  settings: SettingsState;
+  update: <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => void;
+  saved: boolean;
+  onSave: () => void;
+}) {
+  const { data: termData, refresh } = usePoll<TerminalsResponse>("/api/terminals", 4000);
+  const terminals = termData?.terminals ?? [];
+
+  const [origin, setOrigin] = useState("https://dubepride.vercel.app");
+  const [hostOnly, setHostOnly] = useState("dubepride.vercel.app");
+  const [testFormat, setTestFormat] = useState<"adms_tab" | "adms_kv" | "hikvision" | "json">(
+    "adms_tab"
+  );
+  const [testSn, setTestSn] = useState("ZK-MAIN-01");
+  const [testEmp, setTestEmp] = useState("EMP1001");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin);
+      setHostOnly(window.location.host);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (terminals.length > 0 && testSn === "ZK-MAIN-01") {
+      const first = terminals[0];
+      if (first.serialNumber || first.mac) {
+        setTestSn(first.serialNumber || first.mac);
+      }
+    }
+  }, [terminals, testSn]);
+
+  function copy(key: string, val: string) {
+    navigator.clipboard?.writeText(val);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1800);
+  }
+
+  async function sendDiagnosticPacket() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      let url = `/iclock/cdata?SN=${encodeURIComponent(testSn.trim())}&table=ATTLOG`;
+      let body = "";
+      let contentType = "text/plain";
+
+      if (testFormat === "adms_tab") {
+        // ZKTeco native tab-separated ATTLOG row: PIN \t Time \t Status \t Verify \t Workcode
+        const pin = testEmp.trim().replace(/^EMP/i, "") || "1001";
+        body = `${pin}\t\t0\t1\t0\t0`;
+      } else if (testFormat === "adms_kv") {
+        body = `ID=${testEmp.trim()}&Status=0&Verify=1`;
+      } else if (testFormat === "hikvision") {
+        url = `/api/biometrics/push?SN=${encodeURIComponent(testSn.trim())}`;
+        contentType = "application/json";
+        body = JSON.stringify({
+          deviceID: testSn.trim(),
+          AccessControllerEvent: {
+            employeeNoString: testEmp.trim(),
+            attendanceStatus: "checkIn",
+            currentVerifyMode: "fingerprint",
+          },
+        });
+      } else {
+        url = `/api/biometrics/push?SN=${encodeURIComponent(testSn.trim())}`;
+        contentType = "application/json";
+        body = JSON.stringify({
+          employeeId: testEmp.trim(),
+          verifyMethod: "Fingerprint",
+        });
+      }
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": contentType },
+        body,
+      });
+      const reply = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${reply}`);
+      setTestResult({
+        ok: true,
+        text: `Gateway replied "${reply.trim()}" — Terminal "${testSn.trim()}" marked Online & punch recorded for ${testEmp.trim()}.`,
+      });
+      refresh();
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Panel
+        title="Biometric Device & Gateway Configuration"
+        subtitle="Global ADMS / ISAPI / Webhook listener endpoints and default terminal parameters."
+        saved={saved}
+        onSave={onSave}
+      >
+        {/* Gateway URLs */}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="glass-inset rounded-xl p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold tracking-[0.16em] text-neon uppercase">
+                ZKTeco / eSSL Server Domain
+              </span>
+              <button
+                type="button"
+                onClick={() => copy("host", hostOnly)}
+                className="rounded border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink hover:border-neon/40 hover:text-neon"
+              >
+                {copied === "host" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <p className="mt-1.5 truncate font-mono text-xs text-ink">{hostOnly}</p>
+            <p className="mt-1 text-[10px] text-muted">
+              Enter under <strong>Comm. → Cloud Server (ADMS)</strong> on the terminal keypad.
+            </p>
+          </div>
+
+          <div className="glass-inset rounded-xl p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold tracking-[0.16em] text-neon uppercase">
+                Native ADMS Path (/iclock)
+              </span>
+              <button
+                type="button"
+                onClick={() => copy("iclock", `${origin}/iclock/cdata`)}
+                className="rounded border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink hover:border-neon/40 hover:text-neon"
+              >
+                {copied === "iclock" ? "Copied!" : "Copy URL"}
+              </button>
+            </div>
+            <p className="mt-1.5 truncate font-mono text-xs text-ink">{origin}/iclock/cdata</p>
+            <p className="mt-1 text-[10px] text-muted">
+              Also handles <code>/iclock/getrequest</code> &amp; <code>/iclock/devicecmd</code>.
+            </p>
+          </div>
+
+          <div className="glass-inset rounded-xl p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold tracking-[0.16em] text-neon uppercase">
+                HTTP Push / ISAPI / Webhook
+              </span>
+              <button
+                type="button"
+                onClick={() => copy("push", `${origin}/api/biometrics/push`)}
+                className="rounded border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink hover:border-neon/40 hover:text-neon"
+              >
+                {copied === "push" ? "Copied!" : "Copy URL"}
+              </button>
+            </div>
+            <p className="mt-1.5 truncate font-mono text-xs text-ink">
+              {origin}/api/biometrics/push
+            </p>
+            <p className="mt-1 text-[10px] text-muted">
+              For Hikvision ISAPI, Anviz, Suprema &amp; REST webhooks.
+            </p>
+          </div>
+        </div>
+
+        {/* Default settings */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Default Enrolment & Test Terminal"
+            htmlFor="set-default-device"
+            hint="Used by the Dashboard test widget and Fingerprint Enrolment console by default."
+          >
+            <select
+              id="set-default-device"
+              className={INPUT}
+              value={settings.defaultDeviceId ?? ""}
+              onChange={(e) =>
+                update("defaultDeviceId", e.target.value ? Number(e.target.value) : null)
+              }
+            >
+              <option value="">Use the first online terminal automatically</option>
+              {terminals.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.location} ({t.branch || "Unassigned"}) — SN: {t.serialNumber || t.mac} [{t.status}]
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field
+            label="Default Hardware Protocol"
+            htmlFor="set-default-proto"
+            hint="Pre-selected protocol when registering new terminals or auto-discovering."
+          >
+            <select
+              id="set-default-proto"
+              className={INPUT}
+              value={settings.defaultProtocol}
+              onChange={(e) => update("defaultProtocol", e.target.value)}
+            >
+              <option value="ADMS">ZKTeco / eSSL / BioTime (ADMS / iClock Push)</option>
+              <option value="Hikvision">Hikvision / MinMoe (ISAPI HTTP Listening)</option>
+              <option value="Anviz">Anviz CrossChex (HTTP Push)</option>
+              <option value="Suprema">Suprema BioStar 2 (Webhook)</option>
+              <option value="Webhook">Generic HTTP / JSON / CSV Terminal</option>
+            </select>
+          </Field>
+
+          <Field
+            label="Default Terminal Port"
+            htmlFor="set-default-port"
+            hint="Standard ZKTeco port is 4370; HTTP Push uses 80 / 443."
+          >
+            <input
+              id="set-default-port"
+              type="number"
+              className={`${INPUT} font-mono`}
+              value={settings.defaultPort}
+              onChange={(e) => update("defaultPort", e.target.value)}
+            />
+          </Field>
+
+          <Field
+            label="Default Punch Direction Mode"
+            htmlFor="set-default-dir"
+            hint="Auto-Alternate toggles IN ↔ OUT across each employee's working day."
+          >
+            <select
+              id="set-default-dir"
+              className={INPUT}
+              value={settings.defaultDirectionMode}
+              onChange={(e) => update("defaultDirectionMode", e.target.value)}
+            >
+              <option value="Auto">Auto-Alternate (IN ↔ OUT per employee sequence)</option>
+              <option value="Device">Honor Device Key (Check-In / Check-Out button)</option>
+              <option value="IN_Only">Entrance Reader Only (Force all = IN)</option>
+              <option value="OUT_Only">Exit Reader Only (Force all = OUT)</option>
+            </select>
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold text-ink">
+              Manage Individual Branch Terminals ({terminals.length} registered)
+            </p>
+            <p className="text-[11px] text-muted">
+              Add devices by Serial Number (SN) or MAC, assign branches, or view per-device keypad guides.
+            </p>
+          </div>
+          <Link href="/clocking-devices" className="btn btn--ghost text-xs">
+            Open Clocking Devices →
+          </Link>
+        </div>
+      </Panel>
+
+      {/* Live Packet Diagnostic Tester */}
+      <section className="glass rise relative overflow-hidden">
+        <div className="accent-line" aria-hidden="true" />
+        <header className="border-b border-white/[0.07] px-5 py-4">
+          <h2 className="text-xs font-bold tracking-[0.24em] text-ink uppercase">
+            Live Terminal Packet Diagnostic Tester
+          </h2>
+          <p className="mt-1 text-[11px] text-muted">
+            Verify that your bridge accepts ZKTeco ADMS, Hikvision ISAPI, or JSON payloads and auto-discovers terminals.
+          </p>
+        </header>
+
+        <div className="space-y-4 px-5 py-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Packet Format" htmlFor="diag-format">
+              <select
+                id="diag-format"
+                className={INPUT}
+                value={testFormat}
+                onChange={(e) =>
+                  setTestFormat(e.target.value as "adms_tab" | "adms_kv" | "hikvision" | "json")
+                }
+              >
+                <option value="adms_tab">ZKTeco ADMS (Tab-Separated ATTLOG)</option>
+                <option value="adms_kv">ZKTeco / eSSL (Key=Value ADMS)</option>
+                <option value="hikvision">Hikvision ISAPI (AccessControllerEvent)</option>
+                <option value="json">Generic Webhook (JSON)</option>
+              </select>
+            </Field>
+
+            <Field label="Device Serial Number (SN)" htmlFor="diag-sn">
+              <input
+                id="diag-sn"
+                className={`${INPUT} font-mono`}
+                value={testSn}
+                onChange={(e) => setTestSn(e.target.value)}
+                placeholder="CJSX213460192"
+              />
+            </Field>
+
+            <Field label="Employee Number / PIN" htmlFor="diag-emp">
+              <input
+                id="diag-emp"
+                className={`${INPUT} font-mono`}
+                value={testEmp}
+                onChange={(e) => setTestEmp(e.target.value)}
+                placeholder="EMP1001 or 1001"
+              />
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-mono text-[11px] text-muted">
+              Target:{" "}
+              <span className="text-neon">
+                {testFormat.startsWith("adms")
+                  ? `POST /iclock/cdata?SN=${testSn}&table=ATTLOG`
+                  : `POST /api/biometrics/push?SN=${testSn}`}
+              </span>
+            </p>
+            <button
+              type="button"
+              disabled={testing || !testSn.trim()}
+              onClick={sendDiagnosticPacket}
+              className="btn btn--neon text-xs"
+            >
+              {testing ? <span className="spinner" aria-hidden="true" /> : null}
+              Send Test Attendance Packet
+            </button>
+          </div>
+
+          {testResult ? (
+            <p
+              className={`rounded-xl border px-3.5 py-2.5 text-xs ${
+                testResult.ok
+                  ? "border-neon/40 bg-neon/10 text-neon"
+                  : "border-danger/40 bg-danger/10 text-danger"
+              }`}
+            >
+              {testResult.text}
+            </p>
+          ) : null}
+
+          {terminals.length > 0 ? (
+            <div className="border-t border-white/[0.06] pt-3">
+              <p className="mb-2 text-[10px] font-bold tracking-[0.16em] text-muted uppercase">
+                Registered &amp; Auto-Discovered Terminals
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {terminals.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-ink">{t.location}</p>
+                      <p className="truncate font-mono text-[10px] text-muted">
+                        {t.protocol} · {t.serialNumber || t.mac} ·{" "}
+                        {t.lastPing ? formatRelative(t.lastPing) : "never pinged"}
+                      </p>
+                    </div>
+                    <span
+                      className={`chip ${t.status === "Online" ? "chip--neon" : "chip--danger"}`}
+                    >
+                      {t.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -281,8 +655,6 @@ export default function SettingsConsole() {
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<number | null>(null);
 
-  // Hydrate from localStorage without touching state synchronously in the
-  // effect body (queueMicrotask defers the read + merge to a microtask).
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
@@ -299,14 +671,12 @@ export default function SettingsConsole() {
     };
   }, []);
 
-  // Auto-clear the confirmation banner; clean the pending timer on unmount.
   useEffect(() => {
     return () => {
       if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
     };
   }, []);
 
-  /** Patch one or more fields and clear any stale confirmation banner. */
   const update = <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
     setSaved(false);
@@ -323,15 +693,11 @@ export default function SettingsConsole() {
     savedTimer.current = window.setTimeout(() => setSaved(false), 3500);
   };
 
-  // Filter tabs by the signed-in account's permissions. When the active tab
-  // is not in the permitted set, fall back to the first permitted tab.
   const visibleTabs = useMemo(() => TABS.filter((t) => can(t.perm)), [can]);
   if (visibleTabs.length > 0 && !visibleTabs.some((t) => t.id === tab)) {
-    // Render-phase adjustment — safe because `setTab` runs before paint.
     setTab(visibleTabs[0].id);
   }
 
-  // Build the tab content based on permissions
   const renderTab = () => {
     if (permissions === null) {
       return (
@@ -433,31 +799,12 @@ export default function SettingsConsole() {
 
       case "device":
         return (
-          <Panel
-            title="Biometric Device"
-            subtitle="Default terminal for the simulator & test widget — the live bridge polls every terminal independently."
+          <BiometricDeviceTab
+            settings={settings}
+            update={update}
             saved={saved}
             onSave={save}
-          >
-            <div className="space-y-4">
-              <p className="text-sm text-muted">
-                The bridge discovers all 17 branches&apos; terminals automatically via the
-                ADMS push channel (see <code className="font-mono text-neon">/api/biometrics/push</code>). The
-                selector below only sets which terminal the dashboard&apos;s &apos;Test Clock In&apos;
-                widget pretends to be when you press it.
-              </p>
-              <Field label="Default Device" htmlFor="set-default-device">
-                <select
-                  id="set-default-device"
-                  className={INPUT}
-                  value={settings.defaultDeviceId ?? ""}
-                  onChange={(e) => update("defaultDeviceId", e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Use the first online terminal</option>
-                </select>
-              </Field>
-            </div>
-          </Panel>
+          />
         );
 
       case "working-hours":
@@ -634,7 +981,7 @@ export default function SettingsConsole() {
             System configuration · device integration · notifications · access control
           </p>
         </div>
-        <span className="chip chip--muted">Phase 13/14</span>
+        <span className="chip chip--muted">Phase 20</span>
       </div>
 
       {/* Segmented tab control --------------------------------------- */}
