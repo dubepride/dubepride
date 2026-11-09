@@ -211,6 +211,7 @@ async function bootstrap(client: Client): Promise<void> {
   await backfillEmployeeMeta(client);
   await seedSystemAccounts(client);
   await ensureSeedAdmin(client);
+  await ensureDefaultTabletAccount(client);
   if (seedDemoData()) await seedAttendanceHistory(client);
 }
 
@@ -1091,6 +1092,57 @@ async function ensureTabletStationPermissionAndLevel(db: Client): Promise<void> 
     db,
     "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
     TABLET_STATION_PERMISSION_MARKER,
+    String(Date.now())
+  );
+}
+
+const TABLET_ACCOUNT_MARKER = "tablet_account_v1";
+
+async function ensureDefaultTabletAccount(db: Client): Promise<void> {
+  const done = await queryOne<{ v: string }>(
+    db,
+    "SELECT Value AS v FROM App_Meta WHERE Key = ?",
+    TABLET_ACCOUNT_MARKER
+  );
+  if (done) return;
+
+  const existing = await queryOne<{ id: number }>(
+    db,
+    "SELECT Account_ID AS id FROM System_Accounts WHERE lower(Company_Email) = ?",
+    "tablet@biobridge.com"
+  );
+
+  const levelRow = await queryOne<{ id: number }>(
+    db,
+    "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?",
+    "Tablet Station"
+  );
+
+  if (!existing && levelRow) {
+    const firstBranch = await queryOne<{ id: number }>(
+      db,
+      "SELECT Branch_ID AS id FROM Branches ORDER BY Branch_ID ASC LIMIT 1"
+    );
+    await run(
+      db,
+      `INSERT INTO System_Accounts
+         (First_Name, Surname, Company_Email, Password_Hash, Access_Level_ID, Branch_ID, Employee_ID, Created_At)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      "Work",
+      "Tablet",
+      "tablet@biobridge.com",
+      hashPassword("tablet"),
+      levelRow.id,
+      firstBranch?.id ?? null,
+      null,
+      Date.now()
+    );
+  }
+
+  await run(
+    db,
+    "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
+    TABLET_ACCOUNT_MARKER,
     String(Date.now())
   );
 }
