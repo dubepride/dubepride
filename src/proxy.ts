@@ -105,18 +105,30 @@ function isPublic(pathname: string): boolean {
 }
 
 /** A page the account can actually read — or null (= hard deny, never loops). */
-function fallbackLanding(permissions: Record<string, boolean>): string | null {
-  if (permissions.can_view_my_portal) return "/my-portal";
+function fallbackLanding(permissions: Record<string, boolean>): string {
   if (permissions.can_view_dashboard) return "/";
-  return null;
+  if (permissions.can_view_tablet_station) return "/tablet";
+  if (permissions.can_view_my_portal) return "/my-portal";
+  return "/login?switch=1";
 }
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   const account = await accountByToken(request.cookies.get(SESSION_COOKIE)?.value);
 
-  // ── Already signed in? /login → their landing page ──────────────
+  // ── /login handling ──────────────
   if (pathname === "/login") {
+    // If user explicitly asks to switch account or sign out, let them view /login
+    if (
+      request.nextUrl.searchParams.get("switch") === "1" ||
+      request.nextUrl.searchParams.get("logout") === "1"
+    ) {
+      return NextResponse.next();
+    }
+    // If logged in as tablet station or role without dashboard, allow accessing /login to switch to admin
+    if (account && !account.permissions.can_view_dashboard) {
+      return NextResponse.next();
+    }
     if (account) {
       return NextResponse.redirect(new URL(account.home, request.url), 302);
     }
@@ -138,7 +150,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL("/login", request.url), 302);
   }
 
-  // ── RBAC: server-side page protection (Phase 14 Objective 5) ──────
+  // ── RBAC: server-side page protection ──────
   const required = routePermission(pathname);
   if (required && account.permissions[required] !== true) {
     if (pathname.startsWith("/api/")) {
@@ -148,10 +160,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
       );
     }
     const landing = fallbackLanding(account.permissions);
-    if (landing) {
-      return NextResponse.redirect(new URL(landing, request.url), 302);
-    }
-    return new NextResponse("Insufficient permissions for this page.", { status: 403 });
+    return NextResponse.redirect(new URL(landing, request.url), 302);
   }
 
   return NextResponse.next();

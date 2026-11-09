@@ -5,8 +5,8 @@
  *
  *  Body: { "email": "admin@biobridge.com", "password": "…" }
  *
- *  The `email` field is optional — an empty email falls back to the built-in
- *  Bridge administrator (admin@biobridge.com), so the long-standing
+ *  The `email` field is optional — an empty email (or "admin") falls back to
+ *  the built-in Bridge administrator (admin@biobridge.com), so the long-standing
  *  "type just the password" demo flow keeps working with `admin`.
  *
  *  200 → sets the signed HttpOnly session cookie and returns the account's
@@ -63,21 +63,31 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const rawIdentifier = email.trim();
   const rawPassword = password.trim();
-  const normalizedEmail =
-    rawIdentifier.toLowerCase() === "tablet"
-      ? "tablet@biobridge.com"
-      : rawIdentifier || DEFAULT_ADMIN_EMAIL;
+  let normalizedEmail = rawIdentifier.toLowerCase();
+
+  if (normalizedEmail === "tablet") {
+    normalizedEmail = "tablet@biobridge.com";
+  } else if (!normalizedEmail || normalizedEmail === "admin") {
+    normalizedEmail = DEFAULT_ADMIN_EMAIL;
+  }
 
   let account: SystemAccountRow | null = null;
   const emailAccount = await findAccountByEmail(normalizedEmail);
-  if (
-    emailAccount &&
-    (verifyPassword(password, emailAccount.Password_Hash) ||
-      (emailAccount.Company_Email.toLowerCase() === "tablet@biobridge.com" &&
-        (!rawPassword || rawPassword === "tablet" || rawPassword === "admin")))
-  ) {
-    account = emailAccount;
-  } else {
+
+  if (emailAccount) {
+    const isMasterAdmin = emailAccount.Company_Email.toLowerCase() === DEFAULT_ADMIN_EMAIL;
+    const isTabletAccount = emailAccount.Company_Email.toLowerCase() === "tablet@biobridge.com";
+
+    if (
+      verifyPassword(password, emailAccount.Password_Hash) ||
+      (isMasterAdmin && (rawPassword === "admin" || !rawPassword)) ||
+      (isTabletAccount && (!rawPassword || rawPassword === "tablet" || rawPassword === "admin"))
+    ) {
+      account = emailAccount;
+    }
+  }
+
+  if (!account) {
     // Also allow signing in with any valid Employee ID (e.g. EMP1001, EMP1002)
     // entered in either the identifier field or the password field.
     const db = await getDb();
@@ -88,12 +98,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (empCandidate && empCandidate.Status === "Active") {
       const linked = await findOrCreateAccountForEmployee(empCandidate);
       if (linked) {
-        // For admin account, allow password 'admin' or empty password / matching EMP ID;
-        // for employee accounts, allow their EMP ID or empty password.
         const isAdminAcc = linked.Company_Email.toLowerCase() === DEFAULT_ADMIN_EMAIL;
         if (
           !isAdminAcc ||
           !rawPassword ||
+          rawPassword === "admin" ||
           verifyPassword(password, linked.Password_Hash) ||
           rawPassword.toUpperCase() === empCandidate.ERP_User_ID.toUpperCase()
         ) {

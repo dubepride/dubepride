@@ -207,6 +207,7 @@ async function bootstrap(client: Client): Promise<void> {
   }
   await seedBranches(client);
   await seedAccessLevels(client);
+  await ensureAdminPermissions(client);
   await ensureLiveMapPermission(client);
   await ensureTabletStationPermissionAndLevel(client);
   if (seedDemoData()) await ensureBranchCoverage(client);
@@ -1015,6 +1016,31 @@ async function seedAccessLevels(db: Client): Promise<void> {
  * Access Levels, which is the point of a dedicated permission.
  */
 const LIVE_MAP_PERMISSION_MARKER = "perm_live_map_v1";
+
+/**
+ * Always ensure that IT Administrator holds all capabilities in the matrix
+ * and that administrative accounts are linked to the IT Administrator level.
+ */
+async function ensureAdminPermissions(db: Client): Promise<void> {
+  const allPermsJson = serializePermissions(allPermissions(true));
+  await exec(
+    db,
+    "UPDATE Access_Levels SET Permissions_JSON = ? WHERE lower(Level_Name) = 'it administrator'",
+    allPermsJson
+  );
+  const adminLevel = await queryOne<{ id: number }>(
+    db,
+    "SELECT Access_Level_ID AS id FROM Access_Levels WHERE lower(Level_Name) = 'it administrator' LIMIT 1"
+  );
+  if (adminLevel) {
+    await exec(
+      db,
+      "UPDATE System_Accounts SET Access_Level_ID = ? WHERE (lower(Company_Email) = 'admin@biobridge.com' OR lower(Company_Email) = 'biobridge@it.co.zw') AND (Access_Level_ID IS NULL OR Access_Level_ID <> ?)",
+      adminLevel.id,
+      adminLevel.id
+    );
+  }
+}
 
 async function ensureLiveMapPermission(db: Client): Promise<void> {
   const done = await queryOne<{ v: string }>(
@@ -1952,15 +1978,25 @@ export async function resolveAccount(account: SystemAccountRow): Promise<Resolve
     account.Branch_ID != null
       ? await queryOne<BranchRow>(db, "SELECT * FROM Branches WHERE Branch_ID = ?", account.Branch_ID)
       : undefined;
-  const permissions = parsePermissions(level?.Permissions_JSON);
+
+  const isItAdmin =
+    level?.Level_Name?.trim().toLowerCase() === "it administrator" ||
+    ["admin@biobridge.com", "admin@biobridge.example", "biobridge@it.co.zw"].includes(
+      account.Company_Email.toLowerCase()
+    );
+
+  const permissions = isItAdmin
+    ? allPermissions(true)
+    : parsePermissions(level?.Permissions_JSON);
+
   return {
     accountId: account.Account_ID,
     firstName: account.First_Name,
     surname: account.Surname,
     name: `${account.First_Name} ${account.Surname}`.trim(),
     email: account.Company_Email,
-    accessLevelId: level?.Access_Level_ID ?? null,
-    levelName: level?.Level_Name ?? "No access level",
+    accessLevelId: level?.Access_Level_ID ?? (isItAdmin ? 1 : null),
+    levelName: isItAdmin ? "IT Administrator" : (level?.Level_Name ?? "No access level"),
     permissions,
     branchId: branch?.Branch_ID ?? null,
     branchName: branch?.Branch_Name ?? null,
@@ -1973,11 +2009,6 @@ export async function resolveAccount(account: SystemAccountRow): Promise<Resolve
   };
 }
 
-/**
- * Resolve a session cookie to a full account — used by proxy.ts for page
- * permission gating and by every API handler for authorization. Returns
- * null when the token is missing/forged/expired OR the account was deleted.
- */
 export async function accountByToken(token: string | null | undefined): Promise<ResolvedAccount | null> {
   const claims = verifySessionToken(token);
   if (!claims) return null;

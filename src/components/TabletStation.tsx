@@ -79,7 +79,14 @@ function initials(name: string): string {
 }
 
 export default function TabletStation() {
-  const { account } = useAuth();
+  const { account, can } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {}
+    window.location.href = "/login?switch=1";
+  };
   const [now, setNow] = useState<Date | null>(null);
   const [empInput, setEmpInput] = useState("");
   const [pinInput, setPinInput] = useState("");
@@ -303,7 +310,23 @@ export default function TabletStation() {
         </div>
 
         {/* Live Digital Clock & Fullscreen Toggle */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {can("can_view_dashboard") ? (
+            <a
+              href="/"
+              className="rounded-xl border border-neon/40 bg-neon/10 px-3.5 py-2 text-xs font-bold tracking-wider text-neon uppercase transition hover:bg-neon/20"
+            >
+              ← Admin Dashboard
+            </a>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-muted transition hover:border-danger/40 hover:text-danger"
+            title="Sign out or switch to Admin account"
+          >
+            Sign Out / Admin Login
+          </button>
           <div className="text-right">
             <div className="font-mono text-2xl font-black tracking-wider text-neon sm:text-3xl">
               {timeFormatted}
@@ -614,6 +637,16 @@ export default function TabletStation() {
             </div>
           </div>
         )}
+        <p className="mt-8 text-center text-xs text-muted/60">
+          Work Tablet Attendance Station · Need administrative console?{" "}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-neon hover:underline cursor-pointer font-medium"
+          >
+            Sign In as Admin
+          </button>
+        </p>
       </div>
     </div>
   );
