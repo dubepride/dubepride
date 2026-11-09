@@ -63,6 +63,13 @@ function Tag({ children, className = "" }: { children: React.ReactNode; classNam
   return <span className={`chip ${className}`}>{children}</span>;
 }
 
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function MyPortal() {
   const { permissions } = useAuth();
   const hasPortalAccess = permissions?.can_view_my_portal === true;
@@ -214,10 +221,34 @@ export default function MyPortal() {
 
   return (
     <div className="space-y-6">
-      {/* Header -------------------------------------------------------- */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-ink">My Portal</h1>
-        <p className="mt-1 text-sm text-muted">Remote clocking hub — personal dashboard.</p>
+      {/* Header & Hero Profile ---------------------------------------- */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-black tracking-tight text-ink sm:text-3xl">
+            My Profile &amp; Attendance
+          </h1>
+          <p className="mt-1 text-xs text-muted sm:text-sm">
+            Self-service clocking portal for mobile &amp; web staff.
+          </p>
+        </div>
+        {employee && (
+          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 backdrop-blur-xl sm:px-4 sm:py-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-neon/50 bg-neon/15 font-mono text-base font-black text-neon shadow-[0_0_14px_rgba(0,230,118,0.25)]">
+              {initials(employee.fullName)}
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-ink">{employee.fullName}</span>
+                <span className="rounded border border-neon/40 bg-neon/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-neon">
+                  {employee.erpUserId}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted">
+                {employee.position || "Employee"} · {employee.department || "Staff"} · {employee.branch || "Unassigned"}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Identity card ------------------------------------------------- */}

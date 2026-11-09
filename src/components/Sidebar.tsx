@@ -45,6 +45,7 @@ interface SidebarItem {
 const PRIMARY: SidebarItem[] = [
   { label: "Dashboard", href: "/", icon: <IconHome />, perm: "can_view_dashboard" },
   { label: "My Portal", href: "/my-portal", icon: <IconBriefcase />, perm: "can_view_my_portal" },
+  { label: "Tablet Station", href: "/tablet", icon: <IconScan />, perm: "can_view_tablet_station" },
   { label: "Employees", href: "/employees", icon: <IconUsers />, perm: "can_view_employees" },
   { label: "Attendance Records", href: "/attendance-records", icon: <IconScan />, perm: "can_view_attendance" },
   { label: "Shifts", href: "/shifts", icon: <IconSchedule />, perm: "can_manage_shifts" },

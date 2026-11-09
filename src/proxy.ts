@@ -69,6 +69,7 @@ const PUBLIC_PREFIXES = [
  * the per-capability checks so API consumers get precise 401/403 JSON.
  */
 const ROUTE_PERMISSION: ReadonlyArray<readonly [string, PermissionKey]> = [
+  ["/tablet", "can_view_tablet_station"],
   ["/my-portal", "can_view_my_portal"],
   ["/employees", "can_view_employees"],
   ["/attendance-records", "can_view_attendance"],

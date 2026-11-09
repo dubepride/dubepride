@@ -206,6 +206,7 @@ async function bootstrap(client: Client): Promise<void> {
   await seedBranches(client);
   await seedAccessLevels(client);
   await ensureLiveMapPermission(client);
+  await ensureTabletStationPermissionAndLevel(client);
   if (seedDemoData()) await ensureBranchCoverage(client);
   await backfillEmployeeMeta(client);
   await seedSystemAccounts(client);
@@ -974,6 +975,12 @@ const SEED_ACCESS_LEVELS: SeedAccessLevel[] = [
       "can_request_time_off"
     ),
   },
+  {
+    name: "Tablet Station",
+    perms: levelWith(
+      "can_view_tablet_station"
+    ),
+  },
 ];
 
 async function seedAccessLevels(db: Client): Promise<void> {
@@ -1030,6 +1037,60 @@ async function ensureLiveMapPermission(db: Client): Promise<void> {
     db,
     "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
     LIVE_MAP_PERMISSION_MARKER,
+    String(Date.now())
+  );
+}
+
+const TABLET_STATION_PERMISSION_MARKER = "perm_tablet_station_v1";
+
+async function ensureTabletStationPermissionAndLevel(db: Client): Promise<void> {
+  const done = await queryOne<{ v: string }>(
+    db,
+    "SELECT Value AS v FROM App_Meta WHERE Key = ?",
+    TABLET_STATION_PERMISSION_MARKER
+  );
+  if (done) return;
+
+  // 1. Grant to IT Administrator so admins can view and configure the tablet station
+  const admin = await queryOne<{ id: number; json: string }>(
+    db,
+    "SELECT Access_Level_ID AS id, Permissions_JSON AS json FROM Access_Levels WHERE Level_Name = ?",
+    "IT Administrator"
+  );
+  if (admin) {
+    const perms = parsePermissions(admin.json);
+    if (!perms.can_view_tablet_station) {
+      perms.can_view_tablet_station = true;
+      await run(
+        db,
+        "UPDATE Access_Levels SET Permissions_JSON = ? WHERE Access_Level_ID = ?",
+        serializePermissions(perms),
+        admin.id
+      );
+    }
+  }
+
+  // 2. Ensure "Tablet Station" access level exists
+  const existingLevel = await queryOne<{ id: number }>(
+    db,
+    "SELECT Access_Level_ID AS id FROM Access_Levels WHERE Level_Name = ?",
+    "Tablet Station"
+  );
+  if (!existingLevel) {
+    const tabletPerms = levelWith("can_view_tablet_station");
+    await run(
+      db,
+      "INSERT INTO Access_Levels (Level_Name, Permissions_JSON, Created_At) VALUES (?, ?, ?)",
+      "Tablet Station",
+      serializePermissions(tabletPerms),
+      Date.now()
+    );
+  }
+
+  await run(
+    db,
+    "INSERT OR REPLACE INTO App_Meta (Key, Value) VALUES (?, ?)",
+    TABLET_STATION_PERMISSION_MARKER,
     String(Date.now())
   );
 }
@@ -1844,7 +1905,11 @@ export async function resolveAccount(account: SystemAccountRow): Promise<Resolve
     branchId: branch?.Branch_ID ?? null,
     branchName: branch?.Branch_Name ?? null,
     employeeId: account.Employee_ID ?? null,
-    home: permissions.can_view_dashboard ? "/" : "/my-portal",
+    home: permissions.can_view_dashboard
+      ? "/"
+      : permissions.can_view_tablet_station
+        ? "/tablet"
+        : "/my-portal",
   };
 }
 

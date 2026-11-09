@@ -48,7 +48,8 @@ export type PermissionKey =
   | "can_edit_settings"
   | "can_manage_branches"
   | "can_manage_access_levels"
-  | "can_add_accounts";
+  | "can_add_accounts"
+  | "can_view_tablet_station";
 
 export interface PermissionDef {
   key: PermissionKey;
@@ -88,6 +89,7 @@ export const PERMISSION_KEYS: readonly PermissionKey[] = [
   "can_manage_branches",
   "can_manage_access_levels",
   "can_add_accounts",
+  "can_view_tablet_station",
 ];
 
 export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
@@ -165,6 +167,7 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
       { key: "can_manage_branches", label: "Manage branches" },
       { key: "can_manage_access_levels", label: "Manage access levels" },
       { key: "can_add_accounts", label: "Manage system accounts" },
+      { key: "can_view_tablet_station", label: "Operate the shared Tablet / Kiosk Clocking Station" },
     ],
   },
 ];

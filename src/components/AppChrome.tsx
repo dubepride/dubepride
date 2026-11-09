@@ -10,6 +10,7 @@ import MapOverlay from "@/components/MapOverlay";
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/login": "Secure Area",
+  "/tablet": "Tablet Clocking Station",
   "/my-portal": "My Portal",
   "/employees": "Employee Directory",
   "/exceptions": "Exceptions",
