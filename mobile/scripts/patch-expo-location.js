@@ -17,6 +17,8 @@ const destDir = path.join(
   'location'
 );
 
+const REQUIRED_MARKER = 'biobridge-native-v2';
+
 if (fs.existsSync(destDir)) {
   const patches = [
     { src: 'LocationHelpers.kt', dest: 'LocationHelpers.kt' },
@@ -24,14 +26,79 @@ if (fs.existsSync(destDir)) {
     { src: 'LocationTaskConsumer.kt', dest: path.join('taskConsumers', 'LocationTaskConsumer.kt') },
     { src: 'LocationTaskService.kt', dest: path.join('services', 'LocationTaskService.kt') },
   ];
+  const failures = [];
   for (const patch of patches) {
     const srcFile = path.join(srcDir, patch.src);
     const destFile = path.join(destDir, patch.dest);
-    if (fs.existsSync(srcFile) && fs.existsSync(path.dirname(destFile))) {
-      fs.copyFileSync(srcFile, destFile);
-      console.log(`[patch] Applied native patch to ${patch.dest}`);
+    if (!fs.existsSync(srcFile)) {
+      failures.push(`missing source patch: ${srcFile}`);
+      continue;
     }
+    if (!fs.existsSync(path.dirname(destFile))) {
+      failures.push(`missing expo-location destination: ${path.dirname(destFile)}`);
+      continue;
+    }
+    fs.copyFileSync(srcFile, destFile);
+    const copied = fs.readFileSync(destFile, 'utf8');
+    if (!copied.includes(REQUIRED_MARKER)) {
+      failures.push(`${patch.dest} does not contain the ${REQUIRED_MARKER} marker`);
+      continue;
+    }
+    console.log(`[patch] Applied native patch to ${patch.dest}`);
   }
+
+  // Expo SDK 54+ ships Expo modules as prebuilt AARs by default. Patching the
+  // Kotlin sources alone would be silently ignored because Gradle would keep
+  // resolving the stock AAR. Removing the `publication` entry forces Gradle to
+  // compile expo-location from node_modules, which is where the patch lives.
+  const moduleConfigPath = path.join(
+    __dirname,
+    '..',
+    'node_modules',
+    'expo-location',
+    'expo-module.config.json'
+  );
+  try {
+    const raw = fs.readFileSync(moduleConfigPath, 'utf8').replace(/^\uFEFF/, '');
+    const moduleConfig = JSON.parse(raw);
+    if (moduleConfig.android && moduleConfig.android.publication) {
+      delete moduleConfig.android.publication;
+      fs.writeFileSync(moduleConfigPath, `${JSON.stringify(moduleConfig, null, 2)}\n`, 'utf8');
+      console.log('[patch] Forced expo-location to build from source (removed prebuilt AAR)');
+    }
+
+    const verifyRaw = fs.readFileSync(moduleConfigPath, 'utf8').replace(/^\uFEFF/, '');
+    const verified = JSON.parse(verifyRaw);
+    if (verified.android && verified.android.publication) {
+      failures.push(
+        'expo-location still resolves a prebuilt AAR; the native patch would not be compiled into the APK'
+      );
+    }
+  } catch (err) {
+    failures.push(
+      `could not force expo-location to build from source: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+
+  if (failures.length > 0) {
+    console.error('\n[FATAL] The Huawei / non-GMS location patch is not intact:');
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    console.error(
+      '\nRefusing to continue: an APK built from this tree would not contain the native location fallback.\n'
+    );
+    process.exit(1);
+  }
+  console.log(
+    `[patch] Verified ${REQUIRED_MARKER} in all ${patches.length} native location files`
+  );
+} else {
+  console.error(`\n[FATAL] expo-location is missing at ${destDir}`);
+  console.error('Install dependencies before building so the native location patch can be applied.\n');
+  process.exit(1);
 }
 
 // 2. Patch react-native-safe-area-context CMakeLists to avoid Windows MAX_PATH (>260 chars) error

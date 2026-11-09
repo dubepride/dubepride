@@ -1,9 +1,11 @@
+// BioBridge native location engine: biobridge-native-v2
 package expo.modules.location
 
 import android.Manifest
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -17,9 +19,12 @@ import android.location.Geocoder
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.location.LocationManagerCompat
@@ -218,6 +223,38 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
       return@AsyncFunction getProviderStatus()
     }
 
+    // ── BioBridge device-health helpers (Huawei / non-GMS onboarding) ──
+    AsyncFunction<Map<String, Any?>>("biobridgeGetNativeInfo") {
+      return@AsyncFunction mapOf(
+        "marker" to BIOBRIDGE_NATIVE_LOCATION_ENGINE,
+        "nativeFallback" to BIOBRIDGE_NATIVE_FALLBACK_ENABLED,
+        "manufacturer" to Build.MANUFACTURER,
+        "model" to Build.MODEL,
+        "sdk" to Build.VERSION.SDK_INT,
+        "googlePlayServices" to LocationHelpers.isGooglePlayServicesAvailable(mContext)
+      )
+    }
+
+    AsyncFunction<Boolean>("biobridgeIsIgnoringBatteryOptimizations") {
+      return@AsyncFunction isIgnoringBatteryOptimizations()
+    }
+
+    AsyncFunction<Boolean>("biobridgeOpenBatteryOptimizationSettings") {
+      return@AsyncFunction openBatteryOptimizationSettings()
+    }
+
+    AsyncFunction<Boolean>("biobridgeOpenLocationSettings") {
+      return@AsyncFunction tryStartIntent(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+    }
+
+    AsyncFunction<Boolean>("biobridgeOpenAppSettings") {
+      return@AsyncFunction openAppSettings()
+    }
+
+    AsyncFunction<Boolean>("biobridgeOpenHuaweiStartupSettings") {
+      return@AsyncFunction openHuaweiStartupSettings()
+    }
+
     AsyncFunction("watchDeviceHeading") { watchId: Int ->
       mHeadingId = watchId
       return@AsyncFunction startHeadingUpdate()
@@ -413,6 +450,61 @@ class LocationModule : Module(), SensorEventListener, ActivityEventListener {
       networkAvailable = isNetworkAvailable
       locationServicesEnabled = isLocationServicesEnabled
       passiveAvailable = isPassiveAvailable
+    }
+  }
+
+  private fun isIgnoringBatteryOptimizations(): Boolean {
+    return try {
+      val powerManager = mContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+      powerManager?.isIgnoringBatteryOptimizations(mContext.packageName) ?: true
+    } catch (_: Throwable) {
+      true
+    }
+  }
+
+  private fun openBatteryOptimizationSettings(): Boolean {
+    if (tryStartIntent(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))) {
+      return true
+    }
+    return openAppSettings()
+  }
+
+  private fun openAppSettings(): Boolean {
+    val intent = Intent(
+      Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+      Uri.fromParts("package", mContext.packageName, null)
+    )
+    return tryStartIntent(intent)
+  }
+
+  /**
+   * Huawei / Honor hide auto-launch, secondary-launch and run-in-background
+   * behind proprietary System Manager screens. Try the known activities in
+   * order; every OEM path is guarded so a non-Huawei phone simply falls back to
+   * the standard app-details page instead of crashing.
+   */
+  private fun openHuaweiStartupSettings(): Boolean {
+    val components = listOf(
+      "com.huawei.systemmanager" to "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+      "com.huawei.systemmanager" to "com.huawei.systemmanager.optimize.process.ProtectActivity",
+      "com.huawei.systemmanager" to "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity",
+      "com.hihonor.systemmanager" to "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"
+    )
+    for ((packageName, className) in components) {
+      if (tryStartIntent(Intent().setComponent(ComponentName(packageName, className)))) {
+        return true
+      }
+    }
+    return openAppSettings()
+  }
+
+  private fun tryStartIntent(intent: Intent): Boolean {
+    return try {
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      mContext.startActivity(intent)
+      true
+    } catch (_: Throwable) {
+      false
     }
   }
 

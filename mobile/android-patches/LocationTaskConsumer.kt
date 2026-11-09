@@ -1,3 +1,4 @@
+// BioBridge native location engine: biobridge-native-v2
 package expo.modules.location.taskConsumers
 
 import android.app.PendingIntent
@@ -29,6 +30,7 @@ import expo.modules.interfaces.taskManager.TaskExecutionCallback
 import expo.modules.interfaces.taskManager.TaskInterface
 import expo.modules.interfaces.taskManager.TaskManagerUtilsInterface
 import expo.modules.location.AppForegroundedSingleton
+import expo.modules.location.BIOBRIDGE_NATIVE_LOCATION_ENGINE
 import expo.modules.location.LocationHelpers
 import expo.modules.location.records.LocationOptions
 import expo.modules.location.records.LocationResponse
@@ -164,6 +166,7 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
 
     // 1. Register native LocationManager listener (essential for Huawei/non-GMS and offline GPS)
     try {
+      Log.i(TAG, "$BIOBRIDGE_NATIVE_LOCATION_ENGINE starting native provider stream")
       val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
       if (lm != null) {
         mNativeListener?.let { old ->
@@ -184,10 +187,13 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
         for (p in providers) {
           try {
             if (lm.isProviderEnabled(p) || p == LocationManager.PASSIVE_PROVIDER) {
+              // minDistance = 0 is deliberate: Huawei (and several OEM skins)
+              // honour minDistance so strictly that a stationary phone would
+              // never get a time-based fix. The interval still throttles updates.
               lm.requestLocationUpdates(
                 p,
                 locationRequest.intervalMillis,
-                locationRequest.minUpdateDistanceMeters,
+                0f,
                 listener,
                 Looper.getMainLooper()
               )
@@ -242,9 +248,13 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       return
     }
+    // Do not refuse to start just because the host activity is paused/absent.
+    // Huawei frequently recreates the task headlessly (boot, app launch,
+    // connectivity change); the old early return left the foreground service
+    // permanently off in exactly those cases. Android 12+ still enforces its
+    // own background-start rules, so the attempt is wrapped below.
     if (!AppForegroundedSingleton.isForegrounded) {
-      Log.w(TAG, "Foreground location task cannot be started while the app is in the background!")
-      return
+      Log.i(TAG, "Attempting foreground location service from a background context")
     }
     val task = mTask ?: run {
       Log.w(TAG, "Location task is null")

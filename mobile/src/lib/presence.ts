@@ -23,6 +23,7 @@ import { HttpError, NetworkError, postPresence } from "./api";
 import {
   clearPendingPresence,
   readPendingPresence,
+  writeLastPresence,
   writePendingPresence,
 } from "./storage";
 import type { MobileSession, PresencePayload } from "./types";
@@ -54,6 +55,19 @@ function isStale(payload: PresencePayload, now: number = Date.now()): boolean {
   return now - fixTimestamp(payload) > PRESENCE_MAX_AGE_MS;
 }
 
+/** Persist the outcome so the Location health panel can explain stale data. */
+async function remember(
+  payload: PresencePayload,
+  status: PresenceDelivery
+): Promise<void> {
+  await writeLastPresence({
+    status,
+    at: Date.now(),
+    accuracyMeters: payload.accuracyMeters ?? null,
+    branch: payload.branch ?? null,
+  }).catch(() => undefined);
+}
+
 /**
  * Send one heartbeat. On a transport failure the fix is kept (latest wins) so
  * the next successful connection can publish the employee's last known
@@ -65,6 +79,7 @@ export async function deliverPresence(
 ): Promise<PresenceDelivery> {
   if (isStale(payload)) {
     await clearPendingPresence();
+    await remember(payload, "stale");
     return "stale";
   }
 
@@ -74,6 +89,7 @@ export async function deliverPresence(
       attempts: 1,
     });
     await clearPendingPresence();
+    await remember(payload, "sent");
     return "sent";
   } catch (err) {
     const retryable =
@@ -83,12 +99,14 @@ export async function deliverPresence(
 
     if (retryable) {
       await writePendingPresence(payload);
+      await remember(payload, "queued");
       return "queued";
     }
 
     // A definitive bridge answer (400/403/404). Keeping the payload would only
     // repeat the same failure forever.
     await clearPendingPresence();
+    await remember(payload, "rejected");
     return "rejected";
   }
 }

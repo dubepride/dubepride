@@ -1,3 +1,4 @@
+// BioBridge native location engine: biobridge-native-v2
 package expo.modules.location.services
 
 import android.annotation.TargetApi

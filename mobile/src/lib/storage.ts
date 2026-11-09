@@ -37,6 +37,7 @@ export const STORAGE_KEYS = {
   queue: "biobridge.queue.v1",
   dwell: "biobridge.dwell.v1",
   presence: "biobridge.presence.v1",
+  lastPresence: "biobridge.last_presence.v1",
 } as const;
 
 /**
@@ -228,4 +229,20 @@ export async function writePendingPresence(payload: PresencePayload): Promise<vo
 
 export async function clearPendingPresence(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEYS.presence).catch(() => undefined);
+}
+
+export interface LastPresenceRecord {
+  status: string;
+  at: number;
+  accuracyMeters: number | null;
+  branch: string | null;
+}
+
+/** Last heartbeat outcome, for the Location health panel. */
+export async function readLastPresence(): Promise<LastPresenceRecord | null> {
+  return readJson<LastPresenceRecord | null>(STORAGE_KEYS.lastPresence, null);
+}
+
+export async function writeLastPresence(record: LastPresenceRecord): Promise<void> {
+  await writeJson(STORAGE_KEYS.lastPresence, record);
 }

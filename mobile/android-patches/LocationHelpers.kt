@@ -1,3 +1,4 @@
+// BioBridge native location engine: biobridge-native-v2
 package expo.modules.location
 
 import android.content.Context
@@ -28,6 +29,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+
+/**
+ * Markers stamped into the compiled APK. The JavaScript layer reads these via
+ * `biobridgeGetNativeInfo()` so an old APK can never silently claim to have the
+ * Huawei / non-GMS native fallback.
+ */
+const val BIOBRIDGE_NATIVE_LOCATION_ENGINE = "biobridge-native-v2"
+const val BIOBRIDGE_NATIVE_FALLBACK_ENABLED = true
 
 class LocationHelpers {
   companion object {

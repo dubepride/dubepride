@@ -32,7 +32,13 @@ export const DWELL_MIN_SAMPLES = 2;
  */
 export const LOCATION_INTERVAL_RELAXED_MS = 60_000;
 export const LOCATION_INTERVAL_ARMED_MS = 30_000;
-export const LOCATION_DISTANCE_M = 25;
+/**
+ * Zero metres: time-based fixes must continue while the phone is stationary.
+ * A non-zero minimum distance lets some OEM power managers (notably Huawei)
+ * suppress every update until the employee moves, which made the Field Tracker
+ * look offline.
+ */
+export const LOCATION_DISTANCE_M = 0;
 export const ACCURACY_SLACK_M = 0;
 export const MIN_ANDROID_REGION_RADIUS_M = 100;
 

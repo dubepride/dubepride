@@ -95,7 +95,6 @@ import {
   DWELL_MS,
   DWELL_TASK,
   GEOFENCE_TASK,
-  LOCATION_DISTANCE_M,
   LOCATION_INTERVAL_ARMED_MS,
   LOCATION_INTERVAL_RELAXED_MS,
   activeSite,
@@ -108,15 +107,17 @@ import {
   sessionSites,
 } from "@/lib/geo";
 import { deliverPresence } from "@/lib/presence";
+import { getNativeLocationInfo, isIgnoringBatteryOptimizations } from "@/lib/nativeLocation";
 import {
   clearDwell,
   clearPendingPresence,
   readDwell,
+  readLastPresence,
   readSession,
   writeDwell,
 } from "@/lib/storage";
 import { COLORS } from "@/theme";
-import type { DwellState, GeoFenceSite, MobileSession } from "@/lib/types";
+import type { DwellState, GeoFenceSite, MobileSession, PresencePayload } from "@/lib/types";
 
 export { DWELL_TASK, GEOFENCE_TASK };
 
@@ -134,6 +135,171 @@ const IS_WEB = Platform.OS === "web";
 function log(...args: unknown[]): void {
   console.log(LOG_PREFIX, ...args);
 }
+
+/* ------------------------------------------------------------------ */
+/* Permission + device health                                          */
+/* ------------------------------------------------------------------ */
+
+export type LocationPrecision = "fine" | "coarse" | "none";
+export type BackgroundPermission = "always" | "while-using" | "denied" | "unknown";
+
+export interface LocationAccess {
+  /** True only for precise (fine) location. Coarse is deliberately not enough. */
+  granted: boolean;
+  precision: LocationPrecision;
+  background: BackgroundPermission;
+  servicesEnabled: boolean;
+}
+
+/**
+ * A single, consistent reading of Android location permission state.
+ *
+ * Android 12+ lets the user grant only "Approximate" location. The stock
+ * expo-location response says that permission is GRANTED, which is why the old
+ * code started tracking happily and then produced kilometre-level fixes that
+ * could never match a geofence. Precision is therefore part of the contract.
+ */
+export async function getLocationAccess(): Promise<LocationAccess> {
+  if (IS_WEB) {
+    return { granted: false, precision: "none", background: "denied", servicesEnabled: false };
+  }
+
+  const [foreground, background, servicesEnabled] = await Promise.all([
+    Location.getForegroundPermissionsAsync().catch(() => null),
+    Location.getBackgroundPermissionsAsync().catch(() => null),
+    Location.hasServicesEnabledAsync().catch(() => false),
+  ]);
+
+  let precision: LocationPrecision = "none";
+  if (foreground?.status === Location.PermissionStatus.GRANTED) {
+    // `android.accuracy` is "coarse" when the user denied precise access.
+    precision = foreground.android?.accuracy === "coarse" ? "coarse" : "fine";
+  }
+
+  let backgroundState: BackgroundPermission = "unknown";
+  if (foreground?.status === Location.PermissionStatus.GRANTED) {
+    backgroundState =
+      background?.status === Location.PermissionStatus.GRANTED ? "always" : "while-using";
+  } else {
+    backgroundState = "denied";
+  }
+
+  return {
+    granted: precision === "fine",
+    precision,
+    background: backgroundState,
+    servicesEnabled,
+  };
+}
+
+/**
+ * Ask for background location when the employee explicitly taps the guidance
+ * button. Never call this silently: on Android 11+ it leaves the app for
+ * Settings, which used to interrupt tracking start-up.
+ */
+export async function requestBackgroundLocationPermission(): Promise<{
+  granted: boolean;
+  access: LocationAccess;
+}> {
+  if (IS_WEB) {
+    return { granted: false, access: await getLocationAccess() };
+  }
+  try {
+    const precise = await ensureForegroundLocationPermission();
+    if (!precise) {
+      return { granted: false, access: await getLocationAccess() };
+    }
+    const asked = await Location.requestBackgroundPermissionsAsync().catch(() => null);
+    const access = await getLocationAccess();
+    return {
+      granted: asked?.status === Location.PermissionStatus.GRANTED || access.background === "always",
+      access,
+    };
+  } catch {
+    return { granted: false, access: await getLocationAccess() };
+  }
+}
+
+export interface LocationDiagnostics {
+  access: LocationAccess;
+  providers: {
+    gps: boolean;
+    network: boolean;
+    passive: boolean;
+  } | null;
+  trackingActive: boolean;
+  fixAgeMs: number | null;
+  fixAccuracyMeters: number | null;
+  nativeMarker: string | null;
+  nativeFallback: boolean;
+  manufacturer: string | null;
+  model: string | null;
+  androidSdk: number | null;
+  googlePlayServices: boolean | null;
+  batteryOptimized: boolean | null;
+  lastPresence: {
+    status: string;
+    at: number;
+    accuracyMeters: number | null;
+    branch: string | null;
+  } | null;
+}
+
+/** Everything the dashboard needs to explain why a phone is not sharing. */
+export async function getLocationDiagnostics(): Promise<LocationDiagnostics> {
+  const [access, trackingActive, nativeInfo, batteryOptimized, lastPresence] =
+    await Promise.all([
+      getLocationAccess(),
+      isTrackingActive(),
+      getNativeLocationInfo(),
+      isIgnoringBatteryOptimizations(),
+      readLastPresence(),
+    ]);
+
+  let providers: LocationDiagnostics["providers"] = null;
+  try {
+    const status = await Location.getProviderStatusAsync();
+    providers = {
+      gps: Boolean(status.gpsAvailable),
+      network: Boolean(status.networkAvailable),
+      passive: Boolean(status.passiveAvailable),
+    };
+  } catch {
+    providers = null;
+  }
+
+  let fixAgeMs: number | null = null;
+  let fixAccuracyMeters: number | null = null;
+  try {
+    const last = await Location.getLastKnownPositionAsync({
+      maxAge: 24 * 60 * 60 * 1_000,
+      requiredAccuracy: 100_000,
+    });
+    if (last) {
+      fixAgeMs = Math.max(0, Date.now() - (last.timestamp ?? 0));
+      fixAccuracyMeters = last.coords.accuracy ?? null;
+    }
+  } catch {
+    /* no cached fix */
+  }
+
+  return {
+    access,
+    providers,
+    trackingActive,
+    fixAgeMs,
+    fixAccuracyMeters,
+    nativeMarker: nativeInfo?.marker ?? null,
+    nativeFallback: nativeInfo?.nativeFallback ?? false,
+    manufacturer: nativeInfo?.manufacturer ?? null,
+    model: nativeInfo?.model ?? null,
+    androidSdk: nativeInfo?.sdk ?? null,
+    googlePlayServices: nativeInfo?.googlePlayServices ?? null,
+    batteryOptimized: batteryOptimized === null ? null : !batteryOptimized,
+    lastPresence: lastPresence ?? null,
+  };
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Task payloads                                                       */
@@ -283,6 +449,35 @@ let evaluating = false;
 const PRESENCE_REPORT_MS = 30_000;
 let lastPresenceAt = 0;
 
+/** Build the latest-position heartbeat for one fix. */
+function presencePayload(
+  session: MobileSession,
+  fix: Location.LocationObject
+): PresencePayload {
+  const { latitude, longitude, accuracy } = fix.coords;
+  const nearest = nearestSite(sessionSites(session), latitude, longitude);
+  return {
+    employeeRef: session.employee.erpUserId,
+    latitude,
+    longitude,
+    accuracyMeters: accuracy,
+    branch: nearest?.site.branch ?? null,
+    timestamp: fix.timestamp ?? Date.now(),
+    deviceId: session.deviceId ?? null,
+    deviceName: session.deviceName ?? null,
+  };
+}
+
+async function sendPresenceFix(
+  session: MobileSession,
+  fix: Location.LocationObject
+): Promise<Awaited<ReturnType<typeof deliverPresence>>> {
+  return deliverPresence(
+    { apiUrl: session.apiUrl, mobileKey: session.mobileKey },
+    presencePayload(session, fix)
+  );
+}
+
 async function onFix(fix: Location.LocationObject): Promise<void> {
   if (evaluating) return;
   evaluating = true;
@@ -299,20 +494,7 @@ async function onFix(fix: Location.LocationObject): Promise<void> {
     // seeing the phone. `deliverPresence` queues the fix if we are offline.
     if (now - lastPresenceAt >= PRESENCE_REPORT_MS) {
       lastPresenceAt = now;
-      const nearest = nearestSite(sites, latitude, longitude);
-      await deliverPresence(
-        { apiUrl: session.apiUrl, mobileKey: session.mobileKey },
-        {
-          employeeRef: session.employee.erpUserId,
-          latitude,
-          longitude,
-          accuracyMeters: accuracy,
-          branch: nearest?.site.branch ?? null,
-          timestamp: fix.timestamp ?? now,
-          deviceId: session.deviceId ?? null,
-          deviceName: session.deviceName ?? null,
-        }
-      );
+      await sendPresenceFix(session, fix);
     }
 
     // The dwell/punch state machine only makes sense when at least one
@@ -422,7 +604,11 @@ function locationOptions(speed: "armed" | "relaxed"): Location.LocationTaskOptio
     accuracy: Location.Accuracy.High,
     timeInterval:
       speed === "armed" ? LOCATION_INTERVAL_ARMED_MS : LOCATION_INTERVAL_RELAXED_MS,
-    distanceInterval: LOCATION_DISTANCE_M,
+    // distanceInterval 0 is deliberate: the Field Tracker needs a fresh fix
+    // on a timer even when the employee is standing still. With a minimum
+    // distance, Huawei (and several OEM skins) can withhold every update while
+    // stationary, leaving the office map showing a stale position.
+    distanceInterval: 0,
     // We must keep receiving fixes while stationary — the dwell check depends
     // on the clock, not on movement.
     pausesUpdatesAutomatically: false,
@@ -464,6 +650,7 @@ export type TrackingReason =
   | "no-employee"
   | "location-off"
   | "permission-denied"
+  | "permission-coarse"
   | "error";
 
 export interface TrackingResult {
@@ -487,7 +674,10 @@ export async function ensureForegroundLocationPermission(): Promise<boolean> {
   try {
     const existing = await Location.getForegroundPermissionsAsync().catch(() => null);
     if (existing?.status === Location.PermissionStatus.GRANTED) {
-      return true;
+      // Approximate location is not enough for a geofence punch. Returning
+      // false here lets the UI explain the fix instead of silently starting a
+      // stream that will never be accurate enough.
+      return existing.android?.accuracy !== "coarse";
     }
   } catch {}
 
@@ -498,7 +688,10 @@ export async function ensureForegroundLocationPermission(): Promise<boolean> {
   inflightPermissionPromise = (async () => {
     try {
       const asked = await Location.requestForegroundPermissionsAsync().catch(() => null);
-      return asked?.status === Location.PermissionStatus.GRANTED;
+      return (
+        asked?.status === Location.PermissionStatus.GRANTED &&
+        asked.android?.accuracy !== "coarse"
+      );
     } finally {
       inflightPermissionPromise = null;
     }
@@ -524,14 +717,36 @@ export async function startGeofenceTracking(
   }
 
   try {
-    // 1. Foreground permission first via single-flight helper
-    const granted = await ensureForegroundLocationPermission();
-    if (!granted) {
+    // 1. Foreground permission + precision first via the single-flight helper.
+    //    "Approximate" is rejected: it is technically granted but its fixes
+    //    are far too imprecise for a geofence punch.
+    let access = await getLocationAccess();
+    if (access.precision === "coarse") {
       return {
         ok: false,
-        reason: "permission-denied",
-        message: "Location permission is required to verify you are on site.",
+        reason: "permission-coarse",
+        message:
+          "Location is set to Approximate on this phone. Open Settings → Apps → BioBridge → Permissions → Location and choose Precise, then retry.",
       };
+    }
+    if (!access.granted) {
+      const granted = await ensureForegroundLocationPermission();
+      access = await getLocationAccess();
+      if (!granted || !access.granted) {
+        if (access.precision === "coarse") {
+          return {
+            ok: false,
+            reason: "permission-coarse",
+            message:
+              "Location is set to Approximate on this phone. Open Settings → Apps → BioBridge → Permissions → Location and choose Precise, then retry.",
+          };
+        }
+        return {
+          ok: false,
+          reason: "permission-denied",
+          message: "Location permission is required to verify you are on site.",
+        };
+      }
     }
 
     // 2. Check provider/services switch AFTER foreground permission is obtained.
@@ -544,18 +759,11 @@ export async function startGeofenceTracking(
       };
     }
 
-    // 3. Check if background permission is already granted without forcing an OS Settings redirect.
-    // On Android 11-15, calling requestBackgroundPermissionsAsync() kicks the user out of the app
-    // into System Settings and pauses the Activity right before the Foreground Service starts.
-    // Since we use an ongoing Foreground Service notification (foregroundServiceType='location'),
-    // continuous tracking works with standard 'While using the app' foreground permission.
-    let backgroundGranted = false;
-    try {
-      const background = await Location.getBackgroundPermissionsAsync().catch(() => null);
-      backgroundGranted = background?.status === Location.PermissionStatus.GRANTED;
-    } catch {
-      backgroundGranted = false;
-    }
+    // 3. Background permission is optional for a location foreground service,
+    // but "Allow all the time" is what keeps Huawei/Honor from freezing the
+    // app, and it is required for OS region monitoring. We never redirect the
+    // user to Settings here — the dashboard offers that as an explicit action.
+    const backgroundGranted = access.background === "always";
 
     // 4. Region monitoring is the fast path (the OS wakes us on arrival)
     // when background permission is granted and GMS is available.
@@ -590,22 +798,37 @@ export async function startGeofenceTracking(
       }
     }
 
+    let started = false;
     try {
       await Location.startLocationUpdatesAsync(DWELL_TASK, locationOptions("relaxed"));
       cadence = "relaxed";
+      started = await isTrackingActive();
     } catch (bgErr) {
       log("background location updates unavailable on this device:", bgErr instanceof Error ? bgErr.message : bgErr);
     }
+
+    if (!started) {
+      return {
+        ok: false,
+        reason: "error",
+        message:
+          "Background location could not start on this phone. Open Settings → Apps → BioBridge and allow Location all the time, then exempt BioBridge from battery optimisation and retry.",
+      };
+    }
+
+    const backgroundNote = backgroundGranted
+      ? ""
+      : " For reliable sharing with the screen off, set Location permission to Allow all the time.";
 
     return {
       ok: true,
       reason: "active",
       message:
         sites.length === 0
-          ? "Sharing your location while signed in — no geofenced site is configured yet, but the Field Tracker still receives this phone."
+          ? `Sharing your location while signed in — no geofenced site is configured yet, but the Field Tracker still receives this phone.${backgroundNote}`
           : `Sharing your location while signed in — ${sites.length} registered site${
               sites.length === 1 ? "" : "s"
-            }.`,
+            }.${backgroundNote}`,
     };
   } catch (err) {
     return {
@@ -646,4 +869,152 @@ export async function isTrackingActive(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Called when the app returns to the foreground and by the dashboard's
+ * periodic health check. If the OS (or Huawei's power manager) silently killed
+ * the task, this restarts it instead of leaving the Field Tracker stale until
+ * the employee happens to sign out and back in.
+ */
+export async function ensureTrackingHealth(
+  session: MobileSession | null
+): Promise<TrackingResult> {
+  if (!session) {
+    return { ok: false, reason: "no-employee", message: "Sign in to start location sharing." };
+  }
+  if (await isTrackingActive()) {
+    return {
+      ok: true,
+      reason: "active",
+      message: "Sharing your location while signed in.",
+    };
+  }
+  log("background fix stream was not running — restarting");
+  return startGeofenceTracking(session);
+}
+
+export interface LocateNowResult {
+  ok: boolean;
+  message: string;
+  delivery: "sent" | "queued" | "stale" | "rejected" | null;
+  accuracyMeters: number | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/**
+ * "Locate now" — force one high-accuracy fix and publish it immediately.
+ * Gives the employee (and the office) a deterministic recovery action without
+ * waiting for the next background interval.
+ */
+export async function locateAndShareNow(
+  session: MobileSession | null
+): Promise<LocateNowResult> {
+  if (!session) {
+    return {
+      ok: false,
+      message: "Sign in to share your location.",
+      delivery: null,
+      accuracyMeters: null,
+      latitude: null,
+      longitude: null,
+    };
+  }
+
+  if (IS_WEB) {
+    return {
+      ok: false,
+      message: "Live location is only available in the phone app.",
+      delivery: null,
+      accuracyMeters: null,
+      latitude: null,
+      longitude: null,
+    };
+  }
+
+  const access = await getLocationAccess();
+  if (access.precision === "coarse") {
+    return {
+      ok: false,
+      message:
+        "Location is set to Approximate. Open Settings → Apps → BioBridge → Permissions → Location and choose Precise.",
+      delivery: null,
+      accuracyMeters: null,
+      latitude: null,
+      longitude: null,
+    };
+  }
+  if (!access.granted) {
+    const granted = await ensureForegroundLocationPermission();
+    if (!granted) {
+      return {
+        ok: false,
+        message: "Location permission is needed to locate this phone.",
+        delivery: null,
+        accuracyMeters: null,
+        latitude: null,
+        longitude: null,
+      };
+    }
+  }
+
+  const tryFix = async (
+    accuracy: Location.Accuracy
+  ): Promise<Location.LocationObject | null> => {
+    try {
+      return await Location.getCurrentPositionAsync({
+        accuracy,
+        mayShowUserSettingsDialog: false,
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  let fix = await tryFix(Location.Accuracy.High);
+  if (!fix) fix = await tryFix(Location.Accuracy.Balanced);
+  if (!fix) {
+    try {
+      fix = await Location.getLastKnownPositionAsync({ maxAge: 120_000 });
+    } catch {
+      fix = null;
+    }
+  }
+
+  if (!fix) {
+    return {
+      ok: false,
+      message:
+        "No GPS fix yet. Step near a window or outdoors, check that Location is on, then tap Locate now again.",
+      delivery: null,
+      accuracyMeters: null,
+      latitude: null,
+      longitude: null,
+    };
+  }
+
+  lastPresenceAt = Date.now();
+  const delivery = await sendPresenceFix(session, fix);
+  const accuracyMeters = fix.coords.accuracy ?? null;
+
+  const message =
+    delivery === "sent"
+      ? `Location sent to the Field Tracker${
+          accuracyMeters === null ? "" : ` (± ${Math.round(accuracyMeters)} m)`
+        }.`
+      : delivery === "queued"
+        ? "No internet — the location is saved on this phone and will upload automatically."
+        : delivery === "rejected"
+          ? "The office rejected this location. Check that this phone is still bound to your employee profile."
+          : "The fix was too old to publish. Tap Locate now again.";
+
+  return {
+    ok: delivery === "sent",
+    message,
+    delivery,
+    accuracyMeters,
+    latitude: fix.coords.latitude,
+    longitude: fix.coords.longitude,
+  };
 }

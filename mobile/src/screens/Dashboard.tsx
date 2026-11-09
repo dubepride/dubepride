@@ -19,6 +19,7 @@ import React, { useEffect, useState } from "react";
 import {
   AppState,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -32,12 +33,18 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { SiteMap } from "@/components/SiteMap";
 import { StatusChip } from "@/components/StatusChip";
 import { useGeofenceStatus } from "@/hooks/useGeofenceStatus";
+import { useLocationHealth } from "@/hooks/useLocationHealth";
 import { usePendingQueue } from "@/hooks/usePendingQueue";
 import { sendOrQueue } from "@/lib/api";
 import { activeSite, formatDistance, nearestSite, sessionSites } from "@/lib/geo";
+import { EXPECTED_NATIVE_MARKER } from "@/lib/nativeLocation";
 import { useAuth } from "@/lib/session";
 import type { GeoPunchPayload } from "@/lib/types";
-import { ensureForegroundLocationPermission } from "@/tasks/geofenceTask";
+import {
+  ensureForegroundLocationPermission,
+  getLocationAccess,
+  isTrackingActive,
+} from "@/tasks/geofenceTask";
 import { COLORS, FONT, RADIUS, SPACING, TEXT } from "@/theme";
 
 import LOGO from "../../assets/icon.png";
@@ -50,12 +57,40 @@ function timeLabel(timestamp: number): string {
   return `${hours}:${minutes}`;
 }
 
+/** "12 s ago" / "4 min ago" / "2 h ago". */
+function ageLabel(ageMs: number | null): string {
+  if (ageMs === null || !Number.isFinite(ageMs)) return "—";
+  if (ageMs < 60_000) return `${Math.max(1, Math.round(ageMs / 1_000))} s ago`;
+  if (ageMs < 3_600_000) return `${Math.round(ageMs / 60_000)} min ago`;
+  return `${Math.round(ageMs / 3_600_000)} h ago`;
+}
+
+function presenceStatusLabel(status: string): string {
+  switch (status) {
+    case "sent":
+      return "Sent";
+    case "queued":
+      return "Saved offline";
+    case "stale":
+      return "Too old";
+    case "rejected":
+      return "Rejected";
+    default:
+      return status;
+  }
+}
+
 async function currentFix(message: string): Promise<Location.LocationObject> {
   // 1. Ensure foreground permissions first via single-flight helper so we never
   // collide with useGeofenceStatus or startGeofenceTracking permission prompts.
   const granted = await ensureForegroundLocationPermission();
   if (!granted) {
-    throw new Error(message);
+    const access = await getLocationAccess();
+    throw new Error(
+      access.precision === "coarse"
+        ? "Location is set to Approximate on this phone. Open Settings → Apps → BioBridge → Permissions → Location, choose Precise, then tap Clock In again."
+        : message
+    );
   }
 
   // 2. Primary: High Accuracy live fix (parallel GMS + native hardware GPS/Network)
@@ -115,6 +150,7 @@ export function Dashboard(): React.ReactElement {
   const { session, signOut, refreshFences, tracking, retryTracking, recordLocalPunch } = useAuth();
   const geofence = useGeofenceStatus(session);
   const queue = usePendingQueue(session);
+  const health = useLocationHealth(session, retryTracking);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
@@ -139,9 +175,17 @@ export function Dashboard(): React.ReactElement {
       if (state === "active") {
         void refreshFences();
         geofence.refreshTracking();
-        if (!tracking?.ok) {
-          void retryTracking();
-        }
+        // `tracking.ok` can be stale — the OS may have killed the task. Ask
+        // the task manager directly, then restart it only when it is gone.
+        void (async () => {
+          try {
+            if (!(await isTrackingActive())) {
+              await retryTracking();
+            }
+          } catch {
+            /* the dashboard keeps showing the last tracking state */
+          }
+        })();
       }
     });
 
@@ -149,7 +193,26 @@ export function Dashboard(): React.ReactElement {
       clearInterval(interval);
       sub.remove();
     };
-  }, [refreshFences, geofence.refreshTracking, retryTracking, tracking?.ok]);
+  }, [refreshFences, geofence.refreshTracking, retryTracking]);
+
+  // While sharing is healthy, verify every 30 s that Huawei/OEM power managers
+  // have not silently killed it. Only runs when tracking was already ok, so a
+  // permission problem does not cause repeated system dialogs.
+  useEffect(() => {
+    if (!session || !tracking?.ok) return;
+    const interval = setInterval(() => {
+      void (async () => {
+        try {
+          if (!(await isTrackingActive())) {
+            await retryTracking();
+          }
+        } catch {
+          /* next resume retries */
+        }
+      })();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [session, tracking?.ok, retryTracking]);
 
   if (!session) return <View style={styles.flex} />;
 
@@ -166,6 +229,66 @@ export function Dashboard(): React.ReactElement {
   const trackingOn = tracking?.ok === true;
   const trackingMessage =
     tracking?.message ?? "Location sharing is not running yet. Enable it to appear on the Field Tracker.";
+
+  const healthInfo = health.diagnostics;
+  const access = healthInfo?.access ?? null;
+  const nativeManufacturer =
+    healthInfo?.manufacturer ??
+    (Platform.OS === "android"
+      ? String(
+          (Platform as unknown as { constants?: { Manufacturer?: string } }).constants
+            ?.Manufacturer ?? ""
+        )
+      : "");
+  const huaweiDevice = /huawei|honor/i.test(nativeManufacturer);
+  const precisionLabel =
+    access?.precision === "fine"
+      ? "Precise"
+      : access?.precision === "coarse"
+        ? "Approximate — not enough"
+        : access?.precision === "none"
+          ? "Not granted"
+          : "Checking…";
+  const backgroundLabel =
+    access?.background === "always"
+      ? "Allow all the time"
+      : access?.background === "while-using"
+        ? "While using the app"
+        : access?.background === "denied"
+          ? "Denied"
+          : "Checking…";
+
+  const healthIssues: string[] = [];
+  if (access) {
+    if (!access.servicesEnabled) {
+      healthIssues.push("Location/GPS is switched off. Turn it on from Quick Settings.");
+    }
+    if (access.precision === "coarse") {
+      healthIssues.push(
+        "Location is set to Approximate. Choose Precise in Settings → Apps → BioBridge → Permissions → Location."
+      );
+    } else if (access.precision === "none") {
+      healthIssues.push("Location permission is not granted. Allow it for BioBridge.");
+    }
+    if (access.precision === "fine" && access.background !== "always") {
+      healthIssues.push(
+        "Background location is not “Allow all the time”. Sharing can stop when the screen is off."
+      );
+    }
+  }
+  if (healthInfo?.batteryOptimized) {
+    healthIssues.push(
+      "Battery optimisation is on. Exempt BioBridge so Huawei/Honor does not freeze it."
+    );
+  }
+  if (healthInfo && !healthInfo.trackingActive) {
+    healthIssues.push("The background location service is not running.");
+  }
+  if (healthInfo && !health.nativeEngineCurrent) {
+    healthIssues.push(
+      `This installed APK does not contain the current Huawei location engine (${EXPECTED_NATIVE_MARKER}). Install BioBridge 1.3.1 or newer.`
+    );
+  }
 
   const handleClock = async (): Promise<void> => {
     if (clockBusy) return;
@@ -528,7 +651,181 @@ export function Dashboard(): React.ReactElement {
         </View>
       </Panel>
 
-      {/* ── 3. Site map ─────────────────────────────────────────────── */}
+      {/* ── 3. Phone location health (Huawei / OEM recovery) ────────── */}
+      {Platform.OS === "android" ? (
+        <Panel
+          title="Phone location health"
+          subtitle="Android settings that decide whether this phone can share live location."
+        >
+          {health.loading && !healthInfo ? (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>Checking permissions and providers…</Text>
+            </View>
+          ) : null}
+
+          {healthInfo ? (
+            <View style={styles.rows}>
+              <Row
+                label="Device"
+                value={
+                  [healthInfo.manufacturer ?? nativeManufacturer, healthInfo.model]
+                    .filter(Boolean)
+                    .join(" ") || "Android"
+                }
+              />
+              <Row label="Location permission" value={precisionLabel} />
+              <Row label="Background location" value={backgroundLabel} />
+              <Row
+                label="Location service"
+                value={healthInfo.access.servicesEnabled ? "On" : "Off"}
+              />
+              <Row
+                label="GPS / Network"
+                value={
+                  healthInfo.providers
+                    ? `${healthInfo.providers.gps ? "GPS on" : "GPS off"} · ${
+                        healthInfo.providers.network ? "network on" : "network off"
+                      }`
+                    : "—"
+                }
+              />
+              <Row
+                label="Battery"
+                value={
+                  healthInfo.batteryOptimized === null
+                    ? "Unknown"
+                    : healthInfo.batteryOptimized
+                      ? "Optimised (may stop sharing)"
+                      : "Unrestricted"
+                }
+              />
+              <Row
+                label="Background service"
+                value={healthInfo.trackingActive ? "Running" : "Stopped"}
+              />
+              <Row
+                label="Last GPS fix"
+                value={
+                  healthInfo.fixAgeMs === null
+                    ? "No cached fix"
+                    : `${ageLabel(healthInfo.fixAgeMs)}${
+                        healthInfo.fixAccuracyMeters === null
+                          ? ""
+                          : ` · ± ${Math.round(healthInfo.fixAccuracyMeters)} m`
+                      }`
+                }
+              />
+              <Row
+                label="Last tracker send"
+                value={
+                  healthInfo.lastPresence
+                    ? `${presenceStatusLabel(healthInfo.lastPresence.status)} · ${ageLabel(
+                        Date.now() - healthInfo.lastPresence.at
+                      )}`
+                    : "Nothing sent yet"
+                }
+              />
+              <Row
+                label="Native engine"
+                value={
+                  health.nativeEngineCurrent
+                    ? "v2 (Huawei fallback active)"
+                    : healthInfo.nativeMarker ?? "Not detected"
+                }
+              />
+              <Row
+                label="Google services"
+                value={
+                  healthInfo.googlePlayServices === null
+                    ? "Unknown"
+                    : healthInfo.googlePlayServices
+                      ? "Available"
+                      : "Not available (native fallback used)"
+                }
+              />
+            </View>
+          ) : null}
+
+          {healthIssues.length > 0 ? (
+            <View style={[styles.infoBox, styles.infoWarn]}>
+              <Text style={styles.healthHeading}>ACTION NEEDED</Text>
+              {healthIssues.map((issue) => (
+                <Text key={issue} style={styles.healthIssue}>
+                  • {issue}
+                </Text>
+              ))}
+            </View>
+          ) : healthInfo ? (
+            <View style={[styles.infoBox, styles.infoOk]}>
+              <Text style={styles.infoText}>
+                Everything needed for live location sharing is enabled on this phone.
+              </Text>
+            </View>
+          ) : null}
+
+          {huaweiDevice ? (
+            <Text style={styles.note}>
+              Huawei/Honor setup: Settings → Battery → App launch → BioBridge → Manage
+              manually. Turn ON Auto-launch, Secondary launch and Run in background. Also add
+              BioBridge to Protected apps and lock it in the recent-apps list.
+            </Text>
+          ) : null}
+
+          <View style={styles.healthActions}>
+            <PrimaryButton
+              label="LOCATE NOW"
+              onPress={() => void health.locateNow()}
+              loading={health.locateBusy}
+            />
+            {access?.background !== "always" ? (
+              <PrimaryButton
+                label="ALLOW BACKGROUND LOCATION"
+                variant="soft"
+                onPress={() => void health.allowBackground()}
+                loading={health.actionBusy === "background"}
+              />
+            ) : null}
+            <PrimaryButton
+              label="APP SETTINGS"
+              variant="ghost"
+              onPress={() => void health.openAppSettings()}
+              loading={health.actionBusy === "app"}
+            />
+            <PrimaryButton
+              label="BATTERY SETTINGS"
+              variant="ghost"
+              onPress={() => void health.openBatterySettings()}
+              loading={health.actionBusy === "battery"}
+            />
+            {huaweiDevice ? (
+              <PrimaryButton
+                label="APP LAUNCH SETTINGS"
+                variant="ghost"
+                onPress={() => void health.openHuaweiStartup()}
+                loading={health.actionBusy === "huawei"}
+              />
+            ) : null}
+          </View>
+
+          {health.locateResult ? (
+            <View
+              style={[
+                styles.infoBox,
+                health.locateResult.ok ? styles.infoOk : styles.infoWarn,
+              ]}
+            >
+              <Text style={styles.infoText}>{health.locateResult.message}</Text>
+            </View>
+          ) : null}
+          {health.actionMessage ? (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>{health.actionMessage}</Text>
+            </View>
+          ) : null}
+        </Panel>
+      ) : null}
+
+      {/* ── 4. Site map ─────────────────────────────────────────────── */}
       <Panel
         title="Site map"
         subtitle={
@@ -1031,5 +1328,24 @@ const styles = StyleSheet.create({
     fontSize: FONT.tiny,
     color: COLORS.textFaint,
     textAlign: "center",
+  },
+
+  /* Location health ---------------------------------------------------- */
+  healthHeading: {
+    ...TEXT.label,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    color: COLORS.warning,
+    marginBottom: SPACING.xs,
+  },
+  healthIssue: {
+    fontSize: FONT.small,
+    lineHeight: 19,
+    color: COLORS.textMuted,
+    marginTop: 3,
+  },
+  healthActions: {
+    marginTop: SPACING.lg,
+    gap: SPACING.sm,
   },
 });

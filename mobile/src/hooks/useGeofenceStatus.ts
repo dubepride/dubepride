@@ -22,7 +22,10 @@ import {
 } from "@/lib/geo";
 import { LocationSmoother } from "@/lib/smoother";
 import type { MobileSession } from "@/lib/types";
-import { ensureForegroundLocationPermission } from "@/tasks/geofenceTask";
+import {
+  ensureForegroundLocationPermission,
+  getLocationAccess,
+} from "@/tasks/geofenceTask";
 
 interface Fix {
   latitude: number;
@@ -134,7 +137,13 @@ export function useGeofenceStatus(session: MobileSession | null): GeofenceStatus
       const granted = await ensureForegroundLocationPermission();
       if (cancelled) return;
       if (!granted) {
-        setMessage("Location permission is needed for live GPS tracking.");
+        const access = await getLocationAccess();
+        if (cancelled) return;
+        setMessage(
+          access.precision === "coarse"
+            ? "Location is set to Approximate. Open phone Settings → Apps → BioBridge → Permissions → Location and choose Precise for accurate geofence checks."
+            : "Location permission is needed for live GPS tracking."
+        );
         return;
       }
 

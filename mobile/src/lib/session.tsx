@@ -18,6 +18,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 
 import {
   clearPresence,
@@ -42,6 +43,7 @@ import {
 } from "./storage";
 import type { MobileDayStatus, MobileSession } from "./types";
 import {
+  isTrackingActive,
   startGeofenceTracking,
   stopGeofenceTracking,
   type TrackingResult,
@@ -124,6 +126,32 @@ export function AuthProvider({ children }: { children: ReactNode }): React.React
   React.useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  // Self-healing: Huawei (and other aggressive OEMs) can silently kill the
+  // background task while the app is away. On every return to the foreground,
+  // verify the stream is still alive and restart it if it is not.
+  const healthCheckInFlight = React.useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      const current = sessionRef.current;
+      if (!current || healthCheckInFlight.current) return;
+      healthCheckInFlight.current = true;
+      void (async () => {
+        try {
+          if (!(await isTrackingActive())) {
+            const result = await startGeofenceTracking(current);
+            setTracking(result);
+          }
+        } catch {
+          /* the dashboard will show the tracking message */
+        } finally {
+          healthCheckInFlight.current = false;
+        }
+      })();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
