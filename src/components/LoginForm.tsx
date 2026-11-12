@@ -136,7 +136,7 @@ export default function LoginForm() {
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-ink">Tablet Clocking Station</h3>
                     <span className="rounded-md border border-neon/30 bg-neon/10 px-2 py-0.5 text-[10px] font-bold tracking-wider text-neon uppercase">
-                      /tablet
+                      Touch Kiosk
                     </span>
                   </div>
                   <p className="mt-1 text-xs leading-relaxed text-muted">
@@ -213,11 +213,10 @@ export default function LoginForm() {
           </div>
         </div>
 
-        {/* Telemetry Strip */}
-        <div className="relative z-10 flex items-center justify-between border-t border-white/[0.06] pt-5 text-[11px] text-muted">
-          <span>Tablet Kiosk: <span className="font-mono text-neon">/tablet</span></span>
-          <span>Mobile Engine: <span className="text-ink">GPS v1.4.0</span></span>
-          <span>Deployment: <span className="text-ink">biobridge-attendance.vercel.app</span></span>
+        {/* Corporate Footer Strip */}
+        <div className="relative z-10 flex items-center justify-between border-t border-white/[0.06] pt-5 text-[11px] text-muted/60">
+          <span>Enterprise Time &amp; Attendance Management</span>
+          <span>Encrypted · High Availability</span>
         </div>
       </section>
 
@@ -358,18 +357,10 @@ export default function LoginForm() {
           </p>
         </div>
 
-        {/* Security / Tablet Link Footer */}
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-3 text-center text-[11px] text-muted">
-          <span className="inline-flex items-center gap-1.5">
-            🔒 <span>Encrypted Session</span>
-          </span>
-          <span>·</span>
-          <a
-            href="/tablet"
-            className="text-muted/80 transition hover:text-neon underline-offset-4 hover:underline"
-          >
-            Open Tablet Kiosk Station →
-          </a>
+        {/* Security Footer */}
+        <div className="mt-6 flex items-center justify-center gap-2 text-center text-[11px] text-muted/60">
+          <span>🔒</span>
+          <span>Encrypted 256-bit Session · Authorized Personnel Only</span>
         </div>
       </section>
     </div>
