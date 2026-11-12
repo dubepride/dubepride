@@ -45,12 +45,12 @@ function extraString(key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-/** "192.168.1.42:3000" and "http://host:3000/" both normalise to a base URL. */
+/** "192.168.1.42:3000", "http://host:3000/" and "https://host/login" all normalise to a base URL. */
 export function normaliseApiUrl(raw: string | null | undefined): string {
   const value = (raw ?? "").trim();
   if (!value) return "";
   const withScheme = /^https?:\/\//i.test(value) ? value : `http://${value}`;
-  return withScheme.replace(/\/+$/, "");
+  return withScheme.replace(/\/+$/, "").replace(/\/login$/i, "").replace(/\/+$/, "");
 }
 
 export function configuredApiUrl(): string {

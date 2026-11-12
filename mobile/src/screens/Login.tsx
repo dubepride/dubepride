@@ -140,7 +140,7 @@ export function Login(): React.ReactElement {
                 <TextInput
                   value={apiUrl}
                   onChangeText={setApiUrl}
-                  placeholder="http://192.168.1.42:3000"
+                  placeholder="https://biobridge-attendance.vercel.app"
                   placeholderTextColor={COLORS.textFaint}
                   autoCapitalize="none"
                   autoCorrect={false}
