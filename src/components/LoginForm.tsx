@@ -1,7 +1,140 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+
+/**
+ * Sweeping Precision Master Chronometer.
+ *
+ * Visualises live NTP network time synchronization with an animated circular
+ * 60-second chronometer ring, second needle sweep, and tabular digital readout.
+ */
+function MasterChronometer() {
+  const [now, setNow] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setNow(new Date());
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const hours = now ? String(now.getHours()).padStart(2, "0") : "--";
+  const minutes = now ? String(now.getMinutes()).padStart(2, "0") : "--";
+  const seconds = now ? String(now.getSeconds()).padStart(2, "0") : "--";
+  const secNum = now ? now.getSeconds() : 0;
+  const radius = 38;
+  const circumference = 2 * Math.PI * radius;
+  const progress = (secNum / 60) * circumference;
+  const offset = circumference - progress;
+  const secondAngle = (secNum / 60) * 360;
+
+  const dateStr = now
+    ? now.toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : "Synchronizing…";
+
+  return (
+    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 backdrop-blur-xl transition hover:border-white/15">
+      <div className="flex items-center gap-4">
+        {/* Sweeping SVG Chronometer Dial */}
+        <div className="relative h-18 w-18 flex-none grid place-items-center">
+          <svg className="h-18 w-18" viewBox="0 0 100 100">
+            {/* Background track ring */}
+            <circle
+              cx="50"
+              cy="50"
+              r={radius}
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth="2.5"
+              fill="none"
+            />
+            {/* 12 dial ticks */}
+            {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((deg) => {
+              const isMajor = deg % 90 === 0;
+              const r1 = isMajor ? 32 : 34;
+              const r2 = 37;
+              const rad = (deg - 90) * (Math.PI / 180);
+              const x1 = 50 + r1 * Math.cos(rad);
+              const y1 = 50 + r1 * Math.sin(rad);
+              const x2 = 50 + r2 * Math.cos(rad);
+              const y2 = 50 + r2 * Math.sin(rad);
+              return (
+                <line
+                  key={deg}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={isMajor ? "#00e676" : "rgba(255,255,255,0.2)"}
+                  strokeWidth={isMajor ? "1.5" : "1"}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+            {/* Sweeping Seconds Arc */}
+            <circle
+              cx="50"
+              cy="50"
+              r={radius}
+              stroke="#00e676"
+              strokeWidth="2.5"
+              fill="none"
+              strokeDasharray={circumference}
+              strokeDashoffset={now ? offset : circumference}
+              strokeLinecap="round"
+              className="origin-center -rotate-90 transition-all duration-700 ease-out"
+            />
+            {/* Sweeping Second Hand Needle */}
+            <line
+              x1="50"
+              y1="50"
+              x2="50"
+              y2="18"
+              stroke="#00e676"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              style={{
+                transform: `rotate(${secondAngle}deg)`,
+                transformOrigin: "50px 50px",
+                transition: "transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            />
+            {/* Center Hub */}
+            <circle cx="50" cy="50" r="3.5" fill="#00e676" />
+            <circle cx="50" cy="50" r="1.5" fill="#0a0a0c" />
+          </svg>
+        </div>
+
+        {/* Digital Readout & Accuracy Telemetry */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-2xl xl:text-3xl font-extrabold tracking-wider text-ink tabular-nums">
+              {hours}:{minutes}
+              <span className="text-neon">:{seconds}</span>
+            </span>
+            <span className="rounded bg-neon/10 px-1.5 py-0.5 text-[10px] font-bold text-neon uppercase tracking-wider">
+              SAST
+            </span>
+          </div>
+
+          <div className="mt-1 flex items-center justify-between">
+            <p className="text-xs text-muted/80">{dateStr}</p>
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>NTP Master Synced</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Split-Screen Executive Showcase Sign-In (Option B).
@@ -113,8 +246,13 @@ export default function LoginForm() {
             geofenced mobile field tracking, and real-time automated shift calculations.
           </p>
 
+          {/* Live Precision Master Clock */}
+          <div className="mt-6 max-w-xl">
+            <MasterChronometer />
+          </div>
+
           {/* 3 Active Capabilities */}
-          <div className="mt-8 grid gap-4 max-w-xl">
+          <div className="mt-6 grid gap-4 max-w-xl">
             {/* Capability 1: Tablet Station */}
             <div className="group rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4.5 transition hover:border-neon/40 hover:bg-white/[0.05]">
               <div className="flex items-start gap-4">
