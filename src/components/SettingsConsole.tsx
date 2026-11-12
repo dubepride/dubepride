@@ -277,8 +277,8 @@ function BiometricDeviceTab({
   const { data: termData, refresh } = usePoll<TerminalsResponse>("/api/terminals", 4000);
   const terminals = termData?.terminals ?? [];
 
-  const [origin, setOrigin] = useState("https://dubepride.vercel.app");
-  const [hostOnly, setHostOnly] = useState("dubepride.vercel.app");
+  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
+  const [hostOnly, setHostOnly] = useState("biobridge-attendance.vercel.app");
   const [testFormat, setTestFormat] = useState<"adms_tab" | "adms_kv" | "hikvision" | "json">(
     "adms_tab"
   );

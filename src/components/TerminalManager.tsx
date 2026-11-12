@@ -18,7 +18,7 @@ export default function TerminalManager() {
   const offline = terminals.length - online;
   const scans = terminals.reduce((sum, t) => sum + t.scansToday, 0);
 
-  const [origin, setOrigin] = useState("https://dubepride.vercel.app");
+  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
   useEffect(() => {
     if (typeof window !== "undefined") {
       setOrigin(window.location.origin);

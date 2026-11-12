@@ -8,7 +8,7 @@
 | **Branch** | `master` |
 | **Session dates** | 30 October – 5 November 2026 |
 | **Report date** | 5 November 2026 |
-| **Production URL** | `https://dubepride.vercel.app` |
+| **Production URL** | `https://biobridge-attendance.vercel.app` (migrated from `https://dubepride.vercel.app`) |
 | **Local URL** | `http://localhost:3000` |
 
 ---
@@ -281,7 +281,7 @@ GitHub and the working tree is clean.
 | Local login, blank email + `admin` | HTTP 200 |
 | Old password `biobridge-admin` | HTTP 401 |
 | Old email `admin@biobridge.example` | HTTP 401 |
-| Production login (`https://dubepride.vercel.app`) | HTTP 200 |
+| Production login (`https://biobridge-attendance.vercel.app`) | HTTP 200 |
 | Production build contains new login placeholder | Confirmed |
 
 ---
@@ -317,7 +317,7 @@ GitHub and the working tree is clean.
 ## 8. Current state
 
 - Local dev server available at `http://localhost:3000`.
-- Production live at `https://dubepride.vercel.app`.
+- Production live at `https://biobridge-attendance.vercel.app` (migrated from `https://dubepride.vercel.app`).
 - Login: `admin@biobridge.com` / `admin`.
 - Field Tracker available to accounts holding `can_view_live_map`
   (IT Administrator and HR Manager by default).

@@ -30,7 +30,7 @@ import type {
 /* ------------------------------------------------------------------ */
 
 /** Default live bridge URL. */
-export const DEFAULT_API_URL = "https://dubepride.vercel.app";
+export const DEFAULT_API_URL = "https://biobridge-attendance.vercel.app";
 export const DEFAULT_MOBILE_KEY = "biobridge-mobile";
 
 /** Requests are abandoned after this long so a background task can't hang. */

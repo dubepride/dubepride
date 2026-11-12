@@ -564,8 +564,8 @@ function SetupGuideModal({
   onClose: () => void;
   onTested: () => void;
 }) {
-  const [origin, setOrigin] = useState("https://dubepride.vercel.app");
-  const [hostOnly, setHostOnly] = useState("dubepride.vercel.app");
+  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
+  const [hostOnly, setHostOnly] = useState("biobridge-attendance.vercel.app");
   const [testing, setTesting] = useState<"ping" | "punch" | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);

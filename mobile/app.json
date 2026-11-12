@@ -52,7 +52,7 @@
     ],
     "extra": {
       "_comment": "Base URL of the bridge. The login screen can override it at runtime (persisted in the session), so a changed host needs no rebuild.",
-      "apiUrl": "https://dubepride.vercel.app",
+      "apiUrl": "https://biobridge-attendance.vercel.app",
       "_comment_mobileKey": "Must match MOBILE_PUNCH_KEY on the server (default: biobridge-mobile).",
       "mobileKey": "biobridge-mobile",
       "_comment_handsFree": "Hands-free punching is disabled: the employee clocks in/out with the button. Background location sharing still runs while signed in.",
