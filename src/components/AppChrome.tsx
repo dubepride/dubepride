@@ -97,9 +97,8 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-7 sm:px-6 lg:px-8">
           {children}
         </main>
-        <footer className="border-t border-white/5 px-4 py-5 text-center text-[11px] tracking-[0.14em] text-muted uppercase">
-          BIOBRIDGE · Enterprise Biometric Time &amp; Attendance Bridge · push
-          endpoint <span className="font-mono text-neon">/api/biometrics/push</span>
+        <footer className="border-t border-white/[0.06] px-4 py-5 text-center text-[11px] tracking-[0.16em] text-muted/60 uppercase">
+          BIOBRIDGE · Enterprise Time &amp; Attendance Platform · All Systems Operational
         </footer>
       </div>
     </>

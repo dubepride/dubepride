@@ -29,19 +29,9 @@ interface SidebarItem {
   label: string;
   href: string;
   icon: ReactNode;
-  /** The Access Level capability that unlocks this link (Phase 14). */
   perm?: PermissionKey;
 }
 
-/**
- * Required primary labels — exact wording from the redesign spec. Every
- * link is gated by `perm`: an account whose Access Level lacks that
- * capability does not see the item at all (and the server-side proxy
- * refuses the route with a redirect, so this is never just cosmetic).
- *
- * Phase 13: "Timesheets" was removed from the rail — timesheets are now
- * reached via Employees (per-employee) and Attendance Records, per spec.
- */
 const PRIMARY: SidebarItem[] = [
   { label: "Dashboard", href: "/", icon: <IconHome />, perm: "can_view_dashboard" },
   { label: "My Portal", href: "/my-portal", icon: <IconBriefcase />, perm: "can_view_my_portal" },
@@ -50,28 +40,28 @@ const PRIMARY: SidebarItem[] = [
   { label: "Attendance Records", href: "/attendance-records", icon: <IconScan />, perm: "can_view_attendance" },
   { label: "Shifts", href: "/shifts", icon: <IconSchedule />, perm: "can_manage_shifts" },
   { label: "Reports", href: "/reports", icon: <IconChart />, perm: "can_view_reports" },
-  // Phase 7: every rail item now maps to its own route.
   { label: "Exceptions", href: "/exceptions", icon: <IconAlert />, perm: "can_view_exceptions" },
   { label: "Who's In", href: "/whos-in", icon: <IconEye />, perm: "can_view_whos_in" },
   { label: "Field Tracker", href: "/field-tracker", icon: <IconLocate />, perm: "can_view_live_map" },
   { label: "Clocking Devices", href: "/clocking-devices", icon: <IconClock />, perm: "can_view_devices" },
 ];
 
-/** Keeps existing Phase-1/2 system pages reachable from the new rail. */
 const SYSTEM: SidebarItem[] = [
   { label: "ERP Sync Logs", href: "/sync", icon: <IconSync />, perm: "can_view_sync" },
   { label: "Settings", href: "/settings", icon: <IconSettings />, perm: "can_view_settings" },
 ];
 
-/** Exact-route items highlight on their page; "/" is the dashboard's exact match. */
+function initials(name?: string | null): string {
+  if (!name) return "AD";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function isActive(item: SidebarItem, pathname: string): boolean {
   if (item.href === "/") return pathname === "/";
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
-
-/* ------------------------------------------------------------------ */
-/* Rail content (shared by the desktop rail and the mobile drawer)     */
-/* ------------------------------------------------------------------ */
 
 function NavItem({
   item,
@@ -82,13 +72,13 @@ function NavItem({
   pathname: string;
   onNavigate: () => void;
 }) {
-  const base =
-    "relative flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors";
-
   const active = isActive(item, pathname);
+  const base =
+    "group relative flex items-center gap-3 rounded-xl border px-3 py-2.5 text-xs font-semibold tracking-wide transition-all duration-200";
+
   const skin = active
-    ? "border-neon/40 bg-neon/10 text-neon shadow-[0_0_14px_rgba(0,230,118,0.14)]"
-    : "border-transparent text-muted hover:border-white/10 hover:bg-white/[0.05] hover:text-ink";
+    ? "border-neon/30 bg-neon/10 text-neon shadow-[0_0_16px_rgba(0,230,118,0.12)]"
+    : "border-transparent text-muted/80 hover:border-white/10 hover:bg-white/[0.04] hover:text-ink";
 
   return (
     <Link
@@ -98,7 +88,9 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       className={`${base} ${skin}`}
     >
-      {item.icon}
+      <span className={active ? "text-neon" : "text-muted group-hover:text-ink transition"}>
+        {item.icon}
+      </span>
       <span className="flex-1">{item.label}</span>
       {active ? (
         <span className="h-1.5 w-1.5 rounded-full bg-neon shadow-[0_0_8px_rgba(0,230,118,0.9)]" />
@@ -117,29 +109,26 @@ function RailContent({
   onNavigate: () => void;
 }) {
   const { status, account, can } = useAuth();
-
-  // Hide every privileged link while the matrix is still resolving so a
-  // restricted account never flashes items it cannot actually use.
   const ready = status === "ready" && account !== null;
 
   return (
     <>
-      {/* Brand ---------------------------------------------------- */}
+      {/* Brand Bar */}
       <div className="flex items-center gap-3 border-b border-white/[0.06] px-5 py-4">
         <span className="grid h-10 w-10 flex-none place-items-center rounded-xl border border-neon/40 bg-panel-deep/60 text-neon shadow-[0_0_18px_rgba(0,230,118,0.25)]">
           <BrandMark className="h-6 w-6" />
         </span>
-        <span className="leading-tight">
-          <span className="block text-sm font-extrabold tracking-[0.3em] text-ink">
+        <div className="leading-tight">
+          <span className="block text-xs font-extrabold tracking-[0.24em] text-ink uppercase">
             BIOBRIDGE
           </span>
-          <span className="block text-[10px] tracking-[0.22em] text-muted uppercase">
-            T&amp;A · ERP Connector
+          <span className="block text-[9px] tracking-[0.18em] text-muted uppercase">
+            Time &amp; Attendance
           </span>
-        </span>
+        </div>
       </div>
 
-      {/* Navigation (withheld on the login wall) ------------------- */}
+      {/* Navigation */}
       {onLogin ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <span className="text-[10px] font-bold tracking-[0.24em] text-muted uppercase">
@@ -187,21 +176,30 @@ function RailContent({
             </nav>
           )}
 
-          {/* Rail footer ------------------------------------------- */}
-          <div className="space-y-1 border-t border-white/[0.06] px-5 py-4">
-            <p className="flex items-center gap-2 text-[10px] font-bold tracking-[0.18em] text-neon uppercase">
-              <span className="status-dot status-dot--on" />
-              Bridge online
-            </p>
-            {account ? (
-              <p className="truncate text-[10px] tracking-[0.12em] text-muted uppercase">
-                {account.name} · {account.levelName}
-              </p>
-            ) : (
-              <p className="text-[10px] tracking-[0.14em] text-muted uppercase">
-                17 branches · Biometric T&amp;A
-              </p>
-            )}
+          {/* User Profile & System Status Tile */}
+          <div className="border-t border-white/[0.06] p-3.5">
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 backdrop-blur-md">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-xl border border-neon/30 bg-neon/10 font-mono text-[11px] font-bold text-neon shadow-[0_0_10px_rgba(0,230,118,0.2)]">
+                  {initials(account?.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold text-ink">
+                    {account?.name ?? "Administrator"}
+                  </p>
+                  <p className="truncate text-[9px] font-semibold text-neon tracking-wider uppercase">
+                    {account?.levelName ?? "IT Admin"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between border-t border-white/[0.06] pt-2 text-[10px]">
+                <span className="flex items-center gap-1.5 font-medium text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Bridge Online
+                </span>
+                <span className="font-mono text-[9px] text-muted/50">Live Cloud</span>
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -209,29 +207,13 @@ function RailContent({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Sidebar                                                             */
-/* ------------------------------------------------------------------ */
-
 interface SidebarProps {
-  /** Mobile drawer visibility (owned by AppChrome). */
   open: boolean;
   onClose: () => void;
-  /** True while on /login — the rail then shows brand only. */
   onLogin: boolean;
-  /** Current pathname for active-state highlighting. */
   activePath: string;
 }
 
-/**
- * Fixed left navigation rail (desktop) + slide-over drawer (mobile).
- *
- * On the login wall the rail degrades to a brand plate so the sign-in
- * screen keeps its split-layout look without leaking the admin nav
- * pre-authentication. Inside the console the visible links are driven by
- * the signed-in account's Access Level matrix (Phase 14): a Worker level
- * yields a rail with a single "My Portal" item.
- */
 export default function Sidebar({ open, onClose, onLogin, activePath }: SidebarProps) {
   const content = (
     <RailContent onLogin={onLogin} pathname={activePath} onNavigate={onClose} />
@@ -239,12 +221,10 @@ export default function Sidebar({ open, onClose, onLogin, activePath }: SidebarP
 
   return (
     <>
-      {/* Desktop rail --------------------------------------------- */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-white/[0.06] bg-gradient-to-b from-panel-deep/45 via-void/95 to-void backdrop-blur-xl lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-white/[0.06] bg-gradient-to-b from-panel-deep/50 via-void/95 to-void backdrop-blur-xl lg:flex">
         {content}
       </aside>
 
-      {/* Mobile drawer -------------------------------------------- */}
       <div
         className={`fixed inset-0 z-50 lg:hidden ${open ? "" : "pointer-events-none"}`}
         aria-hidden={!open}
