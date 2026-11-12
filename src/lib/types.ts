@@ -1019,6 +1019,8 @@ export interface ReportsSummary {
   peakDayTotal: number;
 }
 
+export type ReportId = "attendance" | "late" | "absent" | "summary";
+
 /** GET /api/reports — live Reports & Analytics payload. */
 export interface ReportsResponse {
   trends: ReportsTrendPoint[];

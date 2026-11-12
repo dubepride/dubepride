@@ -1,10 +1,12 @@
 "use client";
 
-import type { ComponentType } from "react";
+import { useState, type ComponentType } from "react";
+import ReportGraphicalPreview from "@/components/ReportGraphicalPreview";
 import { IconAlert, IconCalendar, IconChart, IconClock } from "@/components/icons";
 import { dateKeyOf, formatDateString, formatDuration, pad2 } from "@/lib/format";
 import type {
   DashboardResponse,
+  ReportId,
   ReportsEvent,
   ReportsResponse,
 } from "@/lib/types";
@@ -95,8 +97,6 @@ function ChartEmpty({ title, hint }: { title: string; hint: string }) {
 /* ------------------------------------------------------------------ */
 /* Report cards                                                        */
 /* ------------------------------------------------------------------ */
-
-type ReportId = "attendance" | "late" | "absent" | "summary";
 
 interface ReportCard {
   id: ReportId;
@@ -262,6 +262,7 @@ function fromInnerButton(target: EventTarget | null): boolean {
 }
 
 export default function ReportsDashboard() {
+  const [activeReport, setActiveReport] = useState<ReportId | null>("attendance");
   /**
    * Quick stats come from /api/dashboard (the same payload the dashboard
    * summary cards render). Everything below — trends, branch breakdown,
@@ -342,70 +343,113 @@ export default function ReportsDashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {REPORT_CARDS.map((card) => {
           const disabled = !reports;
+          const isSelected = activeReport === card.id;
+
           return (
             <section
               key={card.id}
               role="button"
               tabIndex={disabled ? -1 : 0}
               aria-disabled={disabled}
-              aria-label={`Download the ${card.title} as CSV`}
+              aria-label={`Preview and generate ${card.title}`}
               onClick={(e) => {
                 if (!reports) return;
-                // Interactions that started on an inner button keep their own
-                // single action — the card never double-fires the export.
                 if (fromInnerButton(e.target)) return;
-                generateReportCsv(card, reports);
+                setActiveReport(card.id);
               }}
               onKeyDown={(e) => {
                 if (!reports) return;
                 if (fromInnerButton(e.target)) return;
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  generateReportCsv(card, reports);
+                  setActiveReport(card.id);
                 }
               }}
-              className={`glass relative overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:border-neon/40! hover:bg-white/[0.05]! focus-visible:border-neon/40! ${
-                disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-              }`}
+              className={`glass relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5 ${
+                isSelected
+                  ? "border-neon ring-2 ring-neon/40 bg-white/[0.07] shadow-[0_0_24px_rgba(0,230,118,0.25)]"
+                  : "hover:border-white/20 hover:bg-white/[0.04]"
+              } ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
             >
               <div className="accent-line" aria-hidden="true" />
               <div className="flex h-full flex-col gap-4 p-5">
-                <div className="flex items-start gap-3">
-                  <span
-                    className={`grid h-10 w-10 flex-none place-items-center rounded-xl border ${card.tone}`}
-                    aria-hidden="true"
-                  >
-                    <card.Icon className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-bold text-ink">{card.title}</h3>
-                    <p className="mt-1 text-xs text-muted">{card.description}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={`grid h-10 w-10 flex-none place-items-center rounded-xl border ${card.tone}`}
+                      aria-hidden="true"
+                    >
+                      <card.Icon className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-ink">{card.title}</h3>
+                      <p className="mt-1 text-xs text-muted">{card.description}</p>
+                    </div>
                   </div>
                 </div>
-                <div className="mt-auto flex items-center gap-2 border-t border-white/[0.07] pt-4">
+
+                <div className="mt-auto flex items-center justify-between border-t border-white/[0.07] pt-4">
                   <button
                     type="button"
                     disabled={disabled}
-                    className="btn btn--neon px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => {
-                      if (reports) generateReportCsv(card, reports);
+                    className={`rounded-lg px-2.5 py-1 text-[10px] font-bold tracking-wider uppercase transition ${
+                      isSelected
+                        ? "bg-neon text-black font-extrabold shadow-[0_0_12px_rgba(0,230,118,0.4)]"
+                        : "border border-white/10 bg-white/[0.04] text-muted hover:border-neon/40 hover:text-neon"
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveReport(card.id);
                     }}
                   >
-                    CSV
+                    {isSelected ? "● Previewing" : "Preview"}
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn--ghost px-3! py-1.5! text-[11px]! tracking-[0.14em]! uppercase"
-                    onClick={handlePrint}
-                  >
-                    Print
-                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      className="btn btn--neon px-2.5! py-1! text-[10px]! tracking-wider! uppercase disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (reports) generateReportCsv(card, reports);
+                      }}
+                      title="Download as CSV"
+                    >
+                      CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--ghost px-2.5! py-1! text-[10px]! tracking-wider! uppercase"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePrint();
+                      }}
+                      title="Print report"
+                    >
+                      Print
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>
           );
         })}
       </div>
+
+      {/* ── Interactive Graphical Preview Panel ────────────────────────── */}
+      {activeReport && reports ? (
+        <ReportGraphicalPreview
+          reportId={activeReport}
+          reports={reports}
+          onClose={() => setActiveReport(null)}
+          onDownloadCsv={() => {
+            const card = REPORT_CARDS.find((c) => c.id === activeReport);
+            if (card) generateReportCsv(card, reports);
+          }}
+          onPrint={handlePrint}
+        />
+      ) : null}
 
       {/* Quick statistics --------------------------------------------- */}
       <section className="space-y-3">
