@@ -96,7 +96,7 @@ export default function LoginForm() {
         <form onSubmit={submit} className="mt-7 space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
-              Work Email or Employee ID
+              Work Email
             </span>
             <input
               type="text"
