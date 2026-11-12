@@ -96,21 +96,21 @@ export default function LoginForm() {
         <form onSubmit={submit} className="mt-7 space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
-              Work Email or Employee ID <span className="text-muted/50">(e.g. EMP1001)</span>
+              Work Email or Employee ID
             </span>
             <input
               type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="username"
-              placeholder="admin@biobridge.com or EMP1001"
+              placeholder="admin@biobridge.com"
               className="glass-inset w-full rounded-xl px-4 py-3 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
             />
           </label>
 
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-bold tracking-[0.2em] text-muted uppercase">
-              Password <span className="text-muted/50">(optional for EMP ID)</span>
+              Password
             </span>
             <div className="relative">
               <input
@@ -119,7 +119,7 @@ export default function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 autoFocus
                 autoComplete="current-password"
-                placeholder="Enter password (or leave blank for EMP login)"
+                placeholder="Enter password"
                 className="glass-inset w-full rounded-xl px-4 py-3 pr-16 text-sm text-ink placeholder:text-muted/60 focus:outline-none"
               />
               <button
