@@ -33,12 +33,6 @@ const MIN_SCAN_MS = 950;
 const SUCCESS_HOLD_MS = 2800;
 const ERROR_HOLD_MS = 4600;
 
-const DIRECTION_OPTIONS: { value: DirectionChoice; label: string; hint: string }[] = [
-  { value: "AUTO", label: "Auto", hint: "Next in sequence" },
-  { value: "IN", label: "Clock In", hint: "Punch IN" },
-  { value: "OUT", label: "Clock Out", hint: "Punch OUT" },
-];
-
 /** Detailed fingerprint glyph, drawn with individually animatable paths. */
 function FingerprintGlyph({ className = "" }: { className?: string }) {
   return (
@@ -67,7 +61,7 @@ export default function ReadyToClock() {
   const [employees, setEmployees] = useState<EmployeeDirectoryEntry[]>([]);
   const [rosterError, setRosterError] = useState<string | null>(null);
   const [employeeRef, setEmployeeRef] = useState<string>("");
-  const [direction, setDirection] = useState<DirectionChoice>("AUTO");
+  const direction: DirectionChoice = "AUTO";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PunchResult | null>(null);
@@ -307,32 +301,6 @@ export default function ReadyToClock() {
             </>
           )}
         </div>
-
-        {/* Direction control ------------------------------------------- */}
-        <fieldset>
-          <legend className="mb-1.5 block text-[10px] font-bold tracking-[0.18em] text-muted uppercase">
-            Punch direction
-          </legend>
-          <div className="rtc-seg" id="rtc-direction" role="radiogroup" aria-label="Punch direction">
-            {DIRECTION_OPTIONS.map((opt) => (
-              <label key={opt.value} className="rtc-seg-item">
-                <input
-                  type="radio"
-                  className="rtc-seg-input"
-                  id={`rtc-direction-${opt.value.toLowerCase()}`}
-                  name="rtc-direction"
-                  value={opt.value}
-                  checked={direction === opt.value}
-                  onChange={() => setDirection(opt.value)}
-                />
-                <span className="rtc-seg-label">
-                  {opt.label}
-                  <small>{opt.hint}</small>
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
 
         {error && phase !== "error" ? (
           <p className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
