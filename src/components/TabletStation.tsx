@@ -334,7 +334,7 @@ export default function TabletStation() {
                 Employee Attendance
               </h2>
               <p className="mt-1 text-sm text-muted">
-                Enter your Employee ID and tap <span className="font-bold text-neon">CLOCK IN</span> or <span className="font-bold text-amber-400">CLOCK OUT</span>.
+                Enter your Employee ID and tap <span className="font-bold text-neon">CLOCK IN / OUT</span>.
               </p>
             </div>
 
@@ -368,26 +368,15 @@ export default function TabletStation() {
                 </div>
               )}
 
-              {/* Direct Action Buttons: CLOCK IN & CLOCK OUT */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              {/* Direct Single Action Button: CLOCK IN / OUT */}
+              <div className="pt-1">
                 <button
-                  type="button"
+                  type="submit"
                   disabled={busy || !empInput.trim()}
-                  onClick={() => handleClock("IN")}
-                  className="flex items-center justify-center gap-2 rounded-2xl border border-neon/50 bg-neon py-4 text-base font-black tracking-widest text-black uppercase shadow-[0_0_24px_rgba(0,230,118,0.3)] transition active:scale-[0.98] hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-neon/50 bg-neon py-4.5 text-lg font-black tracking-widest text-black uppercase shadow-[0_0_28px_rgba(0,230,118,0.35)] transition active:scale-[0.98] hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <IconClock className="h-5 w-5" />
-                  <span>{busy ? "RECORDING…" : "CLOCK IN"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={busy || !empInput.trim()}
-                  onClick={() => handleClock("OUT")}
-                  className="flex items-center justify-center gap-2 rounded-2xl border border-amber-400/50 bg-amber-400 py-4 text-base font-black tracking-widest text-black uppercase shadow-[0_0_24px_rgba(251,191,36,0.3)] transition active:scale-[0.98] hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <IconClock className="h-5 w-5" />
-                  <span>{busy ? "RECORDING…" : "CLOCK OUT"}</span>
+                  <IconClock className="h-6 w-6" />
+                  <span>{busy ? "RECORDING PUNCH…" : "CLOCK IN / OUT"}</span>
                 </button>
               </div>
             </form>
