@@ -146,7 +146,7 @@ function RailContent({
             Secure area
           </span>
           <p className="text-[11px] leading-relaxed text-muted/70">
-            Authorised administrators only. Sign in to reach the HR console.
+            Authorised administrators only. Sign in to reach the Attendance console.
           </p>
         </div>
       ) : (

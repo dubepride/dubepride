@@ -159,7 +159,7 @@ export default function LoginForm() {
         </form>
 
         <p className="mt-5 text-center text-[10px] tracking-[0.18em] text-muted/70 uppercase">
-          Secure HR Portal · Authorized Personnel Only
+          Secure Portal · Authorized Personnel Only
         </p>
       </section>
     </div>

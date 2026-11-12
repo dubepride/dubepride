@@ -44,7 +44,7 @@ export default function WelcomeToast() {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-bold text-ink">Welcome back, Admin</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted">
-              Signed in to the HR console · session active for 12 hours.
+              Signed in to the Attendance console · session active for 12 hours.
             </p>
           </div>
           <button
