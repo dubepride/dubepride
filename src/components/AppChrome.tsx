@@ -33,7 +33,7 @@ const TITLES: Record<string, string> = {
  * Drawer hygiene: closes on route change, on Escape, when the viewport
  * grows past the lg breakpoint, and locks background scroll while open.
  */
-export default function AppChrome() {
+export default function AppChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -71,6 +71,14 @@ export default function AppChrome() {
     };
   }, [drawerOpen]);
 
+  if (onLogin) {
+    return (
+      <div className="flex min-h-screen flex-col bg-void text-ink">
+        {children}
+      </div>
+    );
+  }
+
   const title =
     TITLES[pathname] ??
     (pathname.startsWith("/employees") ? "Employee Timesheet" : "Dashboard");
@@ -80,11 +88,20 @@ export default function AppChrome() {
       <Sidebar
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        onLogin={onLogin}
+        onLogin={false}
         activePath={pathname}
       />
-      <Nav onLogin={onLogin} title={title} onMenu={() => setDrawerOpen(true)} />
-      <MapOverlay hidden={onLogin} />
+      <Nav onLogin={false} title={title} onMenu={() => setDrawerOpen(true)} />
+      <MapOverlay hidden={false} />
+      <div className="flex flex-1 flex-col lg:pl-64">
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-7 sm:px-6 lg:px-8">
+          {children}
+        </main>
+        <footer className="border-t border-white/5 px-4 py-5 text-center text-[11px] tracking-[0.14em] text-muted uppercase">
+          BIOBRIDGE · Enterprise Biometric Time &amp; Attendance Bridge · push
+          endpoint <span className="font-mono text-neon">/api/biometrics/push</span>
+        </footer>
+      </div>
     </>
   );
 }
