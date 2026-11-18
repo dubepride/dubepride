@@ -13,6 +13,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import {
   IconCheck,
@@ -72,13 +74,18 @@ function playPunchChime(direction: "IN" | "OUT") {
 }
 
 export default function TabletStation() {
+  const router = useRouter();
   const { account, can } = useAuth();
 
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {}
-    window.location.href = "/login?switch=1";
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("biobridge:auth"));
+    }
+    router.push("/login?switch=1");
+    router.refresh();
   };
 
   const [now, setNow] = useState<Date | null>(null);
@@ -94,11 +101,15 @@ export default function TabletStation() {
   const inputRef = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
 
-  // Live ticking clock
+  // Live ticking clock (deferred initial update avoids SSR hydration mismatch & sync effect state)
   useEffect(() => {
-    setNow(new Date());
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
+    const updateClock = () => setNow(new Date());
+    const initial = setTimeout(updateClock, 0);
+    const timer = setInterval(updateClock, 1000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
   }, []);
 
   // Listen for fullscreen change
@@ -112,6 +123,7 @@ export default function TabletStation() {
   const resetKiosk = useCallback(() => {
     busyRef.current = false;
     setConfirmedPunch(null);
+    setCountdown(3);
     setEmpInput("");
     setError(null);
     setBusy(false);
@@ -127,22 +139,21 @@ export default function TabletStation() {
     }
   }, [confirmedPunch]);
 
-  // Snappy 3-second countdown on confirmed punch
+  // Snappy 3-second countdown on confirmed punch before resetting to standby
   useEffect(() => {
     if (!confirmedPunch) return;
-    setCountdown(3);
+    let remaining = 3;
     const interval = setInterval(() => {
-      setCountdown((prev) => Math.max(0, prev - 1));
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(interval);
+        resetKiosk();
+      } else {
+        setCountdown(remaining);
+      }
     }, 1000);
     return () => clearInterval(interval);
-  }, [confirmedPunch]);
-
-  // Auto-reset when countdown hits 0
-  useEffect(() => {
-    if (confirmedPunch && countdown === 0) {
-      resetKiosk();
-    }
-  }, [confirmedPunch, countdown, resetKiosk]);
+  }, [confirmedPunch, resetKiosk]);
 
   // Record Attendance Punch directly (CLOCK IN or CLOCK OUT)
   const handleClock = async (direction?: "IN" | "OUT") => {
@@ -179,6 +190,7 @@ export default function TabletStation() {
         } catch {}
       }
 
+      setCountdown(3);
       setConfirmedPunch(data.punch);
     } catch {
       setError("Bridge offline or unreachable. Check tablet connection.");
@@ -261,12 +273,12 @@ export default function TabletStation() {
         {/* Live Digital Clock, Navigation & Fullscreen Toggle */}
         <div className="flex flex-wrap items-center gap-3">
           {can("can_view_dashboard") ? (
-            <a
+            <Link
               href="/"
               className="rounded-xl border border-neon/40 bg-neon/10 px-3 py-1.5 text-xs font-bold tracking-wider text-neon uppercase transition hover:bg-neon/20"
             >
               ← Admin
-            </a>
+            </Link>
           ) : null}
 
           <button
