@@ -7,7 +7,7 @@
  * Phase 20: hardware connection settings — Serial_Number (SN), Protocol,
  * Port, Comm_Key, Timezone, and Direction_Mode.
  */
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requirePermission } from "@/lib/auth";
 import {
   createTerminal,
   deleteTerminal,
@@ -51,7 +51,7 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_config_devices");
   if (guard) return guard;
   try {
     const body = await req.json();
@@ -96,7 +96,7 @@ export async function POST(req: Request): Promise<Response> {
 }
 
 export async function PUT(req: Request): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_config_devices");
   if (guard) return guard;
   try {
     const body = await req.json();
@@ -133,7 +133,7 @@ export async function PUT(req: Request): Promise<Response> {
 }
 
 export async function DELETE(req: Request): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_config_devices");
   if (guard) return guard;
   try {
     const body = await req.json().catch(() => ({}));

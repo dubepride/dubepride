@@ -10,7 +10,7 @@
  */
 
 import type { NextRequest } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getDb, resolveEmployee, unbindEmployeeDevice } from "@/lib/db";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -19,7 +19,7 @@ export async function POST(
   _request: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_edit_employee");
   if (guard) return guard;
 
   const { id } = await ctx.params;

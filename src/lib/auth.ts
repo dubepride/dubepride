@@ -17,7 +17,7 @@
 
 import { cookies } from "next/headers";
 import type { PermissionKey } from "@/lib/rbac";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
+import { SESSION_COOKIE } from "@/lib/session";
 import { accountByToken, type ResolvedAccount } from "@/lib/db";
 
 export { SESSION_COOKIE, createSessionToken } from "@/lib/session";
@@ -49,7 +49,12 @@ export function forbiddenResponse(message = "Insufficient permissions for this a
 export async function requireAdmin(): Promise<Response | null> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
-  return verifySessionToken(token) ? null : unauthorizedResponse();
+  const account = await accountByToken(token);
+  if (!account) return unauthorizedResponse();
+  if (account.permissions.can_view_dashboard !== true) {
+    return forbiddenResponse("Administrator console access is required.");
+  }
+  return null;
 }
 
 /** Resolve the signed-in account from the request cookie (null when absent). */

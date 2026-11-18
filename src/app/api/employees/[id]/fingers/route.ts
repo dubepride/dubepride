@@ -18,7 +18,7 @@
  */
 
 import type { NextRequest } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getDb, parseFingers, resolveEmployee, updateEmployee } from "@/lib/db";
 import type { FingersSaveResponse } from "@/lib/types";
 
@@ -32,7 +32,7 @@ export async function POST(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_manage_fingerprints");
   if (guard) return guard;
 
   const { id } = await ctx.params;

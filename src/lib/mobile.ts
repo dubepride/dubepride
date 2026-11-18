@@ -41,5 +41,5 @@ export function hasValidMobileKey(request: NextRequest): boolean {
 export async function isMobileAuthorized(request: NextRequest): Promise<boolean> {
   if (hasValidMobileKey(request)) return true;
   const account = await currentAccount();
-  return account !== null;
+  return account !== null && account.permissions.can_view_dashboard === true;
 }

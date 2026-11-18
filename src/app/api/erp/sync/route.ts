@@ -21,7 +21,7 @@
  *  ─────────────────────────────────────────────────────────────────────
  */
 
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requirePermission } from "@/lib/auth";
 import { getSyncOverview } from "@/lib/db";
 import { erpConfig, runErpSync } from "@/lib/erp";
 import type { ErpSyncGetResponse } from "@/lib/types";
@@ -44,8 +44,8 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(): Promise<Response> {
-  // Force-syncing is an admin action — never allow it unauthenticated.
-  const guard = await requireAdmin();
+  // Force-syncing requires sync permission — never allow unauthenticated or read-only roles.
+  const guard = await requirePermission("can_view_sync");
   if (guard) return guard;
 
   try {

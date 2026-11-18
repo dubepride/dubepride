@@ -19,7 +19,7 @@
  */
 
 import type { NextRequest } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requirePermission } from "@/lib/auth";
 import {
   createEmployee,
   deleteEmployee,
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_add_employee");
   if (guard) return guard;
 
   let body: Record<string, unknown>;
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 }
 
 export async function PUT(request: NextRequest): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_edit_employee");
   if (guard) return guard;
 
   let body: Record<string, unknown>;
@@ -187,7 +187,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
 }
 
 export async function DELETE(request: NextRequest): Promise<Response> {
-  const guard = await requireAdmin();
+  const guard = await requirePermission("can_delete_employee");
   if (guard) return guard;
 
   let body: Record<string, unknown>;
