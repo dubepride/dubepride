@@ -22,6 +22,14 @@ const eslintConfig = defineConfig([
     // `npm run lint` from inside mineazy-network/ instead.
     "mineazy-network/**",
   ]),
+  // Standalone Node CLI scripts under scripts/ intentionally use CommonJS require().
+  {
+    files: ["scripts/**/*.js"],
+    languageOptions: { sourceType: "commonjs" },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

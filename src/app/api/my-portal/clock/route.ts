@@ -13,7 +13,6 @@
  *  linked employee get a clear 400.
  */
 
-import type { NextRequest } from "next/server";
 import { currentAccount, forbiddenResponse, requirePermission, unauthorizedResponse } from "@/lib/auth";
 import {
   getDb,
@@ -29,7 +28,7 @@ function bad(message: string, status = 400): Response {
   return Response.json({ ok: false, error: message }, { status, headers: NO_STORE });
 }
 
-export async function POST(_request: NextRequest): Promise<Response> {
+export async function POST(): Promise<Response> {
   const guard = await requirePermission("can_remote_clock");
   if (guard) return guard;
 

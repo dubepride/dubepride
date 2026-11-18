@@ -1,7 +1,6 @@
 // One-off script to add IT admin account
 // Run with: node --experimental-sqlite scripts/add-it-admin.js
 
-const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');

@@ -137,7 +137,6 @@ interface RawEvent {
 
 const EMP_KEYS = ["PIN", "pin", "ID", "id", "EMP", "EMPID", "EMPLOYEE", "ECode", "UserID", "eno", "employee_id", "badge_id"];
 const TIME_KEYS = ["Time", "time", "DateTime", "datetime", "T", "punch_time", "timestamp", "Stamp"];
-const DIR_KEYS = ["Direction", "dir", "PunchState", "InOut", "Status", "status"];
 const VERIFY_KEYS = ["Verify", "verify", "VerifyMethod", "verify_method", "AuthMode"];
 
 function firstValue(pairs: URLSearchParams, keys: string[]): string | null {
