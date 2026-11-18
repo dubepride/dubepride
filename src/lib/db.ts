@@ -2072,6 +2072,20 @@ export async function createTimeOffRequest(input: TimeOffInput): Promise<TimeOff
   return row;
 }
 
+/** SQL expression resolving display location from joined Terminal (`t`) or punch method (`logAlias`). */
+function punchLocationSql(logAlias = "l"): string {
+  return `COALESCE(
+    t.Location_Name,
+    CASE ${logAlias}.Verify_Method
+      WHEN 'Tablet Station' THEN 'Tablet Station'
+      WHEN 'Geofence' THEN 'Mobile Geofence'
+      WHEN 'Remote Portal' THEN 'Remote Portal'
+      WHEN 'Manual' THEN 'Admin Override'
+      ELSE NULL
+    END
+  )`;
+}
+
 /* ------------------------------------------------------------------ */
 /* My Portal data (Phase 14 — worker clocking hub)                     */
 /* ------------------------------------------------------------------ */
@@ -2086,7 +2100,7 @@ export async function employeeDayStatus(employeeId: number): Promise<{
     await getDb(),
     `SELECT l.Timestamp AS ts, l.Direction AS dir
        FROM Attendance_Logs l
-      WHERE l.Employee_ID = ? AND l.Timestamp >= ?
+      WHERE l.Employee_ID = ? AND l.Timestamp >= ? AND l.Verify_Result = 'Verified'
       ORDER BY l.Timestamp DESC, l.Log_ID DESC
       LIMIT 1`,
     employeeId,
@@ -2100,13 +2114,13 @@ export async function employeeDayStatus(employeeId: number): Promise<{
 export async function getEmployeeRecentPunches(employeeId: number, limit: number): Promise<MyPortalPunch[]> {
   return await queryAll<MyPortalPunch>(
     await getDb(),
-    `SELECT l.Log_ID                              AS logId,
-            l.Timestamp                           AS timestamp,
-            l.Direction                           AS direction,
-            l.Verify_Result                       AS verifyResult,
-            l.ERP_Sync_Status                     AS syncStatus,
-            t.Location_Name                       AS location,
-            t.Branch_Name                         AS branch
+    `SELECT l.Log_ID                               AS logId,
+            l.Timestamp                            AS timestamp,
+            l.Direction                            AS direction,
+            l.Verify_Result                        AS verifyResult,
+            l.ERP_Sync_Status                      AS syncStatus,
+            ${punchLocationSql("l")}               AS location,
+            COALESCE(l.Branch_Name, t.Branch_Name) AS branch
        FROM Attendance_Logs l
        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
       WHERE l.Employee_ID = ?
@@ -2180,52 +2194,29 @@ export async function resolveEmployee(db: Client, ref: string): Promise<Employee
   );
   if (direct) return direct;
 
-  // 2. Extract digits if present (e.g. "1001", "EMP1001", "EMP_1001", "EMP-1001", "ERP-1001")
+  // 2. Normalized ERP_User_ID forms when digits are present (e.g. "1001", "EMP1001", "EMP_1001", "EMP-1001", "ERP-1001")
   const digitsMatch = value.match(/\d+/);
   const digits = digitsMatch ? digitsMatch[0] : "";
 
   if (digits) {
-    const byId = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE Employee_ID = ?",
-      Number(digits)
-    );
-    if (byId) return byId;
+    for (const candidate of [`EMP${digits}`, `EMP_${digits}`, `EMP-${digits}`, `ERP-${digits}`, digits]) {
+      const hit = await queryOne<EmployeeRow>(
+        db,
+        "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
+        candidate
+      );
+      if (hit) return hit;
+    }
 
-    const byEmpClean = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `EMP${digits}`
-    );
-    if (byEmpClean) return byEmpClean;
-
-    const byEmpUnderscore = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `EMP_${digits}`
-    );
-    if (byEmpUnderscore) return byEmpUnderscore;
-
-    const byEmpDash = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `EMP-${digits}`
-    );
-    if (byEmpDash) return byEmpDash;
-
-    const byErp = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      `ERP-${digits}`
-    );
-    if (byErp) return byErp;
-
-    const byBare = await queryOne<EmployeeRow>(
-      db,
-      "SELECT * FROM Employees WHERE ERP_User_ID COLLATE NOCASE = ?",
-      digits
-    );
-    if (byBare) return byBare;
+    // Only treat purely numeric input as a raw Employee_ID fallback so typos like "EMP2" do not match Employee_ID 2.
+    if (/^\d+$/.test(value)) {
+      const byId = await queryOne<EmployeeRow>(
+        db,
+        "SELECT * FROM Employees WHERE Employee_ID = ?",
+        Number(digits)
+      );
+      if (byId) return byId;
+    }
   }
 
   // 3. Try stripped common prefixes (ERP-, EMP, EMP_, EMP-, ME-)
@@ -2270,10 +2261,11 @@ export async function listEmployees(q: string): Promise<EmployeeDirectoryRow[]> 
     `SELECT e.*,
             (SELECT MAX(l.Timestamp) FROM Attendance_Logs l
               WHERE l.Employee_ID = e.Employee_ID) AS Last_Seen,
-            (SELECT t.Branch_Name FROM Attendance_Logs l
-               JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
+            (SELECT COALESCE(l.Branch_Name, t.Branch_Name) FROM Attendance_Logs l
+               LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
               WHERE l.Employee_ID = e.Employee_ID
-              ORDER BY l.Timestamp DESC LIMIT 1) AS Punch_Branch
+                AND l.Verify_Result = 'Verified'
+              ORDER BY l.Timestamp DESC, l.Log_ID DESC LIMIT 1) AS Punch_Branch
        FROM Employees e
       WHERE (? = '' OR e.Full_Name LIKE ? OR e.ERP_User_ID LIKE ?)
       ORDER BY e.Full_Name COLLATE NOCASE`,
@@ -2321,22 +2313,26 @@ export async function listWhoIsIn(): Promise<WhoIsInRow[]> {
   return await queryAll<WhoIsInRow>(
     await getDb(),
     `WITH latest AS (
-        SELECT l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result, l.Terminal_ID,
+        SELECT l.Employee_ID, l.Timestamp, l.Direction, l.Terminal_ID,
+               l.Branch_Name, l.Verify_Method,
                ROW_NUMBER() OVER (
                  PARTITION BY l.Employee_ID ORDER BY l.Timestamp DESC, l.Log_ID DESC
                ) AS rn
           FROM Attendance_Logs l
          WHERE l.Employee_ID IS NOT NULL
+           AND l.Verify_Result = 'Verified'
            AND l.Timestamp >= ?
      )
      SELECT e.Employee_ID, e.ERP_User_ID, e.Full_Name, e.Department,
-            t.Branch_Name, t.Location_Name, latest.Timestamp AS Clocked_In_At
+            COALESCE(latest.Branch_Name, t.Branch_Name) AS Branch_Name,
+            ${punchLocationSql("latest")} AS Location_Name,
+            latest.Timestamp AS Clocked_In_At
        FROM latest
        JOIN Employees e ON e.Employee_ID = latest.Employee_ID
        LEFT JOIN Terminals t ON t.Terminal_ID = latest.Terminal_ID
       WHERE latest.rn = 1
         AND latest.Direction = 'IN'
-        AND latest.Verify_Result = 'Verified'
+        AND COALESCE(e.Status, 'Active') != 'Inactive'
       ORDER BY latest.Timestamp DESC`,
     startOfTodayMs()
   );
@@ -2536,6 +2532,7 @@ export async function listFieldTracker(
                ) AS rn
           FROM Attendance_Logs l
          WHERE l.Employee_ID IS NOT NULL
+           AND l.Verify_Result = 'Verified'
            AND l.Timestamp >= ?
       )
       SELECT l.Employee_ID, l.Timestamp, l.Direction, l.Verify_Result,
@@ -3897,6 +3894,7 @@ export async function inferDirection(employeeId: number | null, timestamp: numbe
     await getDb(),
     `SELECT Direction FROM Attendance_Logs
       WHERE Employee_ID = ? AND Timestamp >= ? AND Timestamp <= ?
+        AND Verify_Result = 'Verified'
       ORDER BY Timestamp DESC, Log_ID DESC
       LIMIT 1`,
     employeeId,
@@ -3985,7 +3983,8 @@ export async function getEmployeeLogs(
   return await queryAll<EmployeePunchRow>(
     await getDb(),
     `SELECT l.Log_ID, l.Timestamp, l.Direction, l.Verify_Result, l.ERP_Sync_Status,
-            t.Location_Name, t.Branch_Name
+            ${punchLocationSql("l")} AS Location_Name,
+            COALESCE(l.Branch_Name, t.Branch_Name) AS Branch_Name
        FROM Attendance_Logs l
        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
       WHERE l.Employee_ID = ? AND l.Timestamp >= ? AND l.Timestamp <= ?
@@ -4040,7 +4039,10 @@ export async function getDashboard(): Promise<{ metrics: DashboardMetrics; summa
   const feedRows = await queryAll<FeedRow>(
     db,
     `SELECT l.Log_ID, l.Timestamp, l.ERP_Sync_Status, l.Verify_Result, l.Direction,
-            e.Full_Name, e.ERP_User_ID, t.Location_Name, t.IP_Address, t.Branch_Name,
+            e.Full_Name, e.ERP_User_ID,
+            ${punchLocationSql("l")} AS Location_Name,
+            t.IP_Address,
+            COALESCE(l.Branch_Name, t.Branch_Name) AS Branch_Name,
             CASE WHEN l.Employee_ID IS NULL THEN NULL ELSE (
               SELECT COUNT(*) FROM Attendance_Logs l2
                WHERE l2.Employee_ID = l.Employee_ID
@@ -4073,33 +4075,40 @@ export async function getDashboard(): Promise<{ metrics: DashboardMetrics; summa
   return { metrics, summary: await getAttendanceSummary(), feed };
 }
 
-/** Shift start times after midnight, in milliseconds (used by getAttendanceSummary). */
-const SHIFT_STARTS: Record<number, number> = {
-  1: 6 * 3_600_000, // Morning 06:00
-  2: 8 * 3_600_000, // Day 08:00
-  3: 14 * 3_600_000, // Evening 14:00
-  4: 22 * 3_600_000, // Night 22:00
+const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;
+const DEFAULT_SHIFT_START_MINUTES = 8 * 60; // Day 08:00 fallback
+
+/** Fallback shift start times after midnight in minutes when a Shift row is missing. */
+const SHIFT_START_MINUTES: Record<number, number> = {
+  1: 6 * 60, // Morning 06:00
+  2: 8 * 60, // Day 08:00
+  3: 14 * 60, // Evening 14:00
+  4: 22 * 60, // Night 22:00
 };
 
 /**
  * Headline split for the four summary cards + the attendance doughnut.
  * Each employee's shift start (from Shifts table / Shift_ID) decides
  * Present (first punch ≤ shift start) vs Late (first punch > shift start);
- * nobody punched → Absent. Buckets always sum to the roster size.
+ * nobody punched → Absent. Buckets always sum to the active roster size.
  */
 export async function getAttendanceSummary(): Promise<AttendanceSummary> {
   const dayStart = startOfTodayMs();
   const rows = await queryAll<{
     Employee_ID: number;
     Shift_ID: number | null;
+    Start_Time: string | null;
     firstPunch: number | null;
   }>(
     await getDb(),
-    `SELECT e.Employee_ID, e.Shift_ID,
+    `SELECT e.Employee_ID, e.Shift_ID, s.Start_Time,
             (SELECT MIN(l.Timestamp) FROM Attendance_Logs l
               WHERE l.Employee_ID = e.Employee_ID
                 AND l.Timestamp >= ? AND l.Verify_Result = 'Verified') AS firstPunch
-       FROM Employees e`,
+       FROM Employees e
+       LEFT JOIN Shifts s ON s.Shift_ID = e.Shift_ID
+      WHERE COALESCE(e.Status, 'Active') != 'Inactive'`,
     dayStart
   );
 
@@ -4110,7 +4119,10 @@ export async function getAttendanceSummary(): Promise<AttendanceSummary> {
     if (r.firstPunch === null || r.firstPunch === undefined) {
       absent++;
     } else {
-      const shiftStart = SHIFT_STARTS[r.Shift_ID ?? 2]; // default to Day 08:00
+      const startMinutes = r.Start_Time
+        ? clockMinutes(r.Start_Time, DEFAULT_SHIFT_START_MINUTES)
+        : (SHIFT_START_MINUTES[r.Shift_ID ?? 2] ?? DEFAULT_SHIFT_START_MINUTES);
+      const shiftStart = dayStart + startMinutes * MINUTE_MS;
       if (r.firstPunch <= shiftStart) present++;
       else late++;
     }
@@ -4132,8 +4144,6 @@ interface TodayPunch {
   Branch_Name: string | null;
 }
 
-const HOUR_MS = 3_600_000;
-const MINUTE_MS = 60_000;
 /** Whole minutes of variance against a baseline (negative = early). */
 const minutesFrom = (timestamp: number, baseline: number) =>
   Math.round((timestamp - baseline) / MINUTE_MS);
@@ -4159,11 +4169,13 @@ export async function getExceptions(type: ExceptionType | null): Promise<Excepti
   const punches = await queryAll<TodayPunch>(
     db,
     `SELECT l.Employee_ID, l.Timestamp, l.Direction,
-            e.ERP_User_ID, e.Full_Name, e.Department, t.Branch_Name
+            e.ERP_User_ID, e.Full_Name, e.Department,
+            COALESCE(l.Branch_Name, t.Branch_Name) AS Branch_Name
        FROM Attendance_Logs l
        JOIN Employees e ON e.Employee_ID = l.Employee_ID
        LEFT JOIN Terminals t ON t.Terminal_ID = l.Terminal_ID
       WHERE l.Timestamp >= ? AND l.Verify_Result = 'Verified'
+        AND COALESCE(e.Status, 'Active') != 'Inactive'
       ORDER BY l.Employee_ID, l.Timestamp, l.Log_ID`,
     dayStart
   );
@@ -4231,9 +4243,14 @@ export async function getExceptions(type: ExceptionType | null): Promise<Excepti
       ERP_User_ID: string;
       Full_Name: string;
       Department: string;
+      Branch_Name: string | null;
     }>(
       db,
-      "SELECT Employee_ID, ERP_User_ID, Full_Name, Department FROM Employees WHERE Fingerprint_Enrolled = 1 ORDER BY Full_Name"
+      `SELECT Employee_ID, ERP_User_ID, Full_Name, Department, Branch_Name
+         FROM Employees
+        WHERE Fingerprint_Enrolled = 1
+          AND COALESCE(Status, 'Active') != 'Inactive'
+        ORDER BY Full_Name`
     );
     for (const e of roster) {
       if (attended.has(e.Employee_ID)) continue;
@@ -4242,7 +4259,7 @@ export async function getExceptions(type: ExceptionType | null): Promise<Excepti
         erpUserId: e.ERP_User_ID,
         fullName: e.Full_Name,
         department: e.Department,
-        branchName: null,
+        branchName: e.Branch_Name ?? null,
         timestamp: null,
         varianceMin: null,
         note: "no_punch",
@@ -4739,6 +4756,7 @@ export async function listAttendanceRecords(
        FROM Attendance_Logs l
        JOIN Employees e ON e.Employee_ID = l.Employee_ID
       WHERE l.Timestamp >= ? AND l.Timestamp < ?
+        AND l.Verify_Result = 'Verified'
       ORDER BY l.Timestamp ASC, l.Log_ID ASC`,
     opts.fromMs,
     opts.toMs
