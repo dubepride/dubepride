@@ -13,7 +13,6 @@
 import type { NextRequest } from "next/server";
 import { after } from "next/server";
 import {
-  bindEmployeeDevice,
   getDb,
   resolveEmployee,
 } from "@/lib/db";
@@ -108,15 +107,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     request.headers.get("x-device-name") ??
     null;
   const deviceName = rawDeviceName ? String(rawDeviceName).trim() : null;
-
-  if (deviceId) {
-    const boundId = (employee.Bound_Device_ID ?? "").trim();
-    if (!boundId) {
-      await bindEmployeeDevice(employee.Employee_ID, deviceId, deviceName);
-      employee.Bound_Device_ID = deviceId;
-      employee.Bound_Device_Name = deviceName;
-    }
-  }
 
   // ── 2. Coordinates ──────────────────────────────────────────────────
   const latitude = typeof body.latitude === "number" ? body.latitude : Number(body.latitude);
