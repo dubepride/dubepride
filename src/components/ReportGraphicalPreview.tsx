@@ -16,18 +16,14 @@ import {
   IconAlert,
   IconCalendar,
   IconChart,
-  IconCheck,
   IconClock,
   IconDownload,
   IconPrint,
-  IconUsers,
   IconX,
 } from "@/components/icons";
 import { formatDuration } from "@/lib/format";
 import type {
   ReportId,
-  ReportsAttendanceRow,
-  ReportsEvent,
   ReportsResponse,
 } from "@/lib/types";
 
@@ -99,7 +95,10 @@ export default function ReportGraphicalPreview({
       dayMap.set(r.date, entry);
     }
 
-    const chartTrend = Array.from(dayMap.values()).slice(-7);
+    const chartTrend = Array.from(dayMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, entry]) => entry)
+      .slice(-7);
 
     return {
       presentCount,

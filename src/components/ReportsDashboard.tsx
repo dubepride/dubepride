@@ -440,6 +440,7 @@ export default function ReportsDashboard() {
       {/* ── Interactive Graphical Preview Panel ────────────────────────── */}
       {activeReport && reports ? (
         <ReportGraphicalPreview
+          key={activeReport}
           reportId={activeReport}
           reports={reports}
           onClose={() => setActiveReport(null)}

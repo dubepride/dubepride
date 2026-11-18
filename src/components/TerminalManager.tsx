@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+const subscribeNoop = () => () => {};
 import { formatDateTime, formatRelative } from "@/lib/format";
 import type { TerminalsResponse } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
@@ -18,12 +20,11 @@ export default function TerminalManager() {
   const offline = terminals.length - online;
   const scans = terminals.reduce((sum, t) => sum + t.scansToday, 0);
 
-  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOrigin(window.location.origin);
-    }
-  }, []);
+  const origin = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.origin,
+    () => "https://biobridge-attendance.vercel.app"
+  );
 
   return (
     <div className="space-y-6">

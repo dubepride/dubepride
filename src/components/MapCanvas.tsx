@@ -312,13 +312,15 @@ export default function MapCanvas(props: MapCanvasProps) {
       requestAnimationFrame(() => map.invalidateSize());
     })();
 
+    const markerPool = markerPoolRef.current;
+
     return () => {
       cancelled = true;
       mapRef.current?.remove();
       mapRef.current = null;
       circleLayerRef.current = null;
       markerLayerRef.current = null;
-      markerPoolRef.current.clear();
+      markerPool.clear();
       lastFitKeyRef.current = null;
       setReady(false);
     };

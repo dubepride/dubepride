@@ -22,7 +22,6 @@ export default function EmployeeImportModal({
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [parsedItems, setParsedItems] = useState<EmployeeImportItem[]>([]);
-  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
   const [detectedMapping, setDetectedMapping] = useState<Record<string, string>>({});
   const [validCount, setValidCount] = useState(0);
   const [invalidCount, setInvalidCount] = useState(0);
@@ -74,9 +73,6 @@ export default function EmployeeImportModal({
           setImportError("No rows found in the uploaded file.");
           return;
         }
-
-        const headers = Array.from(new Set(rawJson.flatMap((r) => Object.keys(r))));
-        setRawHeaders(headers);
 
         const parsed = parseEmployeeRows(rawJson);
         setParsedItems(parsed.items);

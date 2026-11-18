@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+
+const subscribeNoop = () => () => {};
 import { formatRelative } from "@/lib/format";
 import type {
   TerminalsResponse,
@@ -275,34 +277,31 @@ function BiometricDeviceTab({
   onSave: () => void;
 }) {
   const { data: termData, refresh } = usePoll<TerminalsResponse>("/api/terminals", 4000);
-  const terminals = termData?.terminals ?? [];
+  const terminals = useMemo(() => termData?.terminals ?? [], [termData?.terminals]);
 
-  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
-  const [hostOnly, setHostOnly] = useState("biobridge-attendance.vercel.app");
+  const origin = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.origin,
+    () => "https://biobridge-attendance.vercel.app"
+  );
+  const hostOnly = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.host,
+    () => "biobridge-attendance.vercel.app"
+  );
   const [testFormat, setTestFormat] = useState<"adms_tab" | "adms_kv" | "hikvision" | "json">(
     "adms_tab"
   );
-  const [testSn, setTestSn] = useState("ZK-MAIN-01");
+  const [customTestSn, setCustomTestSn] = useState<string | null>(null);
+  const defaultSn = useMemo(() => {
+    const first = terminals[0];
+    return first ? first.serialNumber || first.mac || "ZK-MAIN-01" : "ZK-MAIN-01";
+  }, [terminals]);
+  const testSn = customTestSn ?? defaultSn;
   const [testEmp, setTestEmp] = useState("EMP1001");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOrigin(window.location.origin);
-      setHostOnly(window.location.host);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (terminals.length > 0 && testSn === "ZK-MAIN-01") {
-      const first = terminals[0];
-      if (first.serialNumber || first.mac) {
-        setTestSn(first.serialNumber || first.mac);
-      }
-    }
-  }, [terminals, testSn]);
 
   function copy(key: string, val: string) {
     navigator.clipboard?.writeText(val);
@@ -562,7 +561,7 @@ function BiometricDeviceTab({
                 id="diag-sn"
                 className={`${INPUT} font-mono`}
                 value={testSn}
-                onChange={(e) => setTestSn(e.target.value)}
+                onChange={(e) => setCustomTestSn(e.target.value)}
                 placeholder="CJSX213460192"
               />
             </Field>

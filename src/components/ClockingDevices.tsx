@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+
+const subscribeNoop = () => () => {};
 import { formatRelative } from "@/lib/format";
 import { methodUsesTerminal } from "@/lib/geofence";
 import type {
@@ -564,18 +566,20 @@ function SetupGuideModal({
   onClose: () => void;
   onTested: () => void;
 }) {
-  const [origin, setOrigin] = useState("https://biobridge-attendance.vercel.app");
-  const [hostOnly, setHostOnly] = useState("biobridge-attendance.vercel.app");
+  const origin = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.origin,
+    () => "https://biobridge-attendance.vercel.app"
+  );
+  const hostOnly = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.host,
+    () => "biobridge-attendance.vercel.app"
+  );
   const [testing, setTesting] = useState<"ping" | "punch" | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOrigin(window.location.origin);
-      setHostOnly(window.location.host);
-    }
-  }, []);
 
   const sn = device.serialNumber || device.mac;
   const iclockUrl = `${origin}/iclock/cdata?SN=${encodeURIComponent(sn)}`;
@@ -918,13 +922,11 @@ export default function ClockingDevices() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [modal, setModal] = useState<ModalState | null>(null);
   const [pingingId, setPingingId] = useState<number | null>(null);
-  const [originUrl, setOriginUrl] = useState("");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOriginUrl(window.location.origin);
-    }
-  }, []);
+  const originUrl = useSyncExternalStore(
+    subscribeNoop,
+    () => window.location.origin,
+    () => ""
+  );
 
   const terminals = useMemo(() => {
     if (override && (!data || data.generatedAt <= override.generatedAt)) return override.terminals;
@@ -956,14 +958,16 @@ export default function ClockingDevices() {
   }, [branchOptions, terminals]);
 
   // Auto-expand the first branch that has devices, or the first branch overall
-  useEffect(() => {
-    if (groups.length > 0 && Object.keys(expanded).length === 0) {
-      const withDevices = groups.find(([, rows]) => rows.length > 0)?.[0] ?? groups[0][0];
-      if (withDevices) {
-        setExpanded({ [withDevices]: true });
-      }
-    }
-  }, [groups, expanded]);
+  const defaultBranch = useMemo(
+    () =>
+      groups.length > 0
+        ? (groups.find(([, rows]) => rows.length > 0)?.[0] ?? groups[0][0] ?? null)
+        : null,
+    [groups]
+  );
+
+  const isOpen = (branch: string) =>
+    branch in expanded ? expanded[branch] : branch === defaultBranch;
 
   const online = terminals.filter((t) => t.status === "Online").length;
   const offline = terminals.length - online;
@@ -1008,7 +1012,10 @@ export default function ClockingDevices() {
   }
 
   const toggle = (branch: string) =>
-    setExpanded((prev) => ({ ...prev, [branch]: !prev[branch] }));
+    setExpanded((prev) => {
+      const current = branch in prev ? prev[branch] : branch === defaultBranch;
+      return { ...prev, [branch]: !current };
+    });
 
   return (
     <div className="space-y-6">
@@ -1103,7 +1110,7 @@ export default function ClockingDevices() {
 
         <div className="divide-y divide-white/[0.05]">
           {groups.map(([branch, rows]) => {
-            const open = !!expanded[branch];
+            const open = isOpen(branch);
             const branchOnline = rows.filter((r) => r.status === "Online").length;
             const summary =
               rows.length === 0

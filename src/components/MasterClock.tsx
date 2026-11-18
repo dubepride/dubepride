@@ -14,12 +14,18 @@ export default function MasterClock() {
   const [tz] = useState<string>(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local"
   );
-  const [now, setNow] = useState<Date | null>(null);
+  const [clock, setClock] = useState<{ now: Date; wraps: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
     const tick = () => {
-      if (alive) setNow(new Date());
+      if (!alive) return;
+      const next = new Date();
+      setClock((prev) => {
+        if (!prev) return { now: next, wraps: 0 };
+        const minDiff = Math.floor(next.getTime() / 60000) - Math.floor(prev.now.getTime() / 60000);
+        return { now: next, wraps: prev.wraps + Math.max(0, minDiff) };
+      });
     };
     const first = setTimeout(tick, 0);
     const id = setInterval(tick, 1000);
@@ -30,6 +36,7 @@ export default function MasterClock() {
     };
   }, []);
 
+  const now = clock?.now ?? null;
   const time = now ? formatClockTime(now) : "--:--:--";
   const [hhmm, ss] = now ? [time.slice(0, 5), time.slice(6)] : ["--:--", "--"];
   const secNum = now ? now.getSeconds() : 0;
@@ -37,7 +44,7 @@ export default function MasterClock() {
   const circumference = 2 * Math.PI * radius;
   const progress = (secNum / 60) * circumference;
   const offset = circumference - progress;
-  const secondAngle = (secNum / 60) * 360;
+  const secondAngle = clock ? (clock.wraps * 60 + secNum) * 6 : 0;
 
   return (
     <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-panel-deep/50 p-6 sm:p-7 shadow-2xl backdrop-blur-2xl">
@@ -103,7 +110,11 @@ export default function MasterClock() {
                 strokeDasharray={circumference}
                 strokeDashoffset={now ? offset : circumference}
                 strokeLinecap="round"
-                className="origin-center -rotate-90 transition-all duration-700 ease-out"
+                className={
+                  secNum === 0
+                    ? "origin-center -rotate-90"
+                    : "origin-center -rotate-90 transition-all duration-700 ease-out"
+                }
               />
               {/* Sweeping Second Hand Needle */}
               <line

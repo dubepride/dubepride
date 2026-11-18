@@ -77,7 +77,7 @@ export default function FieldTracker() {
     );
   }, [data, branch, query]);
 
-  const allDevices = data?.devices ?? [];
+  const allDevices = useMemo(() => data?.devices ?? [], [data?.devices]);
   const selected = useMemo(
     () => allDevices.find((device) => device.employeeId === selectedId) ?? null,
     [allDevices, selectedId]

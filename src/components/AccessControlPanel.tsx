@@ -246,7 +246,10 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
     )
   );
 
-  useEffect(() => {
+  const branchPropKey = `${branch.name}\0${branch.clockingMethod}\0${branch.latitude ?? ""}\0${branch.longitude ?? ""}\0${branch.geofenceRadiusMeters ?? ""}`;
+  const [prevBranchKey, setPrevBranchKey] = useState(branchPropKey);
+  if (prevBranchKey !== branchPropKey) {
+    setPrevBranchKey(branchPropKey);
     setValue(branch.name);
     setClocking(
       emptyClockingFields(
@@ -256,7 +259,7 @@ function BranchRow({ branch, onChanged }: { branch: BranchDto; onChanged: () => 
         branch.geofenceRadiusMeters
       )
     );
-  }, [branch.name, branch.clockingMethod, branch.latitude, branch.longitude, branch.geofenceRadiusMeters]);
+  }
 
   async function saveRename() {
     const name = value.trim();

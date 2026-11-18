@@ -13,11 +13,17 @@ const TITLES: Record<string, string> = {
   "/tablet": "Tablet Clocking Station",
   "/my-portal": "My Portal",
   "/employees": "Employee Directory",
+  "/attendance-records": "Attendance Records",
+  "/shifts": "Shifts",
+  "/reports": "Reports",
   "/exceptions": "Exceptions",
   "/timesheets": "Timesheets",
   "/whos-in": "Who's In",
+  "/field-tracker": "Field Tracker",
+  "/clocking-devices": "Clocking Devices",
   "/terminals": "Time Clocks",
   "/sync": "ERP Sync Logs",
+  "/settings": "Settings",
 };
 
 /**

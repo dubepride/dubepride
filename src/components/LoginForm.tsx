@@ -10,16 +10,29 @@ import { useEffect, useState, type FormEvent } from "react";
  * 60-second chronometer ring, second needle sweep, and tabular digital readout.
  */
 function MasterChronometer() {
-  const [now, setNow] = useState<Date | null>(null);
+  const [clock, setClock] = useState<{ now: Date; wraps: number } | null>(null);
 
   useEffect(() => {
-    setNow(new Date());
-    const timer = setInterval(() => {
-      setNow(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      const next = new Date();
+      setClock((prev) => {
+        if (!prev) return { now: next, wraps: 0 };
+        const minDiff = Math.floor(next.getTime() / 60000) - Math.floor(prev.now.getTime() / 60000);
+        return { now: next, wraps: prev.wraps + Math.max(0, minDiff) };
+      });
+    };
+    const first = setTimeout(tick, 0);
+    const timer = setInterval(tick, 1000);
+    return () => {
+      alive = false;
+      clearTimeout(first);
+      clearInterval(timer);
+    };
   }, []);
 
+  const now = clock?.now ?? null;
   const hours = now ? String(now.getHours()).padStart(2, "0") : "--";
   const minutes = now ? String(now.getMinutes()).padStart(2, "0") : "--";
   const seconds = now ? String(now.getSeconds()).padStart(2, "0") : "--";
@@ -28,7 +41,7 @@ function MasterChronometer() {
   const circumference = 2 * Math.PI * radius;
   const progress = (secNum / 60) * circumference;
   const offset = circumference - progress;
-  const secondAngle = (secNum / 60) * 360;
+  const secondAngle = clock ? (clock.wraps * 60 + secNum) * 6 : 0;
 
   const dateStr = now
     ? now.toLocaleDateString("en-GB", {
@@ -88,7 +101,11 @@ function MasterChronometer() {
               strokeDasharray={circumference}
               strokeDashoffset={now ? offset : circumference}
               strokeLinecap="round"
-              className="origin-center -rotate-90 transition-all duration-700 ease-out"
+              className={
+                secNum === 0
+                  ? "origin-center -rotate-90"
+                  : "origin-center -rotate-90 transition-all duration-700 ease-out"
+              }
             />
             {/* Sweeping Second Hand Needle */}
             <line
