@@ -26,6 +26,8 @@ import {
 interface ClockResponse {
   ok: boolean;
   punch?: {
+    employeeId?: string;
+    erpUserId?: string;
     employeeName: string;
     timestamp: number;
     direction: "IN" | "OUT";
@@ -34,6 +36,31 @@ interface ClockResponse {
   };
   message?: string;
   error?: string;
+}
+
+/** Punch time, preferring the exact server timestamp over the formatted string. */
+function punchTimeLabel(punch: NonNullable<ClockResponse["punch"]>): string {
+  if (Number.isFinite(punch.timestamp)) {
+    return new Date(punch.timestamp).toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  }
+  return punch.clockTime;
+}
+
+/**
+ * Keeps the name the biggest thing on the card without letting a long name
+ * overflow it. Short names get the full hero size; long names step down one
+ * or two tiers and wrap instead.
+ */
+function nameSizeClass(name: string): string {
+  const length = name.trim().length;
+  if (length > 32) return "text-2xl sm:text-3xl";
+  if (length > 20) return "text-3xl sm:text-4xl";
+  return "text-4xl sm:text-5xl";
 }
 
 /** Pleasant dual-tone acoustic chime confirming a recorded punch */
@@ -441,21 +468,40 @@ export default function TabletStation() {
                 <IconCheck className="h-10 w-10 stroke-[2.5]" />
               </span>
 
-              <h2 className="text-3xl font-black tracking-tight text-ink">
-                Punch Recorded!
-              </h2>
-
-              <p className={`mt-2 text-base font-bold ${
+              <p className={`text-sm font-black uppercase tracking-[0.3em] ${
                 confirmedPunch.direction === "OUT" ? "text-amber-300" : "text-neon"
               }`}>
-                {confirmedPunch.employeeName} clocked{" "}
-                <span className="font-black underline">
-                  {confirmedPunch.direction === "IN" ? "IN" : "OUT"}
-                </span>{" "}
-                at {confirmedPunch.clockTime}
+                Punch Recorded
               </p>
 
-              <p className="mt-1 text-xs text-muted">
+              {/* Employee name is the single largest element on the card so it
+                  stays readable from a standing distance at the tablet. */}
+              <p className="mt-6 text-[11px] font-bold uppercase tracking-[0.3em] text-muted">
+                Employee
+              </p>
+              <h2 className={`mt-1.5 break-words hyphens-auto font-black leading-[1.05] tracking-tight text-ink ${nameSizeClass(confirmedPunch.employeeName)}`}>
+                {confirmedPunch.employeeName}
+              </h2>
+              {confirmedPunch.employeeId ? (
+                <p className="mt-2 font-mono text-base font-bold tracking-[0.18em] text-muted">
+                  {confirmedPunch.employeeId}
+                </p>
+              ) : null}
+
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+                <span className={`rounded-xl border px-4 py-1.5 text-xl font-black uppercase tracking-[0.16em] ${
+                  confirmedPunch.direction === "OUT"
+                    ? "border-amber-400/50 bg-amber-400/15 text-amber-300"
+                    : "border-neon/50 bg-neon/15 text-neon"
+                }`}>
+                  Clocked {confirmedPunch.direction === "IN" ? "In" : "Out"}
+                </span>
+                <span className="font-mono text-3xl font-black tracking-wider text-ink">
+                  {punchTimeLabel(confirmedPunch)}
+                </span>
+              </div>
+
+              <p className="mt-3 text-sm text-muted">
                 Recorded at <span className="font-bold text-ink">{confirmedPunch.branch}</span> · Stored safely in system.
               </p>
 
