@@ -10,6 +10,7 @@
     "test": "node --test \"tests/*.test.ts\"",
     "audit:accounts": "node scripts/audit-accounts.js",
     "seed:demo": "node scripts/seed-demo-attendance.js",
+    "seed:demo:api": "node scripts/seed-demo-via-api.js",
     "bind:demo": "node scripts/bind-demo-devices.js"
   },
   "dependencies": {
