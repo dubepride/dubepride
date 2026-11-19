@@ -77,13 +77,13 @@ Everyone is on **Day**. The exception rules compare against 08:00 and 17:00.
 
 ## 3. Demo attendance that was added
 
-**30 punches across 18 employee-days, 26 October → 19 November 2026.**
+**30 seeded punches, plus 2 backfilled, across 18 employee-days, 26 October → 19 November 2026.**
 
 Punches were submitted through the app's own geofence endpoint (`POST /api/attendance/geopunch`) while signed in as the administrator. Every row therefore passed the real fence check, is attributed to the employee's real bound handset, and is indistinguishable from a genuine mobile punch in the UI. Coordinates were generated 25–60 % of the way inside the 81 m Belmont fence.
 
 | Employee | Attendance days added | Punches | Narrative |
 |---|---|---|---|
-| Tatenda (EMP1003) | 12 | 23 | ~3½ weeks of weekdays, 26 Oct – 18 Nov |
+| Tatenda (EMP1003) | 12 | 25 | ~3½ weeks of weekdays, 26 Oct – 19 Nov |
 | Nadine (EMP1006) | 2 | 3 | 18 Nov afternoon + 19 Nov morning |
 | Farai (EMP1008) | 1 | 1 | 19 Nov morning |
 | Mr Makonese (EMP1010) | 1 | 1 | 19 Nov morning |
@@ -104,6 +104,7 @@ These are the details worth pointing at during the walkthrough — they are not 
 | 18 Nov 15:20 → 17:05 | Nadine | Short afternoon | Her first session on the handset |
 | **19 Nov 08:22** | Nadine | **22 minutes late** | The live late example on today's dashboard |
 | 19 Nov 10:15 | Ethan | Late, Huawei handset | Shows the Huawei can log a punch through the web path |
+| **19 Nov 08:47 → 10:33 → 12:38** | Tatenda | **Split day** — morning shift, break, back at lunchtime | Demonstrates a mid-day clock-out followed by a second clock-in |
 
 ### 3.2 Rows that already existed (not added by this pack)
 
@@ -112,7 +113,7 @@ These were in the database before the demonstration data and were left untouched
 - Pride Admin — several October/November rows, including 18 Nov 14:38 and 19 Nov 07:55
 - Farai — 18 Nov 17:43
 - Mr Makonese — 18 Nov 16:29
-- Tatenda — 19 Nov 12:38 (the only genuinely clocked punch, from his own phone)
+- Tatenda — **19 Nov is a real three-punch day**: 08:47 in, 10:33 out, 12:38 back in. The 12:38 punch came from his own phone; the 08:47 and 10:33 pair was entered afterwards from his report because the first two attempts never reached the server.
 
 The seeder skips any employee-day that already contains a real punch, so nothing was overwritten or duplicated.
 
@@ -129,9 +130,9 @@ Verified against the live API at the time of writing.
 | Metric | Value |
 |---|---|
 | Clocked in today | **6** |
-| Scans today | **6** |
+| Scans today | **8** |
 | Pending sync | **0** |
-| Synced today | 31 |
+| Synced today | 33 |
 | Employees | 9 (8 on Belmont) |
 | Bound handsets | 6 |
 | Who's In list | Tatenda, Ethan, Nadine, Pride Admin, Mr Makonese, Farai |
@@ -141,7 +142,7 @@ Verified against the live API at the time of writing.
 | Bucket | Count | Who |
 |---|---|---|
 | Arrived early | 3 | Farai 07:52, Mr Makonese 07:53, Pride Admin 07:55 |
-| Arrived late | 3 | Nadine 08:22, Ethan 10:15, Tatenda 12:38 |
+| Arrived late | 3 | Nadine 08:22, Tatenda 08:47, Ethan 10:15 |
 | No show | 1 | MR MPERERI (no device, no punch) |
 | Missing punch | 6 | Everyone still on shift — an IN with no OUT yet |
 
@@ -159,7 +160,7 @@ Open the URL, sign in with the administrator account.
 
 **Step 2 — Dashboard cards**  
 Stay on `/`.  
-✅ "Clocked in today" reads **6**; "Scans today" reads **6**; "Pending sync" reads **0**.
+✅ "Clocked in today" reads **6**; "Scans today" reads **8**; "Pending sync" reads **0**.
 
 **Step 3 — Who's In**  
 Open **Who's In**.  
@@ -173,7 +174,7 @@ Open **Exceptions**.
 
 **Step 5 — Attendance Records**  
 Open **Attendance Records**, then set the range **26 Oct 2026 → 19 Nov 2026**.  
-✅ 30 employee-day rows. Tatenda has 12 days. 5–13 November is mostly blank for him. 4 Nov shows a clock-in with no clock-out and status **Missing Punch**. 16 Nov shows 08:42 (late).
+✅ 30 employee-day rows. Tatenda has 12 days. 5–13 November is mostly blank for him. 4 Nov shows a clock-in with no clock-out and status **Missing Punch**. 16 Nov shows 08:42 (late). **19 Nov** shows Tatenda's clock-in at **08:47**, 1 h 46 m worked, and status **In Progress** — his 10:33 break-out is counted in worked time but the "Clock out" column stays blank because he clocked back in at 12:38 and is on shift now. One row per day shows the first clock-in and the *final* clock-out, so a mid-day break appears as worked time, not as a second row.
 
 **Step 6 — Reports**  
 Open **Reports**.  
@@ -236,15 +237,17 @@ The Reports page uses a hard-coded `REPORT_DAYS = 7`. Attendance Records accepts
 The geofence engine writes its own `Raw_Payload`, so these rows carry no seed marker. Removal is by explicit `Log_ID`.
 
 **File:** `docs/demo-data-removal.sql`  
-**Manifest:** `docs/demo-data-manifest.json` (all 30 rows, first `Log_ID` 16027)
+**Manifest:** `docs/demo-data-manifest.json` (all 32 rows, first `Log_ID` 16027)
 
-The SQL file contains a `SELECT` preview followed by the matching `DELETE`, covering exactly the 30 IDs returned by the server when the data was inserted. Paste it into the Turso console, or run it with the Turso CLI against the production database.
+The SQL file contains a `SELECT` preview followed by the matching `DELETE`, covering exactly the 32 IDs returned by the server. Paste it into the Turso console, or run it with the Turso CLI against the production database.
+
+The list includes two rows, `16057` and `16058`, that are Tatenda's backfilled 19 Nov 08:47/10:33 pair. They are listed so a full reset removes everything this pack touched; if they describe real work, delete the other 30 and keep those two.
 
 Notes:
 
-- Run the `SELECT` first and confirm 30 rows.
-- The `DELETE` removes only those 30 attendance rows. ERP sync batches created by the auto-sync are audit history and are deliberately left alone.
-- Pre-existing punches (Pride, Farai, Makonese, Tatenda's 19 Nov clock-in) are **not** in the list and will survive.
+- Run the `SELECT` first and confirm 32 rows.
+- The `DELETE` removes only those 32 attendance rows. ERP sync batches created by the auto-sync are audit history and are deliberately left alone.
+- Pre-existing punches (Pride, Farai, Makonese) are **not** in the list and will survive.
 - If the demo runs again, regenerate the manifest and the SQL — `Log_ID`s will differ.
 
 To re-create the data after removal, run:

@@ -2,8 +2,8 @@
   "generatedAt": "2026-11-19T12:25:28.660Z",
   "baseUrl": "https://biobridge-attendance.vercel.app",
   "site": "Belmont",
-  "total": 30,
-  "inserted": 30,
+  "total": 32,
+  "inserted": 32,
   "failed": 0,
   "rows": [
     {
@@ -328,6 +328,18 @@
     {
       "ok": true,
       "status": 200,
+      "logId": 16057,
+      "employeeRef": "EMP1003",
+      "fullName": "Tatenda",
+      "timestamp": 1795070820000,
+      "dayKey": "2026-11-19",
+      "direction": "IN",
+      "reason": "CLOCKED_IN",
+      "note": "Backfilled after live report: 08:47 CAT clock-in"
+    },
+    {
+      "ok": true,
+      "status": 200,
       "logId": 16056,
       "employeeRef": "EMP1004",
       "fullName": "Ethan",
@@ -335,6 +347,18 @@
       "dayKey": "2026-11-19",
       "direction": "IN",
       "reason": null
+    },
+    {
+      "ok": true,
+      "status": 200,
+      "logId": 16058,
+      "employeeRef": "EMP1003",
+      "fullName": "Tatenda",
+      "timestamp": 1795077180000,
+      "dayKey": "2026-11-19",
+      "direction": "OUT",
+      "reason": "CLOCKED_OUT",
+      "note": "Backfilled after live report: 10:33 CAT clock-out"
     }
   ]
 }
