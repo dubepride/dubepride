@@ -269,7 +269,7 @@ const DEMO_PLAN = [
   },
   { key: "farai", match: ["farai"], from: "created" },
   { key: "makonese", match: ["makonese"], from: "created" },
-  { key: "nadine", match: ["nadine"], from: "created", missingOutOnCreatedDay: true },
+  { key: "nadine", match: ["nadine"], from: "created", missingOutOnCreatedDay: true, lateToday: 22 },
   { key: "ethan", match: ["ethan"], from: "created" },
   { key: "pride", match: ["pride"], from: "createdOr7" },
 ];
@@ -414,7 +414,7 @@ function buildPlan(employee, plan, ctx, today, now) {
 
     const rand = mulberry32(hash32(`${employee.ERP_User_ID}:${key}`));
 
-    let inMin = startMin + jitter(rand, -4, 9);
+    let inMin = startMin + jitter(rand, -9, -1);
     let outMin = endMin + jitter(rand, -6, 11);
     let includeOut = true;
 
@@ -427,6 +427,7 @@ function buildPlan(employee, plan, ctx, today, now) {
     }
 
     if (key === lateDay) inMin = startMin + 42;
+    if (plan.lateToday && key === dateKey(today)) inMin = startMin + plan.lateToday;
     if (key === missingOutDay) includeOut = false;
     if (plan.missingOutOnCreatedDay && key === dateKey(created)) includeOut = false;
 
