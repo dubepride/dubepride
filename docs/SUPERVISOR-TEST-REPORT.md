@@ -200,17 +200,17 @@ Put a bound handset in flight mode, clock in, then re-enable data.
 
 ## 6. Known issues, and what to say if asked
 
-### 6.1 Times are two hours behind right now — **fix before the demo**
+### 6.1 The server still thinks in UTC — **fix before the demo**
 
-The Vercel deployment still runs in **UTC**. Every server-side calculation (`startOfTodayMs`, day grouping, exception variance) uses the process timezone, so:
+The Vercel deployment runs in **UTC**. Clock times in the browser are fine — the attendance pages format timestamps client-side, so a punch made at 08:22 shows as 08:22 on a machine set to Harare. What is wrong is everything the **server** decides:
 
-- A punch at **08:22 CAT** is stored correctly but displayed as **06:22**.
-- Nadine's late arrival is currently classified as **early**.
-- The day rolls over at **02:00 CAT**, not midnight.
+- **Arrival verdicts.** Nadine's 08:22 arrival is compared against 08:00 *UTC*, so she is currently filed as **early**, not late.
+- **Day boundaries.** `startOfTodayMs` and the day grouping roll over at **02:00 CAT**, so anything punched between midnight and 02:00 lands on the previous day.
+- **Reports trends** bucket by the same server date.
 
 **Fix:** Vercel → Project → Settings → Environment Variables → add `TZ = Africa/Harare` for Production (and Preview), then redeploy. No code change is needed.
 
-After that single change the counts above become exactly: **3 early, 3 late**. Until it is done, the dashboard will show **4 early, 2 late** and the times will be wrong. Do not run the demo before setting `TZ`.
+After that single change the exception counts become exactly: **3 early** (Farai, Makonese, Pride) and **3 late** (Nadine, Tatenda, Ethan). Until it is done, the server reports Tatenda as early (his 06:47 UTC stamp looks like 06:47 local) and Nadine as early, leaving only Ethan correctly late. Set `TZ` before anyone looks at the Exceptions page.
 
 ### 6.2 Ethan's Huawei produces no location
 
@@ -263,7 +263,7 @@ node scripts/seed-demo-via-api.js --password admin --apply    # writes it
 
 | # | Action | Owner | Why it matters |
 |---|---|---|---|
-| 1 | Set `TZ=Africa/Harare` on Vercel and redeploy | Dashboard | Times and late/early are 2 h wrong without it |
+| 1 | Set `TZ=Africa/Harare` on Vercel and redeploy | Dashboard | Arrival verdicts and day boundaries are 2 h off without it |
 | 2 | Change the default admin password | Dashboard | Production is open to anyone with the repo |
 | 3 | Provide a JDK to build the Android APK | Build machine | Without it Ethan's Huawei fix cannot ship |
 | 4 | Build and install the APK on Ethan's and Nadine's phones | Field | The two mobile faults stay open until then |
